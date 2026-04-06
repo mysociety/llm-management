@@ -1,5 +1,5 @@
 {
-	"name": "{{cookiecutter.underscored}}",
+	"name": "llm_management",
 	"build": {
 		"dockerfile": "../Dockerfile"
 	},

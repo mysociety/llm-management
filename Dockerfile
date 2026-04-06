@@ -8,4 +8,4 @@ RUN curl -sSL https://install.python-poetry.org | python - && \
     poetry config virtualenvs.create false && \
     poetry self add poetry-bumpversion && \
     poetry install && \
-    echo "/workspaces/{{cookiecutter.hyphenated}}/src/" > /usr/local/lib/python3.10/site-packages/{{cookiecutter.underscored}}.pth
+    echo "/workspaces/llm-management/src/" > /usr/local/lib/python3.10/site-packages/llm_management.pth
