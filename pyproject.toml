@@ -13,6 +13,9 @@ include = [
 
 [tool.poetry_bumpversion.file."src/llm_management/__init__.py"]
 
+[tool.poetry.scripts]
+llm-management = "llm_management.__main__:app"
+
 [tool.poetry.dependencies]
 python = ">=3.10,<3.15"
 pydantic-ai = "^1.77.0"

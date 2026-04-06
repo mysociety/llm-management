@@ -1,0 +1,13 @@
+[[deployment]]
+
+slug = "olmo3"
+model = "allenai/Olmo-3-7B-Instruct"
+gpu_type = "gpua5000"
+gpu_count = 1
+replicas = 1
+zone = "at-vie-2"
+inference_engine_params = [
+    "--enable-prefix-caching",
+    "--enable-auto-tool-choice",
+    "--tool-call-parser=olmo3"
+]
