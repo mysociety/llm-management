@@ -1,4 +1,4 @@
-FROM python:3.10-bullseye
+FROM python:3.11-trixie
 
 ENV DEBIAN_FRONTEND noninteractive
 COPY pyproject.toml poetry.loc[k] /
@@ -7,5 +7,5 @@ RUN curl -sSL https://install.python-poetry.org | python - && \
     export PATH="/root/.local/bin:$PATH"  && \
     poetry config virtualenvs.create false && \
     poetry self add poetry-bumpversion && \
-    poetry install && \
-    echo "/workspaces/llm-management/src/" > /usr/local/lib/python3.10/site-packages/llm_management.pth
+    poetry install --no-root && \
+    echo "/workspaces/modal-deployments/src/" > /usr/local/lib/python3.11/site-packages/llm_management.pth
