@@ -4,7 +4,10 @@ from pathlib import Path
 from typing import Optional
 
 import rich
-from exoscale.api.exceptions import ExoscaleAPIServerException
+from exoscale.api.exceptions import (
+    ExoscaleAPIClientException,
+    ExoscaleAPIServerException,
+)
 from exoscale.api.v2 import Client
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic_ai import Agent
@@ -70,27 +73,43 @@ class ExoscaleDeploymentConfig(BaseModel):
         client.wait(op["id"])
         rich.print(f"Model {self.model} is ready.")
 
-    def ensure_model(self):
+    def delete_model_from_zone(self):
+        client = self._client()
+        models = client.list_models().get("models", [])
+        for m in models:
+            if m.get("name") == self.model:
+                rich.print(f"Deleting model {self.model} from zone {self.zone}...")
+                op = client.delete_model(id=m["id"])
+                client.wait(op["id"])
+                rich.print(f"Model {self.model} deleted.")
+                return
+
+    def ensure_model(self, refresh: bool = False):
+        if refresh and self.model_in_zone():
+            self.delete_model_from_zone()
         if not self.model_in_zone():
             self.upload_model_to_zone()
         else:
             rich.print(f"Model {self.model} already exists in zone {self.zone}.")
 
-    def create_deployment(self):
-        self.ensure_model()
+    def create_deployment(self, refresh_model: bool = False):
+        self.ensure_model(refresh=refresh_model)
         client = self._client()
         rich.print(f"Creating deployment {self.slug}...")
-        op = client.create_deployment(
-            name=self.slug,
-            model={"name": self.model},
-            gpu_type=self.gpu_type,
-            gpu_count=self.gpu_count,
-            replicas=self.replicas,
-            inference_engine_parameters=self.inference_engine_params,
-        )
+        try:
+            op = client.create_deployment(
+                name=self.slug,
+                model={"name": self.model},
+                gpu_type=self.gpu_type,
+                gpu_count=self.gpu_count,
+                replicas=self.replicas,
+                inference_engine_parameters=self.inference_engine_params,
+            )
+        except ExoscaleAPIClientException as e:
+            raise LLMManagementError(f"Failed to create deployment {self.slug}: {e}")
         try:
             result = client.wait(op["id"])
-        except ExoscaleAPIServerException as e:
+        except (ExoscaleAPIServerException, KeyError) as e:
             # Extract deployment ID from the error to fetch logs
             deploy_id = None
             if hasattr(e, "args") and e.args:
