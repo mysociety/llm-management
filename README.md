@@ -50,15 +50,16 @@ llm-management [COMMAND] [OPTIONS]
 
 | Command | Description |
 |---|---|
-| `create [SLUG] [--all]` | Create deployment(s), uploading the model to the zone if needed |
+| `create [SLUG] [--all] [--refresh-model]` | Create deployment(s), uploading the model to the zone if needed. `--refresh-model` deletes and re-uploads the model first |
 | `destroy [SLUG] [--all]` | Delete deployment(s) |
 | `pause [SLUG] [--all]` | Scale deployment(s) to zero replicas |
 | `resume SLUG` | Resume a paused deployment to its configured replica count |
 | `create-or-resume SLUG` | Create the deployment if it doesn't exist, or resume it if paused |
 | `connect SLUG` | Show the connection URL and API key for a deployment |
 | `list` | List all deployments across configured zones |
+| `list-models ZONE` | List all models in a zone |
 | `logs SLUG [--tail N]` | Show recent log output for a deployment |
-| `llm-test SLUG` | Test a deployment by asking the LLM for the capital of France |
+| `llm-test [basic\|instruct] SLUG` | Test a deployment by asking the LLM for the capital of France |
 | `clear-models ZONE [ID] [--all]` | Remove model(s) from a zone (fails if in use by a deployment) |
 
 Most commands accept a deployment `SLUG` (matching a slug in `conf/exoscale.toml`) or `--all` to apply to every configured deployment.
