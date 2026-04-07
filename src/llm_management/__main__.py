@@ -7,7 +7,7 @@ https://exoscale.github.io/python-exoscale/index.html
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Optional, Literal
 
 import rich
 import typer
@@ -39,11 +39,14 @@ def create(
         None, help="Deployment slug from exoscale.toml"
     ),
     all_: bool = typer.Option(False, "--all", help="Apply to all deployments"),
+    refresh_model: bool = typer.Option(
+        False, "--refresh-model", help="Delete and re-upload the model before deploying"
+    ),
 ):
     """Create deployment(s). Ensures the model exists in the zone first."""
     config = ExoscaleConfig.load()
     for cfg in config.resolve(slug, all_):
-        cfg.create_deployment()
+        cfg.create_deployment(refresh_model=refresh_model)
 
 
 @app.command()
@@ -114,16 +117,31 @@ def list_deployments():
     config.list_deployments()
 
 
+@app.command("list-models")
+@handle_errors
+def list_models(
+    zone: str = typer.Argument(..., help="Exoscale zone (e.g. at-vie-2)"),
+):
+    """List all models in a zone."""
+    client = get_client(zone)
+    models = client.list_models().get("models", [])
+    if not models:
+        rich.print(f"No models in zone {zone}.")
+        return
+    for m in models:
+        rich.print(f"  {m.get('name', 'unnamed')}  ({m.get('id', 'no-id')})")
+
+
 @app.command("clear-models")
 @handle_errors
 def clear_models(
     zone: str = typer.Argument(..., help="Exoscale zone (e.g. at-vie-2)"),
-    id: Optional[str] = typer.Argument(None, help="Model ID to delete"),
+    identifier: Optional[str] = typer.Argument(None, help="Model ID or name to delete"),
     all_: bool = typer.Option(False, "--all", help="Delete all models in the zone"),
 ):
-    """Remove one model by ID, or all models from a zone."""
-    if not id and not all_:
-        rich.print("Error: Provide a model ID or use --all.")
+    """Remove one model by ID or name, or all models from a zone."""
+    if not identifier and not all_:
+        rich.print("Error: Provide a model ID/name or use --all.")
         raise typer.Exit(1)
     client = get_client(zone)
     deployments = client.list_deployments().get("deployments", [])
@@ -136,6 +154,13 @@ def clear_models(
             if dep_model.get("id") == model_id or dep_model.get("name") == model_name:
                 using.append(d.get("name", "unnamed"))
         return using
+
+    def find_model_by_name(name: str) -> dict | None:
+        models = client.list_models().get("models", [])
+        for m in models:
+            if m.get("name") == name:
+                return m
+        return None
 
     if all_:
         models = client.list_models().get("models", [])
@@ -156,17 +181,29 @@ def clear_models(
             client.wait(op["id"])
             rich.print("Deleted.")
     else:
-        # Look up the model to get its name for the in-use check
-        model_info = client.get_model(id=id)
-        using = model_in_use(id or "", model_info.get("name", ""))
+        if not identifier:
+            rich.print("Error: Provide a model ID/name or use --all.")
+            raise typer.Exit(1)
+        # Try to resolve identifier as a name first, then fall back to ID
+        model = find_model_by_name(identifier)
+        if model:
+            model_id = model["id"]
+            model_name = model["name"]
+        else:
+            model_id = identifier
+            model_info = client.get_model(id=model_id)
+            model_name = model_info.get("name", "")
+        using = model_in_use(model_id, model_name)
         if using:
             rich.print(
-                f"Error: Model {id} is used by deployment(s): "
+                f"Error: Model {model_name or model_id} is used by deployment(s): "
                 f"{', '.join(using)}. Delete those deployments first."
             )
             raise typer.Exit(1)
-        rich.print(f"Deleting model {id} from zone {zone}...")
-        op = client.delete_model(id=id)
+        rich.print(
+            f"Deleting model {model_name or model_id} ({model_id}) from zone {zone}..."
+        )
+        op = client.delete_model(id=model_id)
         client.wait(op["id"])
         rich.print("Deleted.")
 
@@ -175,7 +212,7 @@ def clear_models(
 @handle_errors
 def logs(
     slug: str = typer.Argument(..., help="Deployment slug from exoscale.toml"),
-    tail: int = typer.Option(50, "--tail", "-n", help="Number of log lines to show"),
+    tail: int = typer.Option(100, "--tail", "-n", help="Number of log lines to show"),
 ):
     """Show log tail for a deployment."""
     config = ExoscaleConfig.load()
@@ -202,13 +239,22 @@ def logs(
 @app.command("llm-test")
 @handle_errors
 def llm_test(
+    mode: Literal["basic", "instruct"] = typer.Argument(
+        ..., help="Test mode: 'basic' or 'instruct'"
+    ),
     slug: str = typer.Argument(..., help="Deployment slug from exoscale.toml"),
 ):
     """Test a deployment by asking the LLM for the capital of France."""
+    if mode not in ("basic", "instruct"):
+        rich.print(f"Error: mode must be 'basic' or 'instruct', got '{mode}'.")
+        raise typer.Exit(1)
     config = ExoscaleConfig.load()
     cfg = config.get(slug)
-    rich.print(f"Testing deployment {slug}...")
-    cfg.test_deployment()
+    rich.print(f"Testing deployment {slug} ({mode})...")
+    if mode == "basic":
+        cfg.test_basic_deployment()
+    else:
+        cfg.test_instruct_deployment()
     rich.print(f"[green]Test passed:[/green] deployment {slug} is working correctly.")
 
 
