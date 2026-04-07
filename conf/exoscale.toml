@@ -1,6 +1,6 @@
 [[deployment]]
 
-slug = "olmo3"
+slug = "olmo3_7b"
 model = "allenai/Olmo-3-7B-Instruct"
 gpu_type = "gpua5000"
 gpu_count = 1
@@ -11,3 +11,52 @@ inference_engine_params = [
     "--enable-auto-tool-choice",
     "--tool-call-parser=olmo3"
 ]
+
+[[deployment]]
+
+slug = "granite4_h_tiny"
+model = "ibm-granite/granite-4.0-h-tiny"
+gpu_type = "gpua5000"
+gpu_count = 1
+replicas = 1
+zone = "at-vie-2"
+inference_engine_params = [
+    "--enable-prefix-caching",
+    "--enable-auto-tool-choice",
+    "--tool-call-parser=hermes"
+]
+
+
+[[deployment]]
+
+slug = "dunno_llama_3b"
+model = "mySociety/Dunno_Llama_3B_safetensors"
+gpu_type = "gpua5000"
+gpu_count = 1
+replicas = 1
+zone = "at-vie-2"
+inference_engine_params = [
+    "--max-model-len=122000",
+    "--enable-prefix-caching",
+    "--enable-auto-tool-choice",
+    "--tool-call-parser=pythonic"
+]
+
+
+
+
+[[deployment]]
+# doesn't actually support tool calls
+slug = "toast_llama"
+model = "mySociety/Toast_Llama_safetensors"
+gpu_type = "gpua5000"
+gpu_count = 1
+replicas = 1
+zone = "at-vie-2"
+inference_engine_params = [
+    "--max-model-len=122000",
+    "--enable-prefix-caching",
+    "--enable-auto-tool-choice",
+    "--tool-call-parser=pythonic"
+]
+
