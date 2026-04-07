@@ -15,7 +15,7 @@ from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_store import BaseModel
 
-from .settings import CONFIG_PATH, ExoscaleCredentials
+from .settings import CONFIG_PATH, settings
 
 
 class LLMManagementError(Exception):
@@ -28,13 +28,12 @@ class DeploymentNotFoundError(LLMManagementError):
 
 
 def get_client(zone: str) -> Client:
-    creds = ExoscaleCredentials()
-    if not creds.api_key or not creds.api_secret:
+    if not settings.api_key or not settings.api_secret:
         raise LLMManagementError(
             "EXOSCALE_API_KEY and EXOSCALE_API_SECRET must be set "
             "(via environment variables or .env file)."
         )
-    return Client(creds.api_key, creds.api_secret, zone=zone)
+    return Client(settings.api_key, settings.api_secret, zone=zone)
 
 
 class ExoscaleDeploymentConfig(BaseModel):
@@ -69,7 +68,10 @@ class ExoscaleDeploymentConfig(BaseModel):
     def upload_model_to_zone(self):
         client = self._client()
         rich.print(f"Creating model {self.model} in zone {self.zone}...")
-        op = client.create_model(name=self.model)
+        kwargs: dict[str, str] = {"name": self.model}
+        if settings.huggingface_token:
+            kwargs["huggingface_token"] = settings.huggingface_token
+        op = client.create_model(**kwargs)
         client.wait(op["id"])
         rich.print(f"Model {self.model} is ready.")
 

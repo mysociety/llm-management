@@ -12,3 +12,7 @@ class ExoscaleCredentials(BaseSettings):
 
     api_key: str = ""
     api_secret: str = ""
+    huggingface_token: str = ""
+
+
+settings = ExoscaleCredentials()
