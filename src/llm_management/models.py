@@ -11,7 +11,7 @@ from exoscale.api.exceptions import (
 from exoscale.api.v2 import Client
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_store import BaseModel
 
@@ -204,21 +204,35 @@ class ExoscaleDeploymentConfig(BaseModel):
         else:
             rich.print(f"Deployment {self.slug} is already running.")
 
-    def test_deployment(self) -> bool:
-        """Test the deployment by asking the LLM for the capital of France."""
+    def get_pydantic_ai_model(self) -> OpenAIChatModel:
         info = self.connection_info()
+        return OpenAIChatModel(
+            self.model,
+            provider=OpenAIProvider(api_key=info["api_key"], base_url=info["url"]),
+        )
+
+    def test_basic_deployment(self) -> bool:
+        """Test the deployment by asking the LLM for the capital of France."""
+        model = self.get_pydantic_ai_model()
+
+        agent = Agent(
+            model,
+            system_prompt="Given the name of a country, return the capital city of that country. e.g. Germany, return 'Berlin'",
+        )
+        result = agent.run_sync("France")
+        output = result.output
+        if output.lower() == "paris":
+            return True
+        raise LLMManagementError(f"Expected city='Paris' but got city='{output}'")
+
+    def test_instruct_deployment(self) -> bool:
+        """Test the deployment by asking the LLM for the capital of France."""
+        model = self.get_pydantic_ai_model()
 
         class CapitalCity(PydanticBaseModel):
             country: str
             city: str
 
-        model = OpenAIModel(
-            self.model,
-            provider=OpenAIProvider(
-                base_url=info["url"],
-                api_key=info["api_key"],
-            ),
-        )
         agent = Agent(
             model,
             system_prompt="Given the name of a country, return the capital city of that country. e.g. Germany, return 'Berlin'",
