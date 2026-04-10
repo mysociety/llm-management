@@ -23,6 +23,10 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from .agents.capital_city import CapitalCityResponse, capital_city_agent
+from .agents.immigration_detection import (
+    ClassificationResponse,
+    immigration_detection_agent,
+)
 from .cache import cache
 from .models import ExoscaleConfig, ExoscaleDeploymentConfig, LLMManagementError
 
@@ -315,3 +319,20 @@ async def capital_city_endpoint(
     """
     model = chat_model_from_slug(deployment)
     return await capital_city_agent(model=model, country=body.country)
+
+
+class ImmigrationDetectionRequest(BaseModel):
+    request: str
+
+
+@app.post("/agents/immigration_detection")
+async def immigration_detection_endpoint(
+    body: ImmigrationDetectionRequest, deployment: str = "toast_llama"
+) -> ClassificationResponse:
+    """
+    Example agent endpoint. Takes a request and returns its classification
+    as a plain text response ("IMM" or "FOI") via a pydantic-ai Agent
+    running on the specified deployment.
+    """
+    model = chat_model_from_slug(deployment)
+    return await immigration_detection_agent(model=model, request=body.request)
