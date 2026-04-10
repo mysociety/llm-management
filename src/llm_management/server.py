@@ -59,6 +59,7 @@ class DeploymentOverview(BaseModel):
     """
 
     slug: str
+    deployment_name: str
     exists: bool
     replicas: int
     idle_seconds: float | None
@@ -245,6 +246,7 @@ def all_deployments_overview() -> AllDeploymentsResponse:
         overviews.append(
             DeploymentOverview(
                 slug=cfg.slug,
+                deployment_name=cfg.deployment_name,
                 exists=state.exists,
                 replicas=state.replicas,
                 idle_seconds=idle,

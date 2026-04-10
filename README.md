@@ -10,6 +10,7 @@ Set the following via environment variables or a `.env` file in the working dire
 
 - `EXOSCALE_API_KEY` — Your Exoscale API key
 - `EXOSCALE_API_SECRET` — Your Exoscale API secret
+- `EXOSCALE_SERVER_ROLE` — Role suffix appended to deployment names on Exoscale (e.g. `test`, `production`). Defaults to `test`
 
 ### Deployment config
 
@@ -32,13 +33,17 @@ inference_engine_params = [
 
 | Field | Description |
 |---|---|
-| `slug` | Unique name for the deployment |
+| `slug` | Unique name for the deployment (used locally and in CLI/API) |
 | `model` | Model identifier (uploaded to the zone if not already present) |
 | `gpu_type` | GPU type (e.g. `gpua5000`) |
 | `gpu_count` | Number of GPUs |
 | `replicas` | Number of replicas |
 | `zone` | Exoscale zone (e.g. `at-vie-2`) |
 | `inference_engine_params` | Optional vLLM engine parameters |
+
+### Deployment naming
+
+The `slug` is the local identifier used in CLI commands, API routes, and the cache. On Exoscale, deployments are created with the name `{slug}_{server_role}` (e.g. `olmo3_7b_test` or `olmo3_7b_production`). This allows test and production instances to share the same config file and Exoscale account without interfering with each other — a test instance will never find or modify a production deployment, and vice versa.
 
 ## CLI usage
 

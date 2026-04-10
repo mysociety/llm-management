@@ -56,14 +56,21 @@ class ExoscaleDeploymentConfig(BaseModel):
     zone: str
     inference_engine_params: list[str] = []
 
+    @property
+    def deployment_name(self) -> str:
+        """Name used for the deployment on Exoscale (slug + server_role suffix)."""
+        if settings.server_role:
+            return f"{self.slug}_{settings.server_role}"
+        return self.slug
+
     def _client(self) -> Client:
         return get_client(self.zone)
 
     def _find_deployment(self, client: Client) -> dict | None:
-        """Return the deployment dict matching this slug, or None."""
+        """Return the deployment dict matching this deployment_name, or None."""
         deployments = client.list_deployments().get("deployments", [])
         for d in deployments:
-            if d.get("name") == self.slug:
+            if d.get("name") == self.deployment_name:
                 return d
         return None
 
@@ -108,10 +115,10 @@ class ExoscaleDeploymentConfig(BaseModel):
     def create_deployment(self, refresh_model: bool = False):
         self.ensure_model(refresh=refresh_model)
         client = self._client()
-        rich.print(f"Creating deployment {self.slug}...")
+        rich.print(f"Creating deployment {self.deployment_name}...")
         try:
             op = client.create_deployment(
-                name=self.slug,
+                name=self.deployment_name,
                 model={"name": self.model},
                 gpu_type=self.gpu_type,
                 gpu_count=self.gpu_count,
@@ -119,7 +126,9 @@ class ExoscaleDeploymentConfig(BaseModel):
                 inference_engine_parameters=self.inference_engine_params,
             )
         except ExoscaleAPIClientException as e:
-            raise LLMManagementError(f"Failed to create deployment {self.slug}: {e}")
+            raise LLMManagementError(
+                f"Failed to create deployment {self.deployment_name}: {e}"
+            )
         try:
             result = client.wait(op["id"])
         except (ExoscaleAPIServerException, KeyError) as e:
@@ -137,7 +146,7 @@ class ExoscaleDeploymentConfig(BaseModel):
                 deployment = self._find_deployment(client)
                 if deployment:
                     deploy_id = deployment.get("id")
-            msg = f"Deployment {self.slug} failed."
+            msg = f"Deployment {self.deployment_name} failed."
             if deploy_id:
                 try:
                     details = client.get_deployment(id=deploy_id)
@@ -156,27 +165,29 @@ class ExoscaleDeploymentConfig(BaseModel):
             raise LLMManagementError(msg)
         deploy_id = result.get("resource", {}).get("id", "unknown")
         state = result.get("state", "unknown")
-        rich.print(f"Deployment {self.slug} created (id: {deploy_id}, state: {state}).")
+        rich.print(
+            f"Deployment {self.deployment_name} created (id: {deploy_id}, state: {state})."
+        )
 
     def scale_to_zero(self):
         client = self._client()
         deployment = self._find_deployment(client)
         if deployment is None:
             raise DeploymentNotFoundError(self.slug)
-        rich.print(f"Scaling {self.slug} to zero replicas...")
+        rich.print(f"Scaling {self.deployment_name} to zero replicas...")
         op = client.scale_deployment(id=deployment["id"], replicas=0)
         client.wait(op["id"])
-        rich.print(f"Deployment {self.slug} scaled to zero.")
+        rich.print(f"Deployment {self.deployment_name} scaled to zero.")
 
     def resume_from_zero(self):
         client = self._client()
         deployment = self._find_deployment(client)
         if deployment is None:
             raise DeploymentNotFoundError(self.slug)
-        rich.print(f"Resuming {self.slug} to {self.replicas} replica(s)...")
+        rich.print(f"Resuming {self.deployment_name} to {self.replicas} replica(s)...")
         op = client.scale_deployment(id=deployment["id"], replicas=self.replicas)
         client.wait(op["id"])
-        rich.print(f"Deployment {self.slug} resumed.")
+        rich.print(f"Deployment {self.deployment_name} resumed.")
 
     def connection_info(self) -> dict:
         client = self._client()
@@ -218,10 +229,10 @@ class ExoscaleDeploymentConfig(BaseModel):
         deployment = self._find_deployment(client)
         if deployment is None:
             raise DeploymentNotFoundError(self.slug)
-        rich.print(f"Deleting deployment {self.slug}...")
+        rich.print(f"Deleting deployment {self.deployment_name}...")
         op = client.delete_deployment(id=deployment["id"])
         client.wait(op["id"])
-        rich.print(f"Deployment {self.slug} deleted.")
+        rich.print(f"Deployment {self.deployment_name} deleted.")
 
     def create_or_resume(self):
         """
@@ -236,7 +247,7 @@ class ExoscaleDeploymentConfig(BaseModel):
         elif deployment.get("replicas", 0) == 0:
             self.resume_from_zero()
         else:
-            rich.print(f"Deployment {self.slug} is already running.")
+            rich.print(f"Deployment {self.deployment_name} is already running.")
 
     def get_pydantic_ai_model(self) -> OpenAIChatModel:
         info = self.connection_info()
