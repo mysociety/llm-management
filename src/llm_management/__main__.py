@@ -7,7 +7,7 @@ https://exoscale.github.io/python-exoscale/index.html
 from __future__ import annotations
 
 import json
-from typing import Optional, Literal
+from typing import Literal, Optional
 
 import rich
 import typer
@@ -256,6 +256,25 @@ def llm_test(
     else:
         cfg.test_instruct_deployment()
     rich.print(f"[green]Test passed:[/green] deployment {slug} is working correctly.")
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host", help="Bind address"),
+    port: int = typer.Option(8000, "--port", help="Bind port"),
+    reload: bool = typer.Option(
+        False, "--reload", help="Enable auto-reload for development"
+    ),
+):
+    """Start the FastAPI proxy server."""
+    import uvicorn
+
+    uvicorn.run(
+        "llm_management.server:app",
+        host=host,
+        port=port,
+        reload=reload,
+    )
 
 
 if __name__ == "__main__":

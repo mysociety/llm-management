@@ -27,6 +27,17 @@ class DeploymentNotFoundError(LLMManagementError):
         super().__init__(f"Deployment {slug} not found.")
 
 
+class DeploymentQueryResult(PydanticBaseModel):
+    """
+    Result of querying Exoscale for a deployment's current state.
+    """
+
+    exists: bool
+    replicas: int
+    deployment_url: str
+    api_key: str
+
+
 def get_client(zone: str) -> Client:
     if not settings.api_key or not settings.api_secret:
         raise LLMManagementError(
@@ -178,6 +189,29 @@ class ExoscaleDeploymentConfig(BaseModel):
             "url": deployment_url,
             "api_key": api_key,
         }
+
+    def query_status(self) -> DeploymentQueryResult:
+        """
+        Query Exoscale for the current state of this deployment.
+        """
+        client = self._client()
+        deployment = self._find_deployment(client)
+        if deployment is None:
+            return DeploymentQueryResult(
+                exists=False, replicas=0, deployment_url="", api_key=""
+            )
+        try:
+            api_key = client.reveal_deployment_api_key(id=deployment["id"]).get(
+                "api-key", ""
+            )
+        except Exception:
+            api_key = ""
+        return DeploymentQueryResult(
+            exists=True,
+            replicas=deployment.get("replicas", 0),
+            deployment_url=deployment.get("deployment-url", ""),
+            api_key=api_key,
+        )
 
     def delete_deployment(self):
         client = self._client()
