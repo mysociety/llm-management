@@ -12,7 +12,12 @@ from typing import Literal, Optional
 import rich
 import typer
 
-from .models import ExoscaleConfig, LLMManagementError, get_client
+from .models import (
+    DeploymentNotFoundError,
+    ExoscaleConfig,
+    LLMManagementError,
+    get_client,
+)
 
 app = typer.Typer(help="Manage Exoscale dedicated inference deployments.")
 
@@ -60,7 +65,14 @@ def destroy(
     """Delete deployment(s)."""
     config = ExoscaleConfig.load()
     for cfg in config.resolve(slug, all_):
-        cfg.delete_deployment()
+        if all_:
+            try:
+                cfg.delete_deployment()
+            except DeploymentNotFoundError:
+                rich.print(f"Skipping {cfg.slug} (no deployment found).")
+                continue
+        else:
+            cfg.delete_deployment()
 
 
 @app.command("pause")
