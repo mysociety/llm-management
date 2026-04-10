@@ -19,6 +19,8 @@ from starlette.testclient import TestClient
 DEPLOYMENT = "olmo3_7b"
 BASE_URL = "http://test"
 
+pytestmark = pytest.mark.external
+
 
 @pytest.fixture(scope="session")
 def client() -> Iterator[TestClient]:

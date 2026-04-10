@@ -13,6 +13,8 @@ from starlette.testclient import TestClient
 
 DEPLOYMENT = "toast_llama"
 
+pytestmark = pytest.mark.external
+
 
 @pytest.fixture(scope="session")
 def client() -> Iterator[TestClient]:
