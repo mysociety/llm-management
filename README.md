@@ -63,3 +63,57 @@ llm-management [COMMAND] [OPTIONS]
 | `clear-models ZONE [ID] [--all]` | Remove model(s) from a zone (fails if in use by a deployment) |
 
 Most commands accept a deployment `SLUG` (matching a slug in `conf/exoscale.toml`) or `--all` to apply to every configured deployment.
+
+## FastAPI proxy server
+
+The package includes a FastAPI server that acts as an intermediary between your services and Exoscale deployments. Start it with:
+
+```
+llm-management serve [--host 0.0.0.0] [--port 8000] [--reload]
+```
+
+The server provides interactive API docs at the root URL (`/`).
+
+### Endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/deployments` | GET | Overview of all configured deployments with idle timers |
+| `/deployments/{slug}/status` | GET | Check whether a deployment exists and its replica count |
+| `/deployments/{slug}/ensure` | POST | Create or resume a deployment so it is running |
+| `/deployments/{slug}/scale-to-zero` | POST | Scale a deployment to zero replicas (pause without destroying) |
+| `/deployments/{slug}/v1/{path}` | POST | Proxy requests to the underlying Exoscale deployment, injecting auth |
+| `/agents/capital_city` | POST | Example agent — returns the capital city of a given country |
+| `/agents/immigration_detection` | POST | Example agent — classifies a request as immigration-related (`IMM`) or FOI (`FOI`) |
+
+### Automatic idle scaling
+
+The server tracks when each deployment last received traffic. Deployments that have been idle for longer than 15 minutes are automatically scaled to zero. On shutdown, all deployments that received traffic during the session are also scaled to zero.
+
+### Agent endpoints
+
+Agent endpoints wrap [pydantic-ai](https://docs.pydantic.dev/ai/) agents with built-in system prompts and structured output. Each agent runs against a specific deployment (configurable via query parameter). New agents can be added under `src/llm_management/agents/` and registered in `server.py`.
+
+## Testing
+
+Tests use [pytest](https://docs.pytest.org/) and live under `tests/`.
+
+### Running tests
+
+```bash
+# Run only fast, local tests (no external services needed)
+script/test
+
+# Run all tests including those that create Exoscale deployments
+script/test --all
+```
+
+Additional pytest arguments are passed through, e.g. `script/test -v` or `script/test --all -k toast`.
+
+### Markers
+
+| Marker | Description |
+|---|---|
+| `external` | Test creates or connects to a real Exoscale deployment. These tests require valid `EXOSCALE_API_KEY` / `EXOSCALE_API_SECRET` credentials, will start GPU instances, and may take several minutes. |
+
+Tests marked `external` (in `test_proxy.py` and `test_toast.py`) use FastAPI's `TestClient` to run the server in-process but call `/deployments/{slug}/ensure`, which provisions real infrastructure. The remaining tests (`test_meta.py`, `test_llm_management.py`) are purely local and need no credentials or network access.
