@@ -7,6 +7,7 @@ record of known deployments and the last time a request was forwarded.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -42,7 +43,19 @@ class DeploymentCache:
     def __init__(self, cache_ttl_seconds: float = 60.0):
         self._lock = threading.Lock()
         self._deployments: dict[str, DeploymentState] = {}
+        self._ensure_locks: dict[str, asyncio.Lock] = {}
         self.cache_ttl_seconds = cache_ttl_seconds
+
+    def ensure_lock(self, slug: str) -> asyncio.Lock:
+        """
+        Return a per-slug asyncio.Lock, creating one if it doesn't exist.
+        Ensures only one caller at a time triggers create_or_resume for
+        a given deployment.
+        """
+        with self._lock:
+            if slug not in self._ensure_locks:
+                self._ensure_locks[slug] = asyncio.Lock()
+            return self._ensure_locks[slug]
 
     def get(self, slug: str) -> DeploymentState | None:
         """

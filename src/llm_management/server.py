@@ -27,13 +27,14 @@ from .agents.immigration_detection import (
     ClassificationResponse,
     immigration_detection_agent,
 )
-from .cache import cache
+from .cache import DeploymentState, cache
 from .models import ExoscaleConfig, ExoscaleDeploymentConfig, LLMManagementError
 
 logger = logging.getLogger("llm_management.server")
 
 IDLE_TIMEOUT_MINUTES: int = 15  # minutes
 _IDLE_CHECK_INTERVAL: int = 60  # seconds
+AUTO_ENSURE_ON_REQUEST: bool = True
 
 
 class DeploymentStatusResponse(BaseModel):
@@ -98,20 +99,40 @@ def get_deployment_config(slug: str) -> ExoscaleDeploymentConfig:
         )
 
 
-def chat_model_from_slug(slug: str) -> OpenAIChatModel:
+async def ensure_running(slug: str) -> tuple[ExoscaleDeploymentConfig, DeploymentState]:
+    """
+    Return the config and a live deployment state for *slug*.
+
+    If the deployment is not running and AUTO_ENSURE_ON_REQUEST is True,
+    start it (with a per-slug lock so concurrent requests don't race).
+    Otherwise raise 503.
+    """
+    cfg = get_deployment_config(slug)
+    state = await asyncio.to_thread(cache.ensure, cfg)
+    if not state.exists or state.replicas == 0:
+        if AUTO_ENSURE_ON_REQUEST:
+            async with cache.ensure_lock(slug):
+                state = await asyncio.to_thread(cache.ensure, cfg)
+                if not state.exists or state.replicas == 0:
+                    logger.info("Auto-ensuring deployment %s.", slug)
+                    await asyncio.to_thread(cfg.create_or_resume)
+                    state = await asyncio.to_thread(cache.refresh, cfg)
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Deployment '{slug}' is not running. Ensure it first.",
+            )
+    cache.touch(slug)
+    return cfg, state
+
+
+async def chat_model_from_slug(slug: str) -> OpenAIChatModel:
     """
     Return an OpenAI-compatible chat model backed by the given deployment.
     Ensures the deployment is cached and running, touches the idle timer,
     and raises 503 if the deployment is not available.
     """
-    cfg = get_deployment_config(slug)
-    state = cache.ensure(cfg)
-    if not state.exists or state.replicas == 0:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Deployment '{slug}' is not running. Ensure it first.",
-        )
-    cache.touch(slug)
+    cfg, state = await ensure_running(slug)
     return OpenAIChatModel(
         cfg.model,
         provider=OpenAIProvider(api_key=state.api_key, base_url=state.deployment_url),
@@ -270,16 +291,7 @@ async def proxy_to_deployment(slug: str, path: str, request: Request):
     corresponding Exoscale deployment endpoint, injecting the correct
     bearer token. Resets the idle-scaler timer for this deployment.
     """
-    cfg = get_deployment_config(slug)
-    state = cache.ensure(cfg)
-
-    if not state.exists or state.replicas == 0:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Deployment '{slug}' is not running. POST /deployments/{slug}/ensure first.",
-        )
-
-    cache.touch(slug)
+    cfg, state = await ensure_running(slug)
 
     target_url = f"{state.deployment_url.rstrip('/')}/{path}"
     body = await request.body()
@@ -319,7 +331,7 @@ async def capital_city_endpoint(
     city as structured output via a pydantic-ai Agent running on the
     specified deployment.
     """
-    model = chat_model_from_slug(deployment)
+    model = await chat_model_from_slug(deployment)
     return await capital_city_agent(model=model, country=body.country)
 
 
@@ -336,5 +348,5 @@ async def immigration_detection_endpoint(
     as a plain text response ("IMM" or "FOI") via a pydantic-ai Agent
     running on the specified deployment.
     """
-    model = chat_model_from_slug(deployment)
+    model = await chat_model_from_slug(deployment)
     return await immigration_detection_agent(model=model, request=body.request)
