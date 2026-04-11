@@ -115,7 +115,10 @@ async def ensure_running(slug: str) -> tuple[ExoscaleDeploymentConfig, Deploymen
                 state = await asyncio.to_thread(cache.ensure, cfg)
                 if not state.exists or state.replicas == 0:
                     logger.info("Auto-ensuring deployment %s.", slug)
+                    _t0 = time.monotonic()
                     await asyncio.to_thread(cfg.create_or_resume)
+                    _elapsed = time.monotonic() - _t0
+                    logger.info("Auto-ensure of %s completed in %.1fs.", slug, _elapsed)
                     state = await asyncio.to_thread(cache.refresh, cfg)
         else:
             raise HTTPException(
@@ -225,10 +228,13 @@ def ensure_deployment(slug: str) -> EnsureResponse:
             slug=slug, action="already_running", replicas=state.replicas
         )
 
+    t0 = time.monotonic()
     cfg.create_or_resume()
+    elapsed = time.monotonic() - t0
     new_state = cache.refresh(cfg)
     cache.touch(slug)
     action = "created" if not state.exists else "resumed"
+    logger.info("Deployment %s %s in %.1fs.", slug, action, elapsed)
     return EnsureResponse(slug=slug, action=action, replicas=new_state.replicas)
 
 

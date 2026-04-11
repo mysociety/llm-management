@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -115,6 +116,7 @@ class ExoscaleDeploymentConfig(BaseModel):
     def create_deployment(self, refresh_model: bool = False):
         self.ensure_model(refresh=refresh_model)
         client = self._client()
+        _t0 = time.monotonic()
         rich.print(f"Creating deployment {self.deployment_name}...")
         try:
             op = client.create_deployment(
@@ -165,8 +167,9 @@ class ExoscaleDeploymentConfig(BaseModel):
             raise LLMManagementError(msg)
         deploy_id = result.get("resource", {}).get("id", "unknown")
         state = result.get("state", "unknown")
+        _elapsed = time.monotonic() - _t0
         rich.print(
-            f"Deployment {self.deployment_name} created (id: {deploy_id}, state: {state})."
+            f"Deployment {self.deployment_name} created (id: {deploy_id}, state: {state}) in {_elapsed:.1f}s."
         )
 
     def scale_to_zero(self):
@@ -184,10 +187,12 @@ class ExoscaleDeploymentConfig(BaseModel):
         deployment = self._find_deployment(client)
         if deployment is None:
             raise DeploymentNotFoundError(self.slug)
+        _t0 = time.monotonic()
         rich.print(f"Resuming {self.deployment_name} to {self.replicas} replica(s)...")
         op = client.scale_deployment(id=deployment["id"], replicas=self.replicas)
         client.wait(op["id"])
-        rich.print(f"Deployment {self.deployment_name} resumed.")
+        _elapsed = time.monotonic() - _t0
+        rich.print(f"Deployment {self.deployment_name} resumed in {_elapsed:.1f}s.")
 
     def connection_info(self) -> dict:
         client = self._client()
