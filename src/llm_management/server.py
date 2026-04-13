@@ -22,6 +22,11 @@ from pydantic import BaseModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
+from llm_management.agents.foi_structure import (
+    FOIRequest,
+    extract_structure_from_request,
+)
+
 from .agents.capital_city import CapitalCityResponse, capital_city_agent
 from .agents.immigration_detection import (
     ClassificationResponse,
@@ -341,13 +346,13 @@ async def capital_city_endpoint(
     return await capital_city_agent(model=model, country=body.country)
 
 
-class ImmigrationDetectionRequest(BaseModel):
+class FOiRequestContainer(BaseModel):
     request: str
 
 
 @app.post("/agents/immigration_detection")
 async def immigration_detection_endpoint(
-    body: ImmigrationDetectionRequest, deployment: str = "toast_llama"
+    body: FOiRequestContainer, deployment: str = "toast_llama"
 ) -> ClassificationResponse:
     """
     Example agent endpoint. Takes a request and returns its classification
@@ -356,3 +361,15 @@ async def immigration_detection_endpoint(
     """
     model = await chat_model_from_slug(deployment)
     return await immigration_detection_agent(model=model, request=body.request)
+
+
+@app.post("/agents/foi_structure")
+async def foi_structure_endpoint(
+    body: FOiRequestContainer, deployment: str = "olmo3_7b"
+) -> FOIRequest:
+    """
+    Example agent endpoint. Takes a request and returns its structured representation
+    via a pydantic-ai Agent running on the specified deployment.
+    """
+    model = await chat_model_from_slug(deployment)
+    return await extract_structure_from_request(model=model, request_text=body.request)
