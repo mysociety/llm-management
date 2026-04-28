@@ -14,6 +14,7 @@ class ExoscaleCredentials(BaseSettings):
     exoscale_api_secret: str = ""
     huggingface_token: str = ""
     server_role: str = "test"
+    auth_token: str = ""
 
 
 settings = ExoscaleCredentials()

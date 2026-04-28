@@ -18,6 +18,7 @@ from functools import lru_cache
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -34,6 +35,7 @@ from .agents.immigration_detection import (
 )
 from .cache import DeploymentState, cache
 from .models import ExoscaleConfig, ExoscaleDeploymentConfig, LLMManagementError
+from .settings import settings
 
 logger = logging.getLogger("llm_management.server")
 
@@ -202,6 +204,28 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="LLM Management Proxy", docs_url="/", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def require_bearer_auth_when_enabled(request: Request, call_next):
+    """
+    Require an Authorization Bearer token for all requests only when
+    settings.auth_token is configured.
+    """
+    required_token = settings.auth_token.strip()
+    if not required_token:
+        return await call_next(request)
+
+    auth_header = request.headers.get("authorization", "")
+    scheme, _, token = auth_header.partition(" ")
+    if scheme.lower() != "bearer" or token != required_token:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Not authenticated"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return await call_next(request)
 
 
 @app.get("/deployments/{slug}/status")

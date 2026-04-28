@@ -11,6 +11,7 @@ Set the following via environment variables or a `.env` file in the working dire
 - `EXOSCALE_API_KEY` — Your Exoscale API key
 - `EXOSCALE_API_SECRET` — Your Exoscale API secret
 - `EXOSCALE_SERVER_ROLE` — Role suffix appended to deployment names on Exoscale (e.g. `test`, `production`). Defaults to `test`
+- `AUTH_TOKEN` — Optional bearer token for the FastAPI server. Defaults to empty (no auth)
 
 ### Deployment config
 
@@ -79,6 +80,18 @@ llm-management serve [--host 0.0.0.0] [--port 8000] [--reload]
 
 The server provides interactive API docs at the root URL (`/`).
 
+### Server authentication
+
+If `AUTH_TOKEN` is empty, the FastAPI server does not require authentication.
+
+If `AUTH_TOKEN` is set, every request must include:
+
+```http
+Authorization: Bearer <AUTH_TOKEN>
+```
+
+Requests with a missing or incorrect token are rejected with `401 Not authenticated`.
+
 ### Endpoints
 
 | Endpoint | Method | Description |
@@ -111,6 +124,7 @@ The compose setup loads environment variables from `.env`:
 EXOSCALE_API_KEY=your_key
 EXOSCALE_API_SECRET=your_secret
 SERVER_ROLE=test
+AUTH_TOKEN=
 ```
 
 ### 2. Start with Docker Compose
