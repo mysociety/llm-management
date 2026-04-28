@@ -7,9 +7,10 @@ gpu_count = 1
 replicas = 1
 zone = "at-vie-2"
 inference_engine_params = [
+    "--max-model-len=20000",
     "--enable-prefix-caching",
     "--enable-auto-tool-choice",
-    "--tool-call-parser=olmo3"
+    "--tool-call-parser=olmo3",
 ]
 
 [[deployment]]
@@ -23,7 +24,7 @@ zone = "at-vie-2"
 inference_engine_params = [
     "--enable-prefix-caching",
     "--enable-auto-tool-choice",
-    "--tool-call-parser=hermes"
+    "--tool-call-parser=hermes",
 ]
 
 
