@@ -99,6 +99,35 @@ The server tracks when each deployment last received traffic. Deployments that h
 
 Agent endpoints wrap [pydantic-ai](https://docs.pydantic.dev/ai/) agents with built-in system prompts and structured output. Each agent runs against a specific deployment (configurable via query parameter). New agents can be added under `src/llm_management/agents/` and registered in `server.py`.
 
+## Run with Docker
+
+The repository includes a `Dockerfile` and `docker-compose.yml` for running the proxy server in a container.
+
+### 1. Create a `.env` file
+
+The compose setup loads environment variables from `.env`:
+
+```bash
+EXOSCALE_API_KEY=your_key
+EXOSCALE_API_SECRET=your_secret
+EXOSCALE_SERVER_ROLE=test
+```
+
+### 2. Start with Docker Compose
+
+```bash
+docker compose build
+docker compose up
+```
+
+Then open `http://localhost:8080/` for the API docs.
+
+To stop the app:
+
+```bash
+docker compose down
+```
+
 ## Testing
 
 Tests use [pytest](https://docs.pytest.org/) and live under `tests/`.

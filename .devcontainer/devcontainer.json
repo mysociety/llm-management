@@ -1,11 +1,11 @@
 {
 	"name": "llm_management",
 	"build": {
-		"dockerfile": "../Dockerfile"
+		"dockerfile": "../Dockerfile.dev"
 	},
 	"customizations": {
 		"vscode": {
-			"extensions": [	
+			"extensions": [
 				"ms-vscode.test-adapter-converter",
 				"bungcip.better-toml",
 				"ms-python.python",
