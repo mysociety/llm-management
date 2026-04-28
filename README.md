@@ -127,7 +127,21 @@ SERVER_ROLE=test
 AUTH_TOKEN=
 ```
 
-### 2. Start with Docker Compose
+### 2. Build and start
+
+You can use the helper scripts in `script/`:
+
+```bash
+script/build
+script/server
+```
+
+- `script/build` runs `docker compose build`.
+- `script/server` checks `IN_DOCKER`:
+    - when `IN_DOCKER` is set (inside the container), it runs `poetry run llm-management serve`
+    - when `IN_DOCKER` is not set (on the host), it runs `docker compose up`
+
+Equivalent raw Docker Compose commands:
 
 ```bash
 docker compose build

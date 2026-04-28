@@ -1,4 +1,8 @@
 #!/bin/bash
 set -e
 
-poetry run llm-management serve
+if [[ -n "${IN_DOCKER:-}" ]]; then
+    poetry run llm-management serve
+else
+    docker compose up "$@"
+fi

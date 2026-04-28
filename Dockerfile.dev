@@ -1,5 +1,6 @@
 FROM python:3.11-trixie
 
+ENV IN_DOCKER=1
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/root/.local/bin:${PATH}"
 WORKDIR /workspaces/llm-management
