@@ -40,12 +40,12 @@ class DeploymentQueryResult(PydanticBaseModel):
 
 
 def get_client(zone: str) -> Client:
-    if not settings.api_key or not settings.api_secret:
+    if not settings.exoscale_api_key or not settings.exoscale_api_secret:
         raise LLMManagementError(
             "EXOSCALE_API_KEY and EXOSCALE_API_SECRET must be set "
             "(via environment variables or .env file)."
         )
-    return Client(settings.api_key, settings.api_secret, zone=zone)
+    return Client(settings.exoscale_api_key, settings.exoscale_api_secret, zone=zone)
 
 
 class ExoscaleDeploymentConfig(BaseModel):

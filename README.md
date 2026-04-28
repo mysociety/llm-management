@@ -110,7 +110,7 @@ The compose setup loads environment variables from `.env`:
 ```bash
 EXOSCALE_API_KEY=your_key
 EXOSCALE_API_SECRET=your_secret
-EXOSCALE_SERVER_ROLE=test
+SERVER_ROLE=test
 ```
 
 ### 2. Start with Docker Compose

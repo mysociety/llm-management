@@ -8,10 +8,10 @@ CONFIG_PATH = Path("conf/exoscale.toml")
 
 
 class ExoscaleCredentials(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="EXOSCALE_", env_file=".env")
+    model_config = SettingsConfigDict(env_file=".env")
 
-    api_key: str = ""
-    api_secret: str = ""
+    exoscale_api_key: str = ""
+    exoscale_api_secret: str = ""
     huggingface_token: str = ""
     server_role: str = "test"
 
