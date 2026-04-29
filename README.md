@@ -1,6 +1,8 @@
 # llm-management
 
-A CLI tool for managing [Exoscale](https://www.exoscale.com/) dedicated LLM inference deployments.
+A FastAPI app and CLI tool for managing [Exoscale](https://www.exoscale.com/) dedicated LLM inference deployments.
+
+This acts as an intermediary between services/analysis processes and Exoscale, providing consistent endpoints, scale-to-zero, and specific functions with post-validation to centralise more complex LLM calls (e.g. extracting structure from FOI requests.)
 
 ## Configuration
 
@@ -72,7 +74,7 @@ Most commands accept a deployment `SLUG` (matching a slug in `conf/exoscale.toml
 
 ## FastAPI proxy server
 
-The package includes a FastAPI server that acts as an intermediary between your services and Exoscale deployments. Start it with:
+The package includes a FastAPI server that acts as an intermediary between services and Exoscale deployments. Start it with:
 
 ```
 llm-management serve [--host 0.0.0.0] [--port 8000] [--reload]
