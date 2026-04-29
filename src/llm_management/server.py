@@ -185,6 +185,14 @@ async def lifespan(app: FastAPI):
     cancel the scaler and scale to zero any deployments that received
     traffic during this session.
     """
+    if not settings.auth_token.strip():
+        logger.warning(
+            "AUTH_TOKEN is not set — the server is open to unauthenticated requests. "
+            "Ensure this instance is protected at the network level (e.g. behind a "
+            "VPN, firewall, or authenticating reverse proxy) before exposing it to "
+            "internet traffic."
+        )
+
     task = asyncio.create_task(idle_scaler())
     yield
     task.cancel()
