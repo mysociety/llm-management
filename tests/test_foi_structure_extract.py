@@ -49,30 +49,30 @@ def test_eir_foi_mixed(client: TestClient):
 
     result = extract_structure(client, test_content)
 
-    assert (
-        result.authority == "Tanbridge Council"
-    ), f"Expected authority 'Tanbridge Council', got '{result.authority}'"
-    assert (
-        len(result.questions) == 3
-    ), f"Expected 3 questions, got {len(result.questions)}: {result.questions}"
+    assert result.authority == "Tanbridge Council", (
+        f"Expected authority 'Tanbridge Council', got '{result.authority}'"
+    )
+    assert len(result.questions) == 3, (
+        f"Expected 3 questions, got {len(result.questions)}: {result.questions}"
+    )
     assert normalize_text(result.questions[0].text) == normalize_text(
         "Latest report on air pollution monitoring in the council."
     ), f"Question 1 text mismatch: got '{result.questions[0].text}'"
-    assert (
-        result.questions[0].ir_type == "EIR"
-    ), f"Question 1 should be EIR (environmental), got '{result.questions[0].ir_type}'"
+    assert result.questions[0].ir_type == "EIR", (
+        f"Question 1 should be EIR (environmental), got '{result.questions[0].ir_type}'"
+    )
     assert normalize_text(result.questions[1].text) == normalize_text(
         "Minutes of any discussion of this report in council meetings."
     ), f"Question 2 text mismatch: got '{result.questions[1].text}'"
-    assert (
-        result.questions[1].ir_type == "FOI"
-    ), f"Question 2 should be FOI, got '{result.questions[1].ir_type}'"
+    assert result.questions[1].ir_type == "FOI", (
+        f"Question 2 should be FOI, got '{result.questions[1].ir_type}'"
+    )
     assert normalize_text(result.questions[2].text) == normalize_text(
         "Any internal guidance on publication of council minutes"
     ), f"Question 3 text mismatch: got '{result.questions[2].text}'"
-    assert (
-        result.questions[2].ir_type == "FOI"
-    ), f"Question 3 should be FOI, got '{result.questions[2].ir_type}'"
+    assert result.questions[2].ir_type == "FOI", (
+        f"Question 3 should be FOI, got '{result.questions[2].ir_type}'"
+    )
 
 
 def test_all_foi(client: TestClient):
@@ -98,21 +98,21 @@ def test_all_foi(client: TestClient):
 
     result = extract_structure(client, test_content)
 
-    assert (
-        result.authority == "Rushmoor Borough Council"
-    ), f"Expected authority 'Rushmoor Borough Council', got '{result.authority}'"
+    assert result.authority == "Rushmoor Borough Council", (
+        f"Expected authority 'Rushmoor Borough Council', got '{result.authority}'"
+    )
     # allow a range here, questions can be split up differently and it's *fine* as long as the content is preserved
-    assert (
-        len(result.questions) > 10 and len(result.questions) < 13
-    ), f"Expected 11-12 questions, got {len(result.questions)}: {result.questions}"
+    assert len(result.questions) > 10 and len(result.questions) < 13, (
+        f"Expected 11-12 questions, got {len(result.questions)}: {result.questions}"
+    )
     assert normalize_text(result.questions[0].text) == normalize_text(
         "What period do you record FOI statistics in? Financial Year/Calendar Year/Other?"
     ), f"Question 1 text mismatch: got '{result.questions[0].text}'"
-    assert (
-        result.questions[0].ir_type == "FOI"
-    ), f"Question 1 should be FOI, got '{result.questions[0].ir_type}'"
+    assert result.questions[0].ir_type == "FOI", (
+        f"Question 1 should be FOI, got '{result.questions[0].ir_type}'"
+    )
     # check all questions are classified as FOI
     for i, question in enumerate(result.questions, 1):
-        assert (
-            question.ir_type == "FOI"
-        ), f"Question {i} should be FOI, got '{question.ir_type}': '{question.text}'"
+        assert question.ir_type == "FOI", (
+            f"Question {i} should be FOI, got '{question.ir_type}': '{question.text}'"
+        )
