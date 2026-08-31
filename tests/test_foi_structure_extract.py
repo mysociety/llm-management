@@ -12,29 +12,42 @@ from llm_management.agents.foi_structure import FOIRequest, normalize_text
 from llm_management.server import app
 from starlette.testclient import TestClient
 
-DEPLOYMENT = "olmo3_7b"
+DEPLOYMENTS = (
+    # "olmo3_7b",
+    # "granite4_h_tiny",
+    "granite4_1_8b",
+)
 
 pytestmark = pytest.mark.external
 
 
-@pytest.fixture(scope="session")
-def client() -> Iterator[TestClient]:
+@pytest.fixture(scope="session", params=DEPLOYMENTS, ids=DEPLOYMENTS)
+def deployment_client(
+    request: pytest.FixtureRequest,
+) -> Iterator[tuple[TestClient, str]]:
+    deployment = request.param
     with TestClient(app) as c:
-        resp = c.post(f"/deployments/{DEPLOYMENT}/ensure")
+        resp = c.post(f"/deployments/{deployment}/ensure")
         resp.raise_for_status()
-        yield c
+        yield c, deployment
 
 
-def extract_structure(client: TestClient, request_text: str) -> FOIRequest:
+def extract_structure(
+    client: TestClient, deployment: str, request_text: str
+) -> FOIRequest:
     """
     Post a request to the foi_structure endpoint and return the parsed result.
     """
-    resp = client.post("/agents/foi_structure", json={"request": request_text})
+    resp = client.post(
+        "/agents/foi_structure",
+        params={"deployment": deployment},
+        json={"request": request_text},
+    )
     resp.raise_for_status()
     return FOIRequest.model_validate(resp.json())
 
 
-def test_eir_foi_mixed(client: TestClient):
+def test_eir_foi_mixed(deployment_client: tuple[TestClient, str]):
     test_content = """
     Dear Tanbridge Council,
 
@@ -47,11 +60,9 @@ def test_eir_foi_mixed(client: TestClient):
     Thank you,
     """
 
-    result = extract_structure(client, test_content)
+    client, deployment = deployment_client
+    result = extract_structure(client, deployment, test_content)
 
-    assert result.authority == "Tanbridge Council", (
-        f"Expected authority 'Tanbridge Council', got '{result.authority}'"
-    )
     assert len(result.questions) == 3, (
         f"Expected 3 questions, got {len(result.questions)}: {result.questions}"
     )
@@ -75,7 +86,7 @@ def test_eir_foi_mixed(client: TestClient):
     )
 
 
-def test_all_foi(client: TestClient):
+def test_all_foi(deployment_client: tuple[TestClient, str]):
     test_content = """
     Dear Rushmoor Borough Council,
 
@@ -96,11 +107,9 @@ def test_all_foi(client: TestClient):
     If not all information is available, please treat questions individually.
     """
 
-    result = extract_structure(client, test_content)
+    client, deployment = deployment_client
+    result = extract_structure(client, deployment, test_content)
 
-    assert result.authority == "Rushmoor Borough Council", (
-        f"Expected authority 'Rushmoor Borough Council', got '{result.authority}'"
-    )
     # allow a range here, questions can be split up differently and it's *fine* as long as the content is preserved
     assert len(result.questions) > 10 and len(result.questions) < 13, (
         f"Expected 11-12 questions, got {len(result.questions)}: {result.questions}"

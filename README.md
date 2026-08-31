@@ -103,8 +103,8 @@ Requests with a missing or incorrect token are rejected with `401 Not authentica
 | `/deployments/{slug}/ensure` | POST | Create or resume a deployment so it is running |
 | `/deployments/{slug}/scale-to-zero` | POST | Scale a deployment to zero replicas (pause without destroying) |
 | `/deployments/{slug}/v1/{path}` | POST | Proxy requests to the underlying Exoscale deployment, injecting auth |
-| `/agents/capital_city` | POST | Example agent — returns the capital city of a given country |
-| `/agents/immigration_detection` | POST | Example agent — classifies a request as immigration-related (`IMM`) or FOI (`FOI`) |
+| `/agents/capital_city` | POST | Native structured-output example — returns a country's capital city |
+| `/agents/immigration_detection` | POST | Validated plain-text example — classifies a request as immigration-related (`IMM`) or FOI (`FOI`) |
 
 ### Automatic idle scaling
 
@@ -173,6 +173,10 @@ script/test --all
 ```
 
 Additional pytest arguments are passed through, e.g. `script/test -v` or `script/test --all -k toast`.
+
+External agent tests declare their model matrix in a `DEPLOYMENTS` tuple at the
+top of each test module. Uncomment or add slugs to test multiple models. Models
+run sequentially, scaling to zero between models, so only one uses GPU quota.
 
 ### Markers
 
