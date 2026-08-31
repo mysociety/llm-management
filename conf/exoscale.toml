@@ -11,7 +11,25 @@ inference_engine_params = [
     "--enable-prefix-caching",
     "--enable-auto-tool-choice",
     "--tool-call-parser=olmo3",
+    "--structured-outputs-config={\"backend\":\"xgrammar\",\"disable_any_whitespace\":true}",
 ]
+
+[[deployment]]
+
+slug = "granite4_1_8b"
+model = "ibm-granite/granite-4.1-8b"
+gpu_type = "gpua5000"
+gpu_count = 1
+replicas = 1
+zone = "at-vie-2"
+inference_engine_params = [
+    "--max-model-len=8192",
+    "--enable-prefix-caching",
+    "--enable-auto-tool-choice",
+    "--tool-call-parser=hermes",
+    "--structured-outputs-config={\"backend\":\"xgrammar\",\"disable_any_whitespace\":true}",
+]
+
 
 [[deployment]]
 
@@ -25,6 +43,7 @@ inference_engine_params = [
     "--enable-prefix-caching",
     "--enable-auto-tool-choice",
     "--tool-call-parser=hermes",
+    "--structured-outputs-config={\"backend\":\"xgrammar\",\"disable_any_whitespace\":true}",
 ]
 
 
@@ -53,9 +72,9 @@ gpu_count = 1
 replicas = 1
 zone = "at-vie-2"
 inference_engine_params = [
-    "--max-model-len=122000",
+    "--max-model-len=110000",
     "--enable-prefix-caching",
     "--enable-auto-tool-choice",
-    "--tool-call-parser=pythonic"
+    "--tool-call-parser=pythonic",
 ]
 
