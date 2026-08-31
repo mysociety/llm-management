@@ -24,8 +24,13 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from llm_management.agents.foi_structure import (
+    ExtractionResult,
     FOIRequest,
+    Question,
+    RequestMetadata,
+    extract_request_spans,
     extract_structure_from_request,
+    generate_request_metadata,
 )
 
 from .agents.capital_city import CapitalCityResponse, capital_city_agent
@@ -382,6 +387,14 @@ class FOiRequestContainer(BaseModel):
     request: str
 
 
+class FOIMetadataRequest(BaseModel):
+    """Validated extraction content supplied directly to the metadata agent."""
+
+    request: str
+    questions: list[Question]
+    additional_info: str | None = None
+
+
 @app.post("/agents/immigration_detection")
 async def immigration_detection_endpoint(
     body: FOiRequestContainer, deployment: str = "toast_llama"
@@ -405,3 +418,26 @@ async def foi_structure_endpoint(
     """
     model = await chat_model_from_slug(deployment)
     return await extract_structure_from_request(model=model, request_text=body.request)
+
+
+@app.post("/agents/foi_structure/extract")
+async def foi_structure_extract_endpoint(
+    body: FOiRequestContainer, deployment: str = "olmo3_7b"
+) -> ExtractionResult:
+    """Return source units and the span selections made by the extraction agent."""
+    model = await chat_model_from_slug(deployment)
+    return await extract_request_spans(model=model, request_text=body.request)
+
+
+@app.post("/agents/foi_structure/metadata")
+async def foi_structure_metadata_endpoint(
+    body: FOIMetadataRequest, deployment: str = "olmo3_7b"
+) -> RequestMetadata:
+    """Generate metadata from a request and its already-validated questions."""
+    model = await chat_model_from_slug(deployment)
+    return await generate_request_metadata(
+        model=model,
+        request_text=body.request,
+        questions=body.questions,
+        additional_info=body.additional_info,
+    )
