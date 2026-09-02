@@ -1,0 +1,8 @@
+#!/bin/bash
+set -e
+
+cd "$(dirname "$0")/.."
+
+echo "==> Building llm-mgmt image..."
+docker pull python:3.11-trixie
+docker build -t llm-mgmt:latest .
