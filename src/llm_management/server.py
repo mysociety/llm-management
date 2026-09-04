@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import time
 from contextlib import asynccontextmanager
 from functools import lru_cache
@@ -185,9 +186,10 @@ async def lifespan(app: FastAPI):
     cancel the scaler and scale to zero any deployments that received
     traffic during this session.
     """
-    if not settings.auth_token.strip():
+    if not settings.auth_tokens:
         logger.warning(
-            "AUTH_TOKEN is not set — the server is open to unauthenticated requests. "
+            "AUTH_TOKENS is empty — the server API is open to unauthenticated "
+            "requests. "
             "Ensure this instance is protected at the network level (e.g. behind a "
             "VPN, firewall, or authenticating reverse proxy) before exposing it to "
             "internet traffic."
@@ -213,20 +215,26 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="LLM Management Proxy", docs_url="/", lifespan=lifespan)
 
+PUBLIC_PATHS = {"/", "/docs/oauth2-redirect", "/health", "/openapi.json", "/redoc"}
+
 
 @app.middleware("http")
 async def require_bearer_auth_when_enabled(request: Request, call_next):
     """
-    Require an Authorization Bearer token for all requests only when
-    settings.auth_token is configured.
+    Require a configured Authorization Bearer token for API requests.
+
+    Health and API documentation routes are always public.
     """
-    required_token = settings.auth_token.strip()
-    if not required_token:
+    if request.url.path in PUBLIC_PATHS or not settings.auth_tokens:
         return await call_next(request)
 
     auth_header = request.headers.get("authorization", "")
     scheme, _, token = auth_header.partition(" ")
-    if scheme.lower() != "bearer" or token != required_token:
+    token_is_valid = scheme.lower() == "bearer" and any(
+        secrets.compare_digest(token, configured_token)
+        for configured_token in settings.auth_tokens.values()
+    )
+    if not token_is_valid:
         return JSONResponse(
             status_code=401,
             content={"detail": "Not authenticated"},
@@ -234,6 +242,14 @@ async def require_bearer_auth_when_enabled(request: Request, call_next):
         )
 
     return await call_next(request)
+
+
+@app.get("/health", include_in_schema=False)
+def health() -> dict[str, str]:
+    """
+    Report that the API process is running.
+    """
+    return {"status": "ok"}
 
 
 @app.get("/deployments/{slug}/status")

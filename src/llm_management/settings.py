@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 CONFIG_PATH = Path("conf/exoscale.toml")
@@ -14,7 +15,7 @@ class ExoscaleCredentials(BaseSettings):
     exoscale_api_secret: str = ""
     huggingface_token: str = ""
     server_role: str = "test"
-    auth_token: str = ""
+    auth_tokens: dict[str, str] = Field(default_factory=dict)
 
 
 settings = ExoscaleCredentials()
