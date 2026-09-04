@@ -13,7 +13,7 @@ Set the following via environment variables or a `.env` file in the working dire
 - `EXOSCALE_API_KEY` — Your Exoscale API key
 - `EXOSCALE_API_SECRET` — Your Exoscale API secret
 - `EXOSCALE_SERVER_ROLE` — Role suffix appended to deployment names on Exoscale (e.g. `test`, `production`). Defaults to `test`
-- `AUTH_TOKEN` — Optional bearer token for the FastAPI server. Defaults to empty (no auth)
+- `AUTH_TOKENS` — Optional JSON mapping of client names to bearer tokens. Defaults to an empty mapping (no auth)
 
 ### Deployment config
 
@@ -84,20 +84,30 @@ The server provides interactive API docs at the root URL (`/`).
 
 ### Server authentication
 
-If `AUTH_TOKEN` is empty, the FastAPI server does not require authentication.
+If `AUTH_TOKENS` is an empty JSON object, the FastAPI server does not require authentication.
 
-If `AUTH_TOKEN` is set, every request must include:
+If the mapping contains any items, API requests must include a token from the mapping:
+
+```bash
+AUTH_TOKENS='{"analysis-service":"token-one","admin-tool":"token-two"}'
+```
+
+Give each client its own clearly named token so it can be revoked independently.
+Generate with `openssl rand -hex 32`
 
 ```http
-Authorization: Bearer <AUTH_TOKEN>
+Authorization: Bearer <token>
 ```
 
 Requests with a missing or incorrect token are rejected with `401 Not authenticated`.
+The health endpoint and API documentation (`/`, `/openapi.json`, and `/redoc`) remain
+available without authentication.
 
 ### Endpoints
 
 | Endpoint | Method | Description |
 |---|---|---|
+| `/health` | GET | Unauthenticated process health check |
 | `/deployments` | GET | Overview of all configured deployments with idle timers |
 | `/deployments/{slug}/status` | GET | Check whether a deployment exists and its replica count |
 | `/deployments/{slug}/ensure` | POST | Create or resume a deployment so it is running |
@@ -126,7 +136,7 @@ The compose setup loads environment variables from `.env`:
 EXOSCALE_API_KEY=your_key
 EXOSCALE_API_SECRET=your_secret
 SERVER_ROLE=test
-AUTH_TOKEN=
+AUTH_TOKENS={}
 ```
 
 ### 2. Build and start
