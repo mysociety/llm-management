@@ -14,4 +14,4 @@ RUN curl -sSL https://install.python-poetry.org | python - && \
 COPY . .
 ENV PORT=8080
 RUN poetry install
-CMD ["llm-management", "serve"]
+CMD ["sh", "-c", "exec llm-management serve --port \"$PORT\""]
