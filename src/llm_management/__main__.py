@@ -11,6 +11,7 @@ from typing import Literal, Optional
 
 import rich
 import typer
+import os
 
 from .models import (
     DeploymentNotFoundError,
@@ -18,6 +19,8 @@ from .models import (
     LLMManagementError,
     get_client,
 )
+
+DEFAULT_PORT = os.environ.get("PORT", 5000)
 
 app = typer.Typer(help="Manage Exoscale dedicated inference deployments.")
 
@@ -273,7 +276,7 @@ def llm_test(
 @app.command()
 def serve(
     host: str = typer.Option("0.0.0.0", "--host", help="Bind address"),
-    port: int = typer.Option(8000, "--port", help="Bind port"),
+    port: int = typer.Option(DEFAULT_PORT, "--port", help="Bind port"),
     reload: bool = typer.Option(
         False, "--reload", help="Enable auto-reload for development"
     ),
