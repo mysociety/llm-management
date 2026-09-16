@@ -17,21 +17,6 @@ inference_engine_params = [
 
 [[deployment]]
 
-slug = "granite4_h_tiny"
-model = "ibm-granite/granite-4.0-h-tiny"
-gpu_type = "gpua5000"
-gpu_count = 1
-replicas = 1
-zone = "at-vie-2"
-inference_engine_params = [
-    "--enable-prefix-caching",
-    "--enable-auto-tool-choice",
-    "--tool-call-parser=hermes",
-]
-
-
-[[deployment]]
-
 slug = "dunno_llama_3b"
 model = "mySociety/Dunno_Llama_3B_safetensors"
 gpu_type = "gpua5000"
@@ -61,3 +46,42 @@ inference_engine_params = [
     "--tool-call-parser=pythonic",
 ]
 
+
+
+[[deployment]]
+# Fine-tuned encoder on GPU; its original classification head runs in the API.
+# Native /classify is not exposed by the managed gateway, so use /v1/embeddings.
+slug = "question_slice_v2"
+model = "mySociety/modernbert-question-slice-v2"
+gpu_type = "gpua5000"
+gpu_count = 1
+replicas = 1
+zone = "at-vie-2"
+inference_engine_params = [
+    "--runner=pooling",
+    "--max-model-len=768",
+    "--dtype=float16",
+    "--enforce-eager",
+    "--no-enable-prefix-caching",
+    '--hf-overrides={"architectures":["ModernBertModel"]}',
+    "--convert=embed",
+    '--pooler-config={"seq_pooling_type":"MEAN","use_activation":false}',
+]
+
+
+[[deployment]]
+# Full checkpoint: Granite 4.0 1B with the grounded-v2 adapter merged in.
+# Merged artifact validated at c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79.
+slug = "foi_topic_v2"
+model = "mySociety/granite-tiny-foi-topic-grounded-v2-merged"
+gpu_type = "gpua5000"
+gpu_count = 1
+replicas = 1
+zone = "at-vie-2"
+inference_engine_params = [
+    "--max-model-len=4096",
+    "--dtype=bfloat16",
+    "--enforce-eager",
+    "--no-enable-prefix-caching",
+    '--structured-outputs-config={"backend":"xgrammar","disable_any_whitespace":true}',
+]
