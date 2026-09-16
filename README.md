@@ -114,6 +114,8 @@ available without authentication.
 | `/deployments/{slug}/scale-to-zero` | POST | Scale a deployment to zero replicas (pause without destroying) |
 | `/deployments/{slug}/v1/{path}` | POST | Proxy requests to the underlying Exoscale deployment, injecting auth |
 | `/agents/capital_city` | POST | Native structured-output example — returns a country's capital city |
+| `/agents/foi_structure` | POST | QuestionSlice extraction followed by fine-tuned Granite regimes/topics; `backend=cpu` or `exoscale` selects extraction |
+| `/agents/foi_structure/extract` | POST | QuestionSlice extraction only |
 | `/agents/immigration_detection` | POST | Validated plain-text example — classifies a request as immigration-related (`IMM`) or FOI (`FOI`) |
 
 ### Automatic idle scaling
@@ -184,10 +186,221 @@ script/test --all
 
 Additional pytest arguments are passed through, e.g. `script/test -v` or `script/test --all -k toast`.
 
+External tests provision the deployments selected by each test module. The full
+FOI pipeline can keep both the ModernBERT encoder and Granite running together
+when testing GPU extraction. Test-client shutdown scales touched deployments to
+zero; verify cleanup after interruptions or provisioning failures.
+
 ### Markers
 
 | Marker | Description |
 |---|---|
 | `external` | Test creates or connects to a real Exoscale deployment. These tests require valid `EXOSCALE_API_KEY` / `EXOSCALE_API_SECRET` credentials, will start GPU instances, and may take several minutes. |
 
-Tests marked `external` (in `test_proxy.py` and `test_toast.py`) use FastAPI's `TestClient` to run the server in-process but call `/deployments/{slug}/ensure`, which provisions real infrastructure. The remaining tests (`test_meta.py`, `test_llm_management.py`) are purely local and need no credentials or network access.
+Tests marked `external` cover the proxy, Toast classification, the full fine-tuned FOI pipeline, and ModernBERT CPU/Exoscale parity. They use FastAPI's `TestClient` to run the server in-process while provisioning real infrastructure. App shutdown scales deployments touched by the tests to zero; check deployment state after interrupted runs or provisioning failures. Unmarked tests run locally without real model inference.
+
+To test the full pipeline with both extraction backends:
+
+```bash
+script/test --all -m external tests/test_foi_pipeline_external.py -v
+```
+
+To run only the paid ModernBERT parity checks:
+
+```bash
+script/test --all -m external tests/test_question_slice_external.py -v
+```
+
+Three checks compare CPU/GPU labels and reconstructed questions, including text
+without questions and a continuation recovered by the local heuristic. A fourth
+check verifies the exact recovered single question. No OLMo deployment is used by
+these extraction tests. These smoke tests do not establish production accuracy.
+
+## Fine-tuned QuestionSlice extraction (experimental)
+
+`POST /agents/foi_structure/extract?backend=cpu` runs the fine-tuned ModernBERT
+question extractor. The body is `{"request": "..."}`. It returns reconstructed
+questions, source-unit predictions/probabilities, additional/ignored text and an
+`extraction_status` of `questions_found`, `no_questions_found` or `uncertain`.
+If there are no predicted question starts anywhere but at least one continuation,
+the first continuation is treated as a start during reconstruction. Later
+continuations join that question using the existing grouping rules. The response
+records `promoted_continuation_index` (otherwise null). Raw `unit_predictions`,
+probabilities and `orphan_continuation_indices` remain unchanged for audit; the
+final questions, residual text and `extraction_status` reflect the recovery.
+
+If a start already exists, orphan continuations remain `uncertain`. If neither
+starts nor continuations exist, the result remains `no_questions_found`. No OLMo
+escalation is performed. This dataset-specific heuristic can merge separate asks;
+its boundary accuracy still requires evaluation on representative correspondence.
+
+This extraction endpoint does not classify topics/regimes. Use
+`POST /agents/foi_structure?backend=cpu` (or `backend=exoscale`) for the complete
+pipeline. The same request body is used. Granite always runs remotely on the
+`foi_topic_v2` Exoscale deployment after extraction; no Granite call is made when
+there are no extracted questions. Remaining `uncertain` status is preserved even
+when Granite classifies the questions that were successfully extracted.
+
+The full response includes all extraction fields plus `request_text`,
+`classification` and model provenance. `classification.questions` contains ordered
+`question_id`, `regime` (`FOI`, `EIR`, `SAR`) and `topic`; `classification.request_topics`
+contains unique request-level topics. Question IDs match the source-grounded
+`questions` array exactly. `classification` and `classification_model` are null when no
+classification is needed. The old summary, five keywords and `ir_type` schema,
+metadata endpoint and legacy extraction flow have been removed.
+
+Example full-pipeline request:
+
+```bash
+curl -X POST 'http://localhost:8080/agents/foi_structure?backend=cpu' \
+  -H 'Content-Type: application/json' \
+  -d '{"request":"Please provide the latest air pollution monitoring report."}'
+```
+
+Granite serves `mySociety/granite-tiny-foi-topic-grounded-v2-merged`, containing the
+`grounded-v2` adapter merged into Granite 4.0 1B. The merged artifact was inspected
+at revision `c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79`; its tokenizer/chat template
+is pinned locally to that revision. Exoscale imports weights by repository name,
+so keep that import and local tokenizer in sync when updating the model. No base
+Granite substitution is allowed. Model merging and publication are handled in
+the fine-tuning project; this service does not require PEFT.
+
+Granite uses JSON-schema constrained generation and validates IDs, counts, regimes,
+and unique topics after inference. Inputs over 2,048 chat-template tokens are
+rejected before provisioning Granite. Output allowance is `max(256, 64 + 192*n)`,
+capped at 2,048 tokens (at most ten questions); exceeding either input or output
+budget returns 422 without truncation or automatic chunking. Invalid/incomplete
+upstream output returns 502; unavailable deployment/tokenizer returns 503.
+This budget remains a heuristic, and smoke tests do not establish accuracy.
+
+Both extraction backends are included in the default Docker image. For a non-Docker
+installation, install the inference dependencies in the Python environment running
+the API:
+
+```bash
+poetry install
+```
+
+With Docker, use the normal build and start commands:
+
+```bash
+docker compose build
+docker compose up
+```
+
+Choose CPU or Exoscale per request using the `backend` query parameter; no build-time
+mode selection is needed. Both use the same CPU Torch package: CPU mode runs the full
+model locally, while Exoscale mode runs only the small classification head locally.
+Exoscale-only use does not load the full CPU encoder.
+Poetry locks the inference dependencies together with the API dependencies and
+uses the explicit PyTorch CPU package source. The setup was tested on Linux x86_64
+with Python 3.11. Mount `CLASSIFIER_CACHE_DIR` on
+persistent storage to retain downloaded weights across container replacements.
+
+Example (add the usual bearer header when `AUTH_TOKENS` is configured):
+
+```bash
+curl -X POST 'http://localhost:8080/agents/foi_structure/extract?backend=cpu' \
+  -H 'Content-Type: application/json' \
+  -d '{"request":"Please provide the annual expenditure report."}'
+```
+
+Use the same request with `backend=exoscale` for GPU-backed extraction:
+
+```bash
+curl -X POST 'http://localhost:8080/agents/foi_structure/extract?backend=exoscale' \
+  -H 'Content-Type: application/json' \
+  -d '{"request":"Please provide the annual expenditure report."}'
+```
+
+This uses the `question_slice_v2` deployment in `conf/exoscale.toml`, with the
+existing ensure/resume/idle-scaling lifecycle. Exoscale's gateway does not expose
+vLLM's native `/classify`, so this backend serves the **fine-tuned encoder** through
+`/v1/embeddings` with mean pooling and normalisation disabled, then applies the
+**original fine-tuned classification head** locally. This is the same trained model
+split across devices, not an unadapted embedding model or a replacement classifier.
+Prefix caching must be disabled for this encoder on the tested vLLM 0.29.0 runtime.
+
+GPU probabilities may differ slightly due to float16 execution. Keep the imported
+encoder and local head from the same checkpoint release. The local head uses `QUESTION_SLICE_REVISION`;
+remote responses use `extraction_revision: null` because the Exoscale importer does not verify
+the encoder SHA. Loading the head currently downloads the full safetensors artifact
+into the cache, but retains only its small head tensors for inference.
+
+There is no silent backend fallback. Set `QUESTION_SLICE_GPU_ENABLED=false` to
+disable remote extraction without provisioning anything.
+
+Optional environment settings:
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `FOI_TOPIC_DEPLOYMENT` | `foi_topic_v2` | Merged fine-tuned Granite deployment for the full FOI pipeline |
+| `CPU_INFERENCE_THREADS` | `1` | Process-wide PyTorch intra-op thread count |
+| `CPU_INFERENCE_PRELOAD` | `false` | Load CPU model during application startup instead of the first CPU request |
+| `CLASSIFIER_BATCH_SIZE` | `8` | Maximum semantic units per inference call |
+| `CLASSIFIER_MAX_UNITS` | `256` | Maximum semantic units accepted per request |
+| `CLASSIFIER_CACHE_DIR` | Hugging Face default | Persistent tokenizer/weight cache location |
+| `QUESTION_SLICE_MODEL` | `mySociety/modernbert-question-slice-v2` | Classifier checkpoint |
+| `QUESTION_SLICE_REVISION` | `eb0436d4be96f113f35b5f891f9cc876a0f0bd6b` | Pinned local tokenizer/model revision |
+| `QUESTION_SLICE_DEPLOYMENT` | `question_slice_v2` | Remote deployment slug |
+| `QUESTION_SLICE_GPU_ENABLED` | `true` | Allow the tested Exoscale encoder + local-head backend |
+
+A model instance is cached per API worker process. CPU inference runs outside the
+async event loop with one in-flight request per model instance. Overload returns
+429 with `Retry-After: 1`; batch clients should retry with backoff and limit parallel
+requests. This is backpressure, not a durable job queue or cross-request batching.
+Requests above 100,000 characters, the configured unit count, or 768 tokens in any
+context window are rejected with 422. Inputs are never silently truncated.
+Unavailable dependencies/models return 503 and malformed upstream outputs return
+502. Avoid multiple API workers until deployment lifecycle ownership is coordinated;
+the existing Exoscale cache and idle scaler are process-local.
+
+## Code navigation
+
+The FOI pipeline lives in `src/llm_management/foi/`. Start with
+`pipeline.py`: `extract_questions()` performs extraction, and
+`process_information_request()` adds Granite classification. Both are async Python
+functions that accept request text, the extraction backend, and a `DeploymentAccess`
+object supplying deployment lookup, ensure/resume and activity tracking. They can
+be called from batch code without a FastAPI request or `TestClient`.
+
+| Module | Responsibility |
+|---|---|
+| `foi/pipeline.py` | Stage ordering, skipped classification and domain errors |
+| `foi/schemas.py` | Labels and input/output structures shared by both stages |
+| `foi/question_slice.py` | Segmentation, contextual windows, probability validation and question reconstruction |
+| `foi/backends.py` | Cached classifier/head factories and CPU versus Exoscale execution |
+| `foi/granite.py` | Tokenizer loading, training-compatible prompts and constrained topic output |
+| `foi/model_spec.py` | Checkpoint identities, revisions and model input/output limits |
+| `inference.py` / `errors.py` | Reusable classifier execution and runtime errors, independent of FOI code |
+| `settings.py` | Runtime settings/environment variables; deployment hardware is in `conf/exoscale.toml` |
+| `server.py` | HTTP contracts, error translation and existing deployment lifecycle wiring |
+
+`agents/` contains the actual Pydantic AI agent implementations. FOI extraction
+and classification no longer live there. Keep schemas free of runtime imports;
+model-specific factories belong in `foi/backends.py`, not the generic classifier.
+
+Within reconstruction, `predictions_from_probabilities()` preserves raw labels,
+`promote_initial_continuation_if_needed()` applies the narrow recovery rule, and
+`build_extraction_result()` assembles raw diagnostics with the recovered questions.
+The original orphan indices may therefore remain present when the final status is
+`questions_found`; `promoted_continuation_index` explains the recovery.
+
+Tests follow these boundaries: `test_question_slice.py` covers pure processing,
+`test_inference.py` covers reusable runtime behavior, `test_granite.py` covers prompts
+and transport validation, `test_foi_pipeline.py` calls the pipeline directly, and
+`test_foi_routes.py` checks HTTP contracts. The existing external test modules
+exercise real models through the unchanged API routes.
+
+### Model identity and provenance
+
+Responses identify extraction with `extraction_model`, `extraction_revision` and
+`extraction_backend`. The `backend` query parameter still selects extraction.
+`classification_model` identifies the merged checkpoint used for classification,
+or is null when classification is skipped. No separate adapter is loaded at runtime.
+
+The merged Granite checkpoint was built from `ibm-granite/granite-4.0-1b`
+(revision `6a7381ba1f54d684ff508d991aeb7dc580157103`) and
+`mySociety/granite-tiny-foi-topic-grounded-v2`
+(revision `200b756850c137c255f2e6c5c24474edd894d010`). These describe training
+provenance; they are not independently served models.

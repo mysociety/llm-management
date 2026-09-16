@@ -1,5 +1,5 @@
 from llm_management.server import app
-from llm_management.settings import ExoscaleCredentials, settings
+from llm_management.settings import Settings, settings
 from starlette.testclient import TestClient
 
 
@@ -8,7 +8,7 @@ def test_auth_tokens_are_loaded_from_json_mapping(monkeypatch):
         "AUTH_TOKENS", '{"service-a":"first-token","service-b":"second-token"}'
     )
 
-    loaded_settings = ExoscaleCredentials(_env_file=None)
+    loaded_settings = Settings(_env_file=None)
 
     assert loaded_settings.auth_tokens == {
         "service-a": "first-token",

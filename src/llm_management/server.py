@@ -14,20 +14,15 @@ import asyncio
 import logging
 import secrets
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from functools import lru_cache
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
-
-from llm_management.agents.foi_structure import (
-    FOIRequest,
-    extract_structure_from_request,
-)
 
 from .agents.capital_city import CapitalCityResponse, capital_city_agent
 from .agents.immigration_detection import (
@@ -37,6 +32,13 @@ from .agents.immigration_detection import (
 from .cache import DeploymentState, cache
 from .models import ExoscaleConfig, ExoscaleDeploymentConfig, LLMManagementError
 from .settings import settings
+from .errors import ClassifierBusy
+from .foi import backends, pipeline
+from .foi.schemas import (
+    ExtractionBackend,
+    InformationRequestResult,
+    QuestionSliceResult,
+)
 
 logger = logging.getLogger("llm_management.server")
 
@@ -194,6 +196,9 @@ async def lifespan(app: FastAPI):
             "VPN, firewall, or authenticating reverse proxy) before exposing it to "
             "internet traffic."
         )
+
+    if settings.cpu_inference_preload:
+        await asyncio.to_thread(backends.question_classifier().warmup)
 
     task = asyncio.create_task(idle_scaler())
     yield
@@ -411,13 +416,55 @@ async def immigration_detection_endpoint(
     return await immigration_detection_agent(model=model, request=body.request)
 
 
+class QuestionSliceRequest(BaseModel):
+    request: str = Field(min_length=1, max_length=100_000)
+
+
+def foi_deployments() -> backends.DeploymentAccess:
+    """Bind the shared deployment lifecycle to the HTTP-independent FOI pipeline."""
+    return backends.DeploymentAccess(get_deployment_config, ensure_running, cache.touch)
+
+
+@contextmanager
+def foi_http_errors():
+    """Translate domain/runtime failures only at the HTTP boundary."""
+    try:
+        yield
+    except ClassifierBusy as exc:
+        raise HTTPException(
+            status_code=429, detail=str(exc), headers={"Retry-After": "1"}
+        ) from exc
+    except pipeline.PipelineInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except pipeline.PipelineUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except pipeline.PipelineOutputError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/agents/foi_structure/extract")
+async def question_slice_endpoint(
+    body: QuestionSliceRequest,
+    backend: ExtractionBackend = "cpu",
+) -> QuestionSliceResult:
+    """Extract source-grounded questions with either classifier backend.
+
+    When no question starts exist, promote the first continuation locally.
+    No OLMo escalation or Granite classification. CPU overload returns 429.
+    """
+    with foi_http_errors():
+        return await pipeline.extract_questions(
+            body.request, backend=backend, deployments=foi_deployments()
+        )
+
+
 @app.post("/agents/foi_structure")
-async def foi_structure_endpoint(
-    body: FOiRequestContainer, deployment: str = "olmo3_7b"
-) -> FOIRequest:
-    """
-    Example agent endpoint. Takes a request and returns its structured representation
-    via a pydantic-ai Agent running on the specified deployment.
-    """
-    model = await chat_model_from_slug(deployment)
-    return await extract_structure_from_request(model=model, request_text=body.request)
+async def information_request_endpoint(
+    body: QuestionSliceRequest,
+    backend: ExtractionBackend = "cpu",
+) -> InformationRequestResult:
+    """QuestionSlice extraction followed by fine-tuned Granite topics/regimes."""
+    with foi_http_errors():
+        return await pipeline.process_information_request(
+            body.request, backend=backend, deployments=foi_deployments()
+        )
