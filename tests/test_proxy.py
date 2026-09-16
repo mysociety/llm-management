@@ -40,7 +40,7 @@ def test_capital_city_agent(client: TestClient):
     assert data["city"].lower() == "paris", f"Expected 'Paris', got '{data['city']}'"
 
 
-def test_proxy_with_pydantic_ai():
+def test_proxy_with_pydantic_ai(client: TestClient):
     """
     Use pydantic-ai pointed at the proxy's forwarding endpoint to run a
     structured capital-city query, the same way a real client would.

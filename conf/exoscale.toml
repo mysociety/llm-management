@@ -7,10 +7,12 @@ gpu_count = 1
 replicas = 1
 zone = "at-vie-2"
 inference_engine_params = [
-    "--max-model-len=20000",
+    # 20,000 tokens exceeds available KV cache on a single A5000.
+    "--max-model-len=16384",
     "--enable-prefix-caching",
     "--enable-auto-tool-choice",
     "--tool-call-parser=olmo3",
+    "--structured-outputs-config={\"backend\":\"xgrammar\",\"disable_any_whitespace\":true}",
 ]
 
 [[deployment]]
@@ -53,9 +55,9 @@ gpu_count = 1
 replicas = 1
 zone = "at-vie-2"
 inference_engine_params = [
-    "--max-model-len=122000",
+    "--max-model-len=110000",
     "--enable-prefix-caching",
     "--enable-auto-tool-choice",
-    "--tool-call-parser=pythonic"
+    "--tool-call-parser=pythonic",
 ]
 
