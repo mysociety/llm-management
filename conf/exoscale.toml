@@ -85,3 +85,8 @@ inference_engine_params = [
     "--no-enable-prefix-caching",
     '--structured-outputs-config={"backend":"xgrammar","disable_any_whitespace":true}',
 ]
+
+
+[[deployment_group]]
+slug = "foi_pipeline"
+deployments = ["question_slice_v2", "foi_topic_v2"]

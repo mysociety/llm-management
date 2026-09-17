@@ -404,3 +404,19 @@ The merged Granite checkpoint was built from `ibm-granite/granite-4.0-1b`
 `mySociety/granite-tiny-foi-topic-grounded-v2`
 (revision `200b756850c137c255f2e6c5c24474edd894d010`). These describe training
 provenance; they are not independently served models.
+
+## Deployment groups
+
+Named groups in `conf/exoscale.toml` let batch clients prepare several deployments concurrently:
+
+```toml
+[[deployment_group]]
+slug = "foi_pipeline"
+deployments = ["question_slice_v2", "foi_topic_v2"]
+```
+
+Call `POST /deployment-groups/foi_pipeline/ensure` with the usual authentication before a batch using GPU extraction. This explicitly creates or resumes both deployments, even when automatic startup on inference requests is disabled. Existing per-deployment locks prevent overlapping group and inference requests from starting the same deployment twice within one API process.
+
+A known group returns HTTP 200 with `slug`, overall `success`, and an ordered `deployments` list. Each member has `slug`, `success`, `replicas` (null on failure) and `error` (null on success). Inspect the success flags: a partial or complete startup failure is reported in the body. Unknown groups return 404. Successful members are not rolled back when another fails; retrying the group reuses running deployments. Idle scaling and shutdown cleanup remain per deployment, and warm-up does not keep a group running indefinitely.
+
+Groups must be nonempty, have unique names, and reference existing deployment slugs without repeated members.

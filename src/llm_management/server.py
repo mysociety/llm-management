@@ -59,6 +59,19 @@ class EnsureResponse(BaseModel):
     replicas: int
 
 
+class GroupMemberResult(BaseModel):
+    slug: str
+    success: bool
+    replicas: int | None = None
+    error: str | None = None
+
+
+class GroupEnsureResponse(BaseModel):
+    slug: str
+    success: bool
+    deployments: list[GroupMemberResult]
+
+
 class ScaleToZeroResponse(BaseModel):
     slug: str
     action: str
@@ -109,18 +122,20 @@ def get_deployment_config(slug: str) -> ExoscaleDeploymentConfig:
         )
 
 
-async def ensure_running(slug: str) -> tuple[ExoscaleDeploymentConfig, DeploymentState]:
+async def ensure_running(
+    slug: str, *, allow_start: bool = False
+) -> tuple[ExoscaleDeploymentConfig, DeploymentState]:
     """
     Return the config and a live deployment state for *slug*.
 
     If the deployment is not running and AUTO_ENSURE_ON_REQUEST is True,
     start it (with a per-slug lock so concurrent requests don't race).
-    Otherwise raise 503.
+    Otherwise raise 503. Explicit group warm-up sets allow_start=True.
     """
     cfg = get_deployment_config(slug)
     state = await asyncio.to_thread(cache.ensure, cfg)
     if not state.exists or state.replicas == 0:
-        if AUTO_ENSURE_ON_REQUEST:
+        if allow_start or AUTO_ENSURE_ON_REQUEST:
             async with cache.ensure_lock(slug):
                 state = await asyncio.to_thread(cache.ensure, cfg)
                 if not state.exists or state.replicas == 0:
@@ -294,6 +309,35 @@ def ensure_deployment(slug: str) -> EnsureResponse:
     action = "created" if not state.exists else "resumed"
     logger.info("Deployment %s %s in %.1fs.", slug, action, elapsed)
     return EnsureResponse(slug=slug, action=action, replicas=new_state.replicas)
+
+
+@app.post("/deployment-groups/{slug}/ensure")
+async def ensure_deployment_group(slug: str) -> GroupEnsureResponse:
+    """Prepare group members concurrently; report failures without rolling back peers."""
+    try:
+        group = load_config().get_group(slug)
+    except LLMManagementError:
+        raise HTTPException(
+            status_code=404, detail=f"Deployment group '{slug}' not found"
+        )
+
+    async def ensure_member(member: str) -> GroupMemberResult:
+        try:
+            _, state = await ensure_running(member, allow_start=True)
+            return GroupMemberResult(slug=member, success=True, replicas=state.replicas)
+        except Exception as exc:
+            # Provider errors may contain credentials; do not return their raw text.
+            logger.warning("Group ensure failed for %s: %s", member, type(exc).__name__)
+            return GroupMemberResult(
+                slug=member, success=False, error="Deployment could not be started"
+            )
+
+    results = await asyncio.gather(
+        *(ensure_member(member) for member in group.deployments)
+    )
+    return GroupEnsureResponse(
+        slug=slug, success=all(r.success for r in results), deployments=results
+    )
 
 
 @app.post("/deployments/{slug}/scale-to-zero")
