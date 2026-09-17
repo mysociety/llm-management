@@ -10,6 +10,7 @@ from exoscale.api.exceptions import (
     ExoscaleAPIServerException,
 )
 from exoscale.api.v2 import Client
+from pydantic import Field, model_validator
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -295,10 +296,41 @@ class ExoscaleDeploymentConfig(BaseModel):
         raise LLMManagementError(f"Expected city='Paris' but got city='{output.city}'")
 
 
+class DeploymentGroupConfig(PydanticBaseModel):
+    """A named collection of deployments to prepare concurrently."""
+
+    slug: str = Field(min_length=1)
+    deployments: list[str] = Field(min_length=1)
+
+
 class ExoscaleConfig(BaseModel):
     """Container for all deployment configs, loaded from exoscale.toml."""
 
     deployment: list[ExoscaleDeploymentConfig]
+    deployment_group: list[DeploymentGroupConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_groups(self):
+        known = {d.slug for d in self.deployment}
+        names: set[str] = set()
+        for group in self.deployment_group:
+            if group.slug in names:
+                raise ValueError(f"Duplicate deployment group: {group.slug}")
+            names.add(group.slug)
+            if len(set(group.deployments)) != len(group.deployments):
+                raise ValueError(f"Duplicate members in deployment group: {group.slug}")
+            unknown = set(group.deployments) - known
+            if unknown:
+                raise ValueError(
+                    f"Unknown deployments in group {group.slug}: {sorted(unknown)}"
+                )
+        return self
+
+    def get_group(self, slug: str) -> DeploymentGroupConfig:
+        for group in self.deployment_group:
+            if group.slug == slug:
+                return group
+        raise LLMManagementError(f"No deployment group found with slug '{slug}'.")
 
     @classmethod
     def load(cls, config_path: Path = CONFIG_PATH) -> ExoscaleConfig:
