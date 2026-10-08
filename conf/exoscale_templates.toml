@@ -1,0 +1,35 @@
+# Template releases are shared artifacts, independent of deployment server_role.
+# Use a new name when changing the image, model revision or host setup.
+[[template]]
+slug = "clef_flash"
+name = "systemone-clef-flash-2026-10-08-v1"
+zone = "at-vie-2"
+image = "ghcr.io/mysociety/systemone-container:sha-b783a1e9a83fc3ef5cfca97c2a374b7cc4dbe2fe"
+backend = "clef"
+model = "Cloudflare/clef-flash"
+revision = "fde727a287004204b7518dcc983fe64379776712"
+max_length = 4096
+instance_type = "gpua5000.small"
+disk_size_gib = 100
+base_template_name = "Linux Ubuntu 24.04 LTS 64-bit"
+nvidia_driver_package = "nvidia-driver-570"
+
+[[template.smoke]]
+state = "What is the capital of France?"
+instructions = "Select the city that answers the question."
+expected = "PARIS"
+
+[template.smoke.criteria]
+PARIS = "Paris"
+LONDON = "London"
+BERLIN = "Berlin"
+
+[[template.smoke]]
+state = "What is two plus two?"
+instructions = "Select the number that answers the question."
+expected = "FOUR"
+
+[template.smoke.criteria]
+THREE = "3"
+FOUR = "4"
+FIVE = "5"

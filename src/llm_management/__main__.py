@@ -20,9 +20,13 @@ from .models import (
     get_client,
 )
 
+from .templates.cli import app as templates_app
+
 DEFAULT_PORT = os.environ.get("PORT", 5000)
 
 app = typer.Typer(help="Manage Exoscale dedicated inference deployments.")
+
+app.add_typer(templates_app, name="templates")
 
 
 def handle_errors(func):

@@ -8,7 +8,8 @@ license = "MIT"
 homepage = "https://github.com/mysociety/llm-management"
 repository = "https://github.com/mysociety/llm-management"
 include = [
-    "LICENSE.md",
+    { path = "LICENSE.md", format = ["sdist"] },
+    { path = "src/llm_management/templates/bootstrap.sh", format = ["sdist", "wheel"] },
 ]
 
 [tool.poetry_bumpversion.file."src/llm_management/__init__.py"]

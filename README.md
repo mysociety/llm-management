@@ -160,6 +160,16 @@ failures return 503 and timeouts return 504. The immigration endpoint returns
 502 for upstream errors or malformed classifications. The original
 `/agents/immigration_detection?deployment=toast_llama` remains available.
 
+### Prepared GPU VM templates
+
+The `llm-management templates` CLI uses recipes from
+[conf/exoscale_templates.toml](conf/exoscale_templates.toml) to prepare and resolve
+named VM templates. Its serving image is published from
+[mysociety/systemone-container](https://github.com/mysociety/systemone-container/).
+See [the template guide](EXOSCALE_TEMPLATES.md) for creation, testing and cleanup.
+
+Temporary VMs, snapshots, SSH keys and groups are deleted; the reusable template is retained.
+
 ### Automatic idle scaling
 
 The server tracks when each deployment last received traffic. Deployments that have been idle for longer than 15 minutes are automatically scaled to zero. On shutdown, all deployments that received traffic during the session are also scaled to zero.
