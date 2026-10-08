@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import rich
 from exoscale.api.exceptions import (
@@ -50,6 +50,8 @@ def get_client(zone: str) -> Client:
 
 
 class ExoscaleDeploymentConfig(BaseModel):
+    backend: Literal["exoscale_managed"] = "exoscale_managed"
+    protocol: Literal["openai"] = "openai"
     slug: str
     model: str
     gpu_type: str

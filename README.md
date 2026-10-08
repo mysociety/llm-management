@@ -113,10 +113,52 @@ available without authentication.
 | `/deployments/{slug}/ensure` | POST | Create or resume a deployment so it is running |
 | `/deployments/{slug}/scale-to-zero` | POST | Scale a deployment to zero replicas (pause without destroying) |
 | `/deployments/{slug}/v1/{path}` | POST | Proxy requests to the underlying Exoscale deployment, injecting auth |
+| `/v1/systemone` | POST | Proxy System One decision requests to the selected Exoscale deployment |
+| `/agents/immigration_detection/clef` | POST | Single Clef choice question returning `IMM` or `FOI` |
 | `/agents/capital_city` | POST | Native structured-output example — returns a country's capital city |
 | `/agents/foi_structure` | POST | QuestionSlice extraction followed by fine-tuned Granite regimes/topics; `backend=cpu` or `exoscale` selects extraction |
 | `/agents/foi_structure/extract` | POST | QuestionSlice extraction only |
 | `/agents/immigration_detection` | POST | Validated plain-text example — classifies a request as immigration-related (`IMM`) or FOI (`FOI`) |
+
+### Clef / System One
+
+The server exposes `/v1/systemone?deployment=clef` and a native Pydantic AI
+immigration agent at `/agents/immigration_detection/clef?deployment=clef`.
+Both use the selected deployment connection.
+
+Call `/v1/systemone?deployment=clef` with the upstream server's JSON request
+shape. Bodies and upstream query parameters are forwarded unchanged; the local
+`deployment` selector is removed. Client credentials are removed before forwarding; managed deployment keys are
+injected when present. The upstream status and body are returned to the caller. The
+existing `/deployments/clef/v1/systemone` proxy can also forward these requests.
+
+```bash
+curl 'http://localhost:8000/v1/systemone?deployment=clef' \
+  -H 'Authorization: Bearer <server-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"Cloudflare/clef-flash","state":"Please update me on my visa application.","questions":{"classification":{"type":"choice","instructions":"Classify this request.","criteria":{"IMM":"Immigration matters","FOI":"Other information requests"}}}}'
+```
+
+The minimal immigration endpoint uses a Pydantic AI `Agent` with a typed
+`ClassificationResponse` output. Its native
+[`SystemOneModel`](https://pydantic.dev/docs/ai/models/system-one/) translates
+the classification field into a choice question and validates the returned
+answer and probabilities. The provider uses the deployment's resolved API connection:
+
+
+```bash
+curl 'http://localhost:8000/agents/immigration_detection/clef?deployment=clef' \
+  -H 'Authorization: Bearer <server-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"request":"Please update me on my visa application."}'
+# {"classification":"IMM"}
+```
+
+Both endpoints use normal server authentication and `ensure_running`, which
+updates the shared idle timer. Unknown deployment slugs return 404; transport
+failures return 503 and timeouts return 504. The immigration endpoint returns
+502 for upstream errors or malformed classifications. The original
+`/agents/immigration_detection?deployment=toast_llama` remains available.
 
 ### Automatic idle scaling
 

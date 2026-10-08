@@ -18,9 +18,17 @@ from contextlib import asynccontextmanager, contextmanager
 from functools import lru_cache
 
 import httpx
+import httpx2
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelHTTPError,
+    UnexpectedModelBehavior,
+)
+from pydantic_ai.models.system_one import SystemOneModel
+from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -28,10 +36,12 @@ from .agents.capital_city import CapitalCityResponse, capital_city_agent
 from .agents.immigration_detection import (
     ClassificationResponse,
     immigration_detection_agent,
+    immigration_decision_agent,
 )
 from .cache import DeploymentState, cache
 from .models import ExoscaleConfig, ExoscaleDeploymentConfig, LLMManagementError
 from .settings import settings
+from . import systemone
 from .errors import ClassifierBusy
 from .foi import backends, pipeline
 from .foi.schemas import (
@@ -160,6 +170,11 @@ async def chat_model_from_slug(slug: str) -> OpenAIChatModel:
     Ensures the deployment is cached and running, touches the idle timer,
     and raises 503 if the deployment is not available.
     """
+    cfg = get_deployment_config(slug)
+    if getattr(cfg, "protocol", "openai") != "openai":
+        raise HTTPException(
+            status_code=400, detail="This endpoint requires an OpenAI deployment."
+        )
     cfg, state = await ensure_running(slug)
     return OpenAIChatModel(
         cfg.model,
@@ -404,7 +419,9 @@ async def proxy_to_deployment(slug: str, path: str, request: Request):
     target_url = f"{state.deployment_url.rstrip('/')}/{path}"
     body = await request.body()
     headers = dict(request.headers)
-    headers["authorization"] = f"Bearer {state.api_key}"
+    headers.pop("authorization", None)
+    if state.api_key:
+        headers["authorization"] = f"Bearer {state.api_key}"
     for h in ("host", "content-length", "transfer-encoding"):
         headers.pop(h, None)
 
@@ -423,6 +440,43 @@ async def proxy_to_deployment(slug: str, path: str, request: Request):
         content=resp.content,
         status_code=resp.status_code,
         headers=dict(resp.headers),
+    )
+
+
+@contextmanager
+def systemone_http_errors():
+    """Translate transport failures without exposing upstream credentials."""
+    try:
+        yield
+    except systemone.SystemOneTimeout as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except systemone.SystemOneUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/v1/systemone")
+async def proxy_to_systemone(request: Request, deployment: str = "clef"):
+    """Forward System One JSON through the shared Exoscale lifecycle."""
+    _, state = await ensure_running(deployment)
+    with systemone_http_errors():
+        response = await systemone.send_systemone(
+            await request.body(),
+            deployment_url=state.deployment_url,
+            api_key=state.api_key,
+            params=[
+                (k, v)
+                for k, v in request.query_params.multi_items()
+                if k != "deployment"
+            ],
+        )
+    # httpx decodes compressed bodies, so do not copy encoding or length headers.
+    headers = {
+        name: response.headers[name]
+        for name in ("content-type", "retry-after")
+        if name in response.headers
+    }
+    return Response(
+        content=response.content, status_code=response.status_code, headers=headers
     )
 
 
@@ -458,6 +512,47 @@ async def immigration_detection_endpoint(
     """
     model = await chat_model_from_slug(deployment)
     return await immigration_detection_agent(model=model, request=body.request)
+
+
+class ClefImmigrationRequest(BaseModel):
+    request: str = Field(min_length=1, max_length=100_000)
+
+
+@app.post("/agents/immigration_detection/clef")
+async def clef_immigration_detection_endpoint(
+    body: ClefImmigrationRequest,
+    deployment: str = "clef",
+) -> ClassificationResponse:
+    """Classify a request with one Clef choice question using existing labels."""
+    cfg, state = await ensure_running(deployment)
+    # The provider owns the /v1/systemone URL and response validation.
+    async with httpx2.AsyncClient(timeout=300.0) as client:
+        model = SystemOneModel(
+            cfg.model,
+            provider=SystemOneProvider(
+                base_url=state.deployment_url,
+                api_key=state.api_key,
+                http_client=client,
+            ),
+        )
+        try:
+            return await immigration_decision_agent(model=model, request=body.request)
+        except ModelHTTPError as exc:
+            raise HTTPException(
+                status_code=502, detail="Clef classification request failed"
+            ) from exc
+        except ModelAPIError as exc:
+            if isinstance(exc.__cause__, httpx2.TimeoutException):
+                raise HTTPException(
+                    status_code=504, detail="Clef server timed out"
+                ) from exc
+            raise HTTPException(
+                status_code=503, detail="Clef server could not be reached"
+            ) from exc
+        except UnexpectedModelBehavior as exc:
+            raise HTTPException(
+                status_code=502, detail="Clef returned an invalid classification"
+            ) from exc
 
 
 class QuestionSliceRequest(BaseModel):

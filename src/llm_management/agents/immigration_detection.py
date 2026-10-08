@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.models import Model
 
@@ -11,7 +11,12 @@ class Classification(StrEnum):
 
 
 class ClassificationResponse(BaseModel):
-    classification: Classification
+    classification: Classification = Field(
+        description="Classify the main subject of the request. IMM means immigration "
+        "processes, visas, residency, citizenship, or a person's immigration status "
+        "or application. FOI means any other request for information held by "
+        "public authorities."
+    )
 
 
 SYSTEM_PROMPT = """
@@ -52,3 +57,18 @@ async def immigration_detection_agent(
 
     result = await agent.run(request)
     return ClassificationResponse(classification=Classification(result.output))
+
+
+async def immigration_decision_agent(
+    *, model: Model, request: str
+) -> ClassificationResponse:
+    """Ask a typed decision model one classification question."""
+    agent = Agent(
+        model,
+        output_type=ClassificationResponse,
+        instructions="Classify the main subject of this request using the field definitions.",
+        retries=0,
+        model_settings={"timeout": 300.0},
+    )
+    result = await agent.run(request)
+    return result.output
