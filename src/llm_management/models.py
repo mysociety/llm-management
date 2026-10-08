@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 from typing import Literal, Optional
+from functools import cached_property
 
 import rich
 from exoscale.api.exceptions import (
@@ -298,6 +299,92 @@ class ExoscaleDeploymentConfig(BaseModel):
         raise LLMManagementError(f"Expected city='Paris' but got city='{output.city}'")
 
 
+class ComputeDeploymentConfig(PydanticBaseModel):
+    """One prepared GPU VM, with settings inherited from its template recipe."""
+
+    model_config = {"extra": "forbid"}
+    slug: str = Field(pattern=r"^[a-zA-Z0-9_-]+$")
+    backend: Literal["exoscale_compute"]
+    protocol: Literal["systemone"] = "systemone"
+    template: str
+
+    @cached_property
+    def recipe(self):
+        from .templates.config import TemplateConfig
+
+        return TemplateConfig.load().get(self.template)
+
+    @property
+    def model(self) -> str:
+        return self.recipe.model
+
+    @property
+    def zone(self) -> str:
+        return self.recipe.zone
+
+    @property
+    def replicas(self) -> int:
+        return 1
+
+    @property
+    def deployment_name(self) -> str:
+        return (
+            f"{self.slug}_{settings.server_role}" if settings.server_role else self.slug
+        )
+
+    @cached_property
+    def adapter(self):
+        from .compute_deployments import ComputeDeployment
+
+        return ComputeDeployment(self)
+
+    def create_deployment(self, refresh_model: bool = False):
+        if refresh_model:
+            raise LLMManagementError(
+                "Compute models are cached in templates; prepare a new template release"
+            )
+        self.adapter.ensure()
+
+    def create_or_resume(self):
+        self.adapter.ensure()
+
+    def resume_from_zero(self):
+        self.adapter.ensure()
+
+    def scale_to_zero(self):
+        self.adapter.delete()
+
+    def delete_deployment(self):
+        self.adapter.delete()
+
+    def query_status(self) -> DeploymentQueryResult:
+        return self.adapter.status()
+
+    def connection_info(self) -> dict:
+        self.adapter.ensure()
+        status = self.adapter.status()
+        return {
+            "url": status.deployment_url,
+            "api_key": status.api_key,
+            "ssh_tunnel": self.adapter.tunnel_command(),
+        }
+
+    def is_deployed(self) -> bool:
+        return self.adapter.status().exists
+
+    def _client(self) -> Client:
+        return get_client(self.zone)
+
+    def test_basic_deployment(self):
+        self.adapter.test()
+
+    def test_instruct_deployment(self):
+        self.adapter.test()
+
+
+DeploymentConfig = ExoscaleDeploymentConfig | ComputeDeploymentConfig
+
+
 class DeploymentGroupConfig(PydanticBaseModel):
     """A named collection of deployments to prepare concurrently."""
 
@@ -308,11 +395,13 @@ class DeploymentGroupConfig(PydanticBaseModel):
 class ExoscaleConfig(BaseModel):
     """Container for all deployment configs, loaded from exoscale.toml."""
 
-    deployment: list[ExoscaleDeploymentConfig]
+    deployment: list[DeploymentConfig]
     deployment_group: list[DeploymentGroupConfig] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_groups(self):
+        if len({d.slug for d in self.deployment}) != len(self.deployment):
+            raise ValueError("Deployment slugs must be unique")
         known = {d.slug for d in self.deployment}
         names: set[str] = set()
         for group in self.deployment_group:
@@ -336,17 +425,19 @@ class ExoscaleConfig(BaseModel):
 
     @classmethod
     def load(cls, config_path: Path = CONFIG_PATH) -> ExoscaleConfig:
-        return cls.from_file(config_path)
+        config = cls.from_file(config_path)
+        for deployment in config.deployment:
+            if isinstance(deployment, ComputeDeploymentConfig):
+                deployment.recipe  # Validate recipe references before provisioning.
+        return config
 
-    def get(self, slug: str) -> ExoscaleDeploymentConfig:
+    def get(self, slug: str) -> DeploymentConfig:
         for d in self.deployment:
             if d.slug == slug:
                 return d
         raise LLMManagementError(f"No deployment config found with slug '{slug}'.")
 
-    def resolve(
-        self, slug: Optional[str], all_: bool
-    ) -> list[ExoscaleDeploymentConfig]:
+    def resolve(self, slug: Optional[str], all_: bool) -> list[DeploymentConfig]:
         if all_:
             return self.deployment
         if slug is None:
@@ -366,8 +457,16 @@ class ExoscaleConfig(BaseModel):
             cfg.scale_to_zero()
 
     def list_deployments(self):
+        for cfg in self.deployment:
+            if isinstance(cfg, ComputeDeploymentConfig):
+                status = cfg.query_status()
+                rich.print(
+                    f"  {cfg.deployment_name:<20} backend=exoscale_compute exists={status.exists} ready={bool(status.replicas)}"
+                )
         seen_zones: set[str] = set()
         for cfg in self.deployment:
+            if isinstance(cfg, ComputeDeploymentConfig):
+                continue
             if cfg.zone in seen_zones:
                 continue
             seen_zones.add(cfg.zone)

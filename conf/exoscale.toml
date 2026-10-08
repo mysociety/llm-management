@@ -87,6 +87,14 @@ inference_engine_params = [
 ]
 
 
+[[deployment]]
+# Prepared GPU Compute server; model and VM settings come from the recipe.
+slug = "clef"
+backend = "exoscale_compute"
+protocol = "systemone"
+template = "clef_flash"
+
+
 [[deployment_group]]
 slug = "foi_pipeline"
 deployments = ["question_slice_v2", "foi_topic_v2"]

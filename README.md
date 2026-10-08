@@ -1,6 +1,9 @@
 # llm-management
 
-A FastAPI app and CLI tool for managing [Exoscale](https://www.exoscale.com/) dedicated LLM inference deployments.
+A FastAPI app and CLI tool for managing [Exoscale](https://www.exoscale.com/) dedicated LLM inference deployments and prepared GPU VM servers.
+
+See [Preparing Exoscale model servers](EXOSCALE_TEMPLATES.md) for packaging a
+container and model into a VM template and configuring deployments to use it.
 
 This acts as an intermediary between services/analysis processes and Exoscale, providing consistent endpoints, scale-to-zero, and specific functions with post-validation to centralise more complex LLM calls (e.g. extracting structure from FOI requests.)
 
@@ -14,6 +17,7 @@ Set the following via environment variables or a `.env` file in the working dire
 - `EXOSCALE_API_SECRET` — Your Exoscale API secret
 - `EXOSCALE_SERVER_ROLE` — Role suffix appended to deployment names on Exoscale (e.g. `test`, `production`). Defaults to `test`
 - `AUTH_TOKENS` — Optional JSON mapping of client names to bearer tokens. Defaults to an empty mapping (no auth)
+- `COMPUTE_STATE_DIR` — Persistent directory for Compute manifests and private SSH keys; defaults to `.state/compute`
 
 ### Deployment config
 
@@ -66,7 +70,7 @@ llm-management [COMMAND] [OPTIONS]
 | `connect SLUG` | Show the connection URL and API key for a deployment |
 | `list` | List all deployments across configured zones |
 | `list-models ZONE` | List all models in a zone |
-| `logs SLUG [--tail N]` | Show recent log output for a deployment |
+| `logs SLUG [--tail N]` | Show managed deployment logs or the Compute boot service's journal |
 | `llm-test [basic\|instruct] SLUG` | Test a deployment by asking the LLM for the capital of France |
 | `clear-models ZONE [ID] [--all]` | Remove model(s) from a zone (fails if in use by a deployment) |
 
@@ -122,9 +126,23 @@ available without authentication.
 
 ### Clef / System One
 
-The server exposes `/v1/systemone?deployment=clef` and a native Pydantic AI
+The `clef` entry in `conf/exoscale.toml` uses `backend = "exoscale_compute"` and
+references the `clef_flash` recipe in `conf/exoscale_templates.toml`. The recipe
+selects the prepared template, model revision and VM size. The checked-in recipe
+points to the named template verified on 8 October 2026. See
+[the template guide](EXOSCALE_TEMPLATES.md) for preparing another release.
+
+The manager creates one GPU VM, connects through SSH, and waits for matching
+model health. It reconnects to an existing VM after restart. Idle timeout and
+shutdown delete the Compute VM and its access resources; managed deployments
+continue scaling to zero. Persist `COMPUTE_STATE_DIR` (default `.state/compute`)
+so manifests and private SSH keys survive restarts. One manager process/worker owns each
+Compute deployment.
+
+The server exposes `/v1/systemone?deployment=clef` and the native Pydantic AI
 immigration agent at `/agents/immigration_detection/clef?deployment=clef`.
-Both use the selected deployment connection.
+Model settings come from the template recipe. The serving container includes
+Clef's decision head; Exoscale's managed vLLM gateway is not involved.
 
 Call `/v1/systemone?deployment=clef` with the upstream server's JSON request
 shape. Bodies and upstream query parameters are forwarded unchanged; the local
@@ -169,10 +187,12 @@ named VM templates. Its serving image is published from
 See [the template guide](EXOSCALE_TEMPLATES.md) for creation, testing and cleanup.
 
 Temporary VMs, snapshots, SSH keys and groups are deleted; the reusable template is retained.
-
 ### Automatic idle scaling
 
-The server tracks when each deployment last received traffic. Deployments that have been idle for longer than 15 minutes are automatically scaled to zero. On shutdown, all deployments that received traffic during the session are also scaled to zero.
+The server tracks when each deployment last received traffic. Deployments idle for longer than 15 minutes are stopped: managed inference scales
+to zero, while Compute VMs and their access resources are deleted. Active HTTP
+requests prevent idle teardown. Shutdown stops deployments used during the
+session. Prepared templates are retained.
 
 ### Agent endpoints
 

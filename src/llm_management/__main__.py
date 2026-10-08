@@ -236,6 +236,9 @@ def logs(
     """Show log tail for a deployment."""
     config = ExoscaleConfig.load()
     cfg = config.get(slug)
+    if cfg.backend == "exoscale_compute":
+        typer.echo(cfg.adapter.logs(tail))
+        return
     client = cfg._client()
     deployment = cfg._find_deployment(client)
     if deployment is None:

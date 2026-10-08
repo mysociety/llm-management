@@ -14,7 +14,7 @@ from functools import lru_cache
 from ..errors import ClassifierOutputError, ClassifierUnavailable
 from ..inference import LocalSequenceClassifier, classify_remote
 from ..cache import DeploymentState
-from ..models import ExoscaleDeploymentConfig
+from ..models import DeploymentConfig
 from .schemas import UNIT_LABELS, ExtractionBackend
 from .model_spec import QUESTION_SLICE_INPUT_LIMIT
 from dataclasses import dataclass
@@ -165,10 +165,8 @@ def question_classifier() -> LocalSequenceClassifier:
 class DeploymentAccess:
     """Deployment operations supplied by the application; no HTTP dependency here."""
 
-    get_config: Callable[[str], ExoscaleDeploymentConfig]
-    ensure_running: Callable[
-        [str], Awaitable[tuple[ExoscaleDeploymentConfig, DeploymentState]]
-    ]
+    get_config: Callable[[str], DeploymentConfig]
+    ensure_running: Callable[[str], Awaitable[tuple[DeploymentConfig, DeploymentState]]]
     touch: Callable[[str], None]
 
 

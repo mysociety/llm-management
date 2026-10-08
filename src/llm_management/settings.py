@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     exoscale_api_key: str = ""
     exoscale_api_secret: str = ""
+    compute_state_dir: Path = Path(".state/compute")
     huggingface_token: str = ""
     server_role: str = "test"
     auth_tokens: dict[str, str] = Field(default_factory=dict)

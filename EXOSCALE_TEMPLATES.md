@@ -4,8 +4,9 @@ A prepared Exoscale GPU VM template contains the serving container, GPU host
 software and cached model weights. Starting a server then requires booting the
 VM and loading the model into GPU memory, with no image pull or model download.
 
-Template preparation lives in the main package and CLI, alongside Exoscale
-managed inference.
+Template preparation and Compute deployment management live in the main package
+and CLI, alongside Exoscale managed inference. The `clef` deployment uses the
+`clef_flash` template recipe.
 
 ## Container and template releases
 
@@ -123,3 +124,63 @@ is retained even if subsequent smoke tests fail, so inspect the report before
 using a new release. Retired templates must be deleted separately. Template
 storage is charged even when no VMs exist, based on virtual disk size; see
 [Exoscale pricing](https://www.exoscale.com/pricing/).
+
+## Deploying a prepared server
+
+Deployment entries in `conf/exoscale.toml` reference a recipe slug. The recipe
+supplies the template name, zone, model and VM settings. The checked-in Clef
+entry is:
+
+```toml
+[[deployment]]
+slug = "clef"
+backend = "exoscale_compute"
+protocol = "systemone"
+template = "clef_flash"
+```
+
+Existing managed entries default to `backend = "exoscale_managed"` and
+`protocol = "openai"`. Infrastructure backend and API protocol are separate from
+the template recipe's model-family backend (`clef`).
+
+The checked-in recipe points to the verified named template above. For a new
+release, prepare its named template first. Then use the normal deployment commands:
+
+```sh
+llm-management create-or-resume clef
+llm-management logs clef
+llm-management pause clef
+```
+
+The same lifecycle is used by `/deployments/clef/ensure` and requests to
+`/v1/systemone` or `/agents/immigration_detection/clef`. Startup resolves the
+private template name to its UUID, creates one GPU VM, opens an SSH tunnel and
+waits for matching health before forwarding requests. Concurrent requests share
+the startup lock. An existing stopped VM is resumed; after a manager restart,
+its VM is rediscovered and the tunnel is recreated.
+
+Only SSH is exposed, restricted to the recipe's caller CIDR. HTTP remains on
+localhost; the manager forwards over the tunnel without an upstream bearer key.
+The manager's own client authentication remains in place. OpenAI agent endpoints
+reject System One deployments.
+
+Persist `COMPUTE_STATE_DIR` (default `.state/compute`) across manager restarts.
+It contains per-zone, per-deployment manifests and private SSH keys. Use one
+manager process/worker per deployment. Local filesystem locks coordinate CLI and
+server lifecycle operations; request counters belong to the server process.
+Resources are named `llm-compute-{zone}-{slug}_{server_role}`, keeping zones, test
+and production separate.
+
+For Compute, `replicas = 1` in API state means the model is ready through this
+manager's tunnel; a discovered VM with no ready connection reports zero. The
+`connect` command includes an SSH command for opening a tunnel yourself. Its
+reported temporary localhost URL belongs to that CLI process and closes when
+the process exits.
+
+Idle timeout, `pause`, `destroy`, `/scale-to-zero` and server shutdown delete
+Compute VMs and their SSH keys/security groups, and close tunnels. Managed
+inference continues scaling to zero. Active HTTP requests prevent idle teardown and cause the HTTP
+`/scale-to-zero` operation to return 409. CLI teardown is an administrative action. New VMs that fail startup are cleaned up; if cleanup
+fails, the durable manifest and logs support retrying `destroy clef`. An existing
+VM that fails reconnection remains discoverable for idle cleanup or explicit
+teardown. Templates remain until separately retired.

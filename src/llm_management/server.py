@@ -16,6 +16,7 @@ import secrets
 import time
 from contextlib import asynccontextmanager, contextmanager
 from functools import lru_cache
+from contextvars import ContextVar
 
 import httpx
 import httpx2
@@ -39,7 +40,7 @@ from .agents.immigration_detection import (
     immigration_decision_agent,
 )
 from .cache import DeploymentState, cache
-from .models import ExoscaleConfig, ExoscaleDeploymentConfig, LLMManagementError
+from .models import ExoscaleConfig, DeploymentConfig, LLMManagementError
 from .settings import settings
 from . import systemone
 from .errors import ClassifierBusy
@@ -55,6 +56,9 @@ logger = logging.getLogger("llm_management.server")
 IDLE_TIMEOUT_MINUTES: int = 15  # minutes
 _IDLE_CHECK_INTERVAL: int = 60  # seconds
 AUTO_ENSURE_ON_REQUEST: bool = True
+_request_deployments: ContextVar[set[str] | None] = ContextVar(
+    "request_deployments", default=None
+)
 
 
 class DeploymentStatusResponse(BaseModel):
@@ -119,7 +123,7 @@ def load_config() -> ExoscaleConfig:
 
 
 @lru_cache
-def get_deployment_config(slug: str) -> ExoscaleDeploymentConfig:
+def get_deployment_config(slug: str) -> DeploymentConfig:
     """
     Look up a deployment by slug in the config, raising a 404 if not found.
     """
@@ -134,7 +138,7 @@ def get_deployment_config(slug: str) -> ExoscaleDeploymentConfig:
 
 async def ensure_running(
     slug: str, *, allow_start: bool = False
-) -> tuple[ExoscaleDeploymentConfig, DeploymentState]:
+) -> tuple[DeploymentConfig, DeploymentState]:
     """
     Return the config and a live deployment state for *slug*.
 
@@ -143,24 +147,46 @@ async def ensure_running(
     Otherwise raise 503. Explicit group warm-up sets allow_start=True.
     """
     cfg = get_deployment_config(slug)
-    state = await asyncio.to_thread(cache.ensure, cfg)
-    if not state.exists or state.replicas == 0:
-        if allow_start or AUTO_ENSURE_ON_REQUEST:
-            async with cache.ensure_lock(slug):
-                state = await asyncio.to_thread(cache.ensure, cfg)
-                if not state.exists or state.replicas == 0:
-                    logger.info("Auto-ensuring deployment %s.", slug)
-                    _t0 = time.monotonic()
-                    await asyncio.to_thread(cfg.create_or_resume)
-                    _elapsed = time.monotonic() - _t0
-                    logger.info("Auto-ensure of %s completed in %.1fs.", slug, _elapsed)
-                    state = await asyncio.to_thread(cache.refresh, cfg)
-        else:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Deployment '{slug}' is not running. Ensure it first.",
-            )
-    cache.touch(slug)
+    async with cache.ensure_lock(slug):
+        state = await asyncio.to_thread(cache.ensure, cfg)
+        if not state.exists or state.replicas == 0:
+            if not (allow_start or AUTO_ENSURE_ON_REQUEST):
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Deployment '{slug}' is not running. Ensure it first.",
+                )
+            logger.info("Auto-ensuring deployment %s.", slug)
+            cache.touch(slug)
+            # Let a startup finish under the lock if its initiating request is
+            # cancelled, then track the VM so idle/shutdown cleanup can find it.
+            startup = asyncio.create_task(asyncio.to_thread(cfg.create_or_resume))
+            try:
+                await asyncio.shield(startup)
+            except asyncio.CancelledError:
+                await startup
+                await asyncio.to_thread(cache.refresh, cfg)
+                cache.touch(slug)
+                raise
+            except Exception:
+                if getattr(cfg, "backend", "exoscale_managed") == "exoscale_compute":
+                    try:
+                        await asyncio.to_thread(cache.refresh, cfg)
+                        cache.touch(slug)
+                    except Exception:
+                        logger.exception(
+                            "Failed to refresh Compute resources after startup failure."
+                        )
+                raise
+            state = await asyncio.to_thread(cache.refresh, cfg)
+            if not state.exists or state.replicas == 0:
+                raise HTTPException(
+                    status_code=503, detail=f"Deployment '{slug}' did not become ready."
+                )
+        cache.touch(slug)
+        leases = _request_deployments.get()
+        if leases is not None and slug not in leases:
+            cache.begin_request(slug)
+            leases.add(slug)
     return cfg, state
 
 
@@ -202,9 +228,18 @@ async def idle_scaler():
                         elapsed,
                     )
                     try:
-                        cfg = get_deployment_config(ds.slug)
-                        await asyncio.to_thread(cfg.scale_to_zero)
-                        cache.refresh(cfg)
+                        async with cache.ensure_lock(ds.slug):
+                            current = cache.get(ds.slug)
+                            if (
+                                current is None
+                                or current.requests_in_flight
+                                or time.time() - current.last_request_time
+                                < timeout_seconds
+                            ):
+                                continue
+                            cfg = get_deployment_config(ds.slug)
+                            await asyncio.to_thread(cfg.scale_to_zero)
+                            await asyncio.to_thread(cache.refresh, cfg)
                     except Exception:
                         logger.exception("Failed to auto-scale %s to zero.", ds.slug)
         except Exception:
@@ -249,6 +284,28 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="LLM Management Proxy", docs_url="/", lifespan=lifespan)
+
+
+@app.exception_handler(LLMManagementError)
+async def deployment_error(request: Request, exc: LLMManagementError):
+    logger.error("Deployment lifecycle failed: %s", exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Deployment could not be prepared; check server logs."},
+    )
+
+
+@app.middleware("http")
+async def track_deployment_requests(request: Request, call_next):
+    leases: set[str] = set()
+    token = _request_deployments.set(leases)
+    try:
+        return await call_next(request)
+    finally:
+        for slug in leases:
+            cache.end_request(slug)
+        _request_deployments.reset(token)
+
 
 PUBLIC_PATHS = {"/", "/docs/oauth2-redirect", "/health", "/openapi.json", "/redoc"}
 
@@ -301,29 +358,19 @@ def deployment_status(slug: str) -> DeploymentStatusResponse:
 
 
 @app.post("/deployments/{slug}/ensure")
-def ensure_deployment(slug: str) -> EnsureResponse:
-    """
-    Ensure a deployment is running. If it doesn't exist it will be created;
-    if it exists but is scaled to zero it will be resumed. Returns the
-    action taken and the resulting replica count.
-    """
+async def ensure_deployment(slug: str) -> EnsureResponse:
+    """Create/resume either deployment backend and wait until ready."""
     cfg = get_deployment_config(slug)
-    state = cache.ensure(cfg)
-
-    if state.exists and state.replicas > 0:
-        cache.touch(slug)
-        return EnsureResponse(
-            slug=slug, action="already_running", replicas=state.replicas
-        )
-
-    t0 = time.monotonic()
-    cfg.create_or_resume()
-    elapsed = time.monotonic() - t0
-    new_state = cache.refresh(cfg)
-    cache.touch(slug)
-    action = "created" if not state.exists else "resumed"
-    logger.info("Deployment %s %s in %.1fs.", slug, action, elapsed)
-    return EnsureResponse(slug=slug, action=action, replicas=new_state.replicas)
+    previous = await asyncio.to_thread(cache.ensure, cfg)
+    _, state = await ensure_running(slug, allow_start=True)
+    action = (
+        "already_running"
+        if previous.replicas > 0
+        else "resumed"
+        if previous.exists
+        else "created"
+    )
+    return EnsureResponse(slug=slug, action=action, replicas=state.replicas)
 
 
 @app.post("/deployment-groups/{slug}/ensure")
@@ -356,14 +403,17 @@ async def ensure_deployment_group(slug: str) -> GroupEnsureResponse:
 
 
 @app.post("/deployments/{slug}/scale-to-zero")
-def scale_to_zero(slug: str) -> ScaleToZeroResponse:
-    """
-    Scale a deployment down to zero replicas, effectively pausing it
-    without destroying it.
-    """
+async def scale_to_zero(slug: str) -> ScaleToZeroResponse:
+    """Pause managed inference or delete a Compute VM and its access resources."""
     cfg = get_deployment_config(slug)
-    cfg.scale_to_zero()
-    cache.refresh(cfg)
+    async with cache.ensure_lock(slug):
+        state = cache.get(slug)
+        if state and state.requests_in_flight:
+            raise HTTPException(
+                status_code=409, detail="Deployment has requests in flight."
+            )
+        await asyncio.to_thread(cfg.scale_to_zero)
+        await asyncio.to_thread(cache.refresh, cfg)
     return ScaleToZeroResponse(slug=slug, action="scaled_to_zero")
 
 
