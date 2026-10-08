@@ -187,6 +187,11 @@ named VM templates. Its serving image is published from
 See [the template guide](EXOSCALE_TEMPLATES.md) for creation, testing and cleanup.
 
 Temporary VMs, snapshots, SSH keys and groups are deleted; the reusable template is retained.
+Live checks on 8 October 2026 verified offline model loading, HTTP and native
+Pydantic AI requests, tunnel recovery and cleanup. A fresh template VM completed
+its challenges in 5m 33s. The [template guide](EXOSCALE_TEMPLATES.md#live-lifecycle-verification)
+records the template ID and lifecycle results.
+
 ### Automatic idle scaling
 
 The server tracks when each deployment last received traffic. Deployments idle for longer than 15 minutes are stopped: managed inference scales

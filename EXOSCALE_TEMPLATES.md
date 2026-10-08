@@ -125,6 +125,41 @@ using a new release. Retired templates must be deleted separately. Template
 storage is charged even when no VMs exist, based on virtual disk size; see
 [Exoscale pricing](https://www.exoscale.com/pricing/).
 
+## Live lifecycle verification
+
+On 8 October 2026 the new CLI registered
+`systemone-clef-flash-2026-10-08-v1`
+(UUID `e584d2d5-b124-4e77-b8f3-af4bc4e21f52`) and tested the complete lifecycle:
+
+| Check | Result |
+| --- | --- |
+| Builder ready and HTTP/native challenges complete | 8m 50s from VM creation |
+| Fresh template VM, HTTP/native challenges complete | 5m 33s from VM creation |
+| Main CLI `create-or-resume clef` | Ready in 7m 30s |
+| `/v1/systemone` and `/deployments/clef/v1/systemone` | Expected general challenge answers |
+| Native Pydantic AI immigration endpoint | Expected `IMM` and `FOI` answers |
+| New manager process and dropped-tunnel recovery | Reused the same VM |
+| HTTP pause and final cleanup | VM, key and security group removed |
+
+Offline model loading was confirmed on the main deployment. Startup varies with
+provisioning and host conditions; these timings are individual observations.
+An independent cleanup audit confirmed that no Compute VMs remained in any zone;
+managed inference stayed at zero replicas.
+Both the new named template and the earlier experimental template were retained.
+
+The reusable external test is isolated by a dedicated role and cleans up its VM:
+
+```sh
+SERVER_ROLE=systemone_live_unique_run \
+  COMPUTE_STATE_DIR=/tmp/systemone-live-state \
+  poetry run pytest -m external tests/test_compute_external.py -q
+```
+
+This test creates billed resources if no VM exists for the role. To also exercise
+CLI creation and recovery from a separate manager process, first run
+`llm-management create-or-resume clef` with the same role and state directory.
+Then run the test, which reconnects to that VM and removes it on completion.
+
 ## Deploying a prepared server
 
 Deployment entries in `conf/exoscale.toml` reference a recipe slug. The recipe
