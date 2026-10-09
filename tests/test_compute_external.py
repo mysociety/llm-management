@@ -43,9 +43,7 @@ def test_compute_lifecycle_and_agents_live():
     )
     old_cache = server.cache
     old_auth = server.settings.auth_tokens
-    old_preload = server.settings.cpu_inference_preload
     server.settings.auth_tokens = {"live-smoke": secrets.token_urlsafe(32)}
-    server.settings.cpu_inference_preload = False
     server.cache = DeploymentCache()
     headers = {"Authorization": "Bearer " + server.settings.auth_tokens["live-smoke"]}
 
@@ -146,5 +144,4 @@ def test_compute_lifecycle_and_agents_live():
         finally:
             server.cache = old_cache
             server.settings.auth_tokens = old_auth
-            server.settings.cpu_inference_preload = old_preload
             destination.write_text(json.dumps(report, indent=2) + "\n")

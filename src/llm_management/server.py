@@ -43,7 +43,8 @@ from .cache import DeploymentState, cache
 from .models import ExoscaleConfig, DeploymentConfig, LLMManagementError
 from .settings import settings
 from . import systemone
-from .errors import ClassifierBusy
+from .errors import ClassifierBusy, ClassifierUnavailable
+from .local_resources import local_resources
 from .foi import backends, pipeline
 from .foi.schemas import (
     ExtractionBackend,
@@ -70,7 +71,7 @@ class DeploymentStatusResponse(BaseModel):
 class EnsureResponse(BaseModel):
     slug: str
     action: str
-    replicas: int
+    replicas: int | None
 
 
 class GroupMemberResult(BaseModel):
@@ -217,6 +218,9 @@ async def idle_scaler():
     while True:
         await asyncio.sleep(_IDLE_CHECK_INTERVAL)
         try:
+            await asyncio.to_thread(
+                local_resources.expire, settings.cpu_idle_timeout_minutes * 60
+            )
             timeout_seconds = IDLE_TIMEOUT_MINUTES * 60
             active = cache.all_active()
             for ds in active:
@@ -251,7 +255,8 @@ async def lifespan(app: FastAPI):
     """
     Start the idle-scaler background task on startup. On shutdown,
     cancel the scaler and scale to zero any deployments that received
-    traffic during this session.
+    traffic during this session. Local resources load only on demand or through
+    explicit warm-up; startup does not preload models.
     """
     if not settings.auth_tokens:
         logger.warning(
@@ -262,9 +267,6 @@ async def lifespan(app: FastAPI):
             "internet traffic."
         )
 
-    if settings.cpu_inference_preload:
-        await asyncio.to_thread(backends.question_classifier().warmup)
-
     task = asyncio.create_task(idle_scaler())
     yield
     task.cancel()
@@ -273,6 +275,10 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
+    try:
+        await asyncio.to_thread(local_resources.close)
+    except Exception:
+        logger.exception("Failed to close local resources on shutdown.")
     active = cache.all_active()
     for ds in active:
         logger.info("Shutdown: scaling %s to zero.", ds.slug)
@@ -357,12 +363,37 @@ def deployment_status(slug: str) -> DeploymentStatusResponse:
     )
 
 
+async def warmup_resource(name: str) -> int | None:
+    """Warm a registry match locally, otherwise ensure a remote deployment.
+
+    Local success has no replica count. Both paths reset their usual idle timer;
+    callers choose whether failures become HTTP errors or per-group results.
+    """
+    resource = local_resources.get(name)
+    if resource is None:
+        _, state = await ensure_running(name, allow_start=True)
+        return state.replicas
+    try:
+        await asyncio.to_thread(resource.warmup)
+    except ClassifierUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning("Local resource %s unavailable: %s", name, type(exc).__name__)
+        raise HTTPException(
+            status_code=503, detail="Local resource unavailable"
+        ) from exc
+    return None
+
+
 @app.post("/deployments/{slug}/ensure")
 async def ensure_deployment(slug: str) -> EnsureResponse:
-    """Create/resume either deployment backend and wait until ready."""
+    """Warm a local registry match or create/resume a remote deployment."""
+    if local_resources.get(slug) is not None:
+        replicas = await warmup_resource(slug)
+        return EnsureResponse(slug=slug, action="warmed", replicas=replicas)
     cfg = get_deployment_config(slug)
     previous = await asyncio.to_thread(cache.ensure, cfg)
-    _, state = await ensure_running(slug, allow_start=True)
+    replicas = await warmup_resource(slug)
     action = (
         "already_running"
         if previous.replicas > 0
@@ -370,7 +401,7 @@ async def ensure_deployment(slug: str) -> EnsureResponse:
         if previous.exists
         else "created"
     )
-    return EnsureResponse(slug=slug, action=action, replicas=state.replicas)
+    return EnsureResponse(slug=slug, action=action, replicas=replicas)
 
 
 @app.post("/deployment-groups/{slug}/ensure")
@@ -385,13 +416,13 @@ async def ensure_deployment_group(slug: str) -> GroupEnsureResponse:
 
     async def ensure_member(member: str) -> GroupMemberResult:
         try:
-            _, state = await ensure_running(member, allow_start=True)
-            return GroupMemberResult(slug=member, success=True, replicas=state.replicas)
+            replicas = await warmup_resource(member)
+            return GroupMemberResult(slug=member, success=True, replicas=replicas)
         except Exception as exc:
             # Provider errors may contain credentials; do not return their raw text.
             logger.warning("Group ensure failed for %s: %s", member, type(exc).__name__)
             return GroupMemberResult(
-                slug=member, success=False, error="Deployment could not be started"
+                slug=member, success=False, error="Resource could not be warmed"
             )
 
     results = await asyncio.gather(
@@ -657,3 +688,21 @@ async def information_request_endpoint(
         return await pipeline.process_information_request(
             body.request, backend=backend, deployments=foi_deployments()
         )
+
+
+
+
+@app.get("/local-models")
+async def local_model_status() -> list[dict]:
+    """CPU readiness and idle timers in this API worker."""
+    return [resource.status() for resource in local_resources.all()]
+
+
+@app.post("/local-models/{name}/ensure")
+async def ensure_local_model(name: str) -> dict:
+    """Load a CPU resource and reset its idle timer."""
+    resource = local_resources.get(name)
+    if resource is None:
+        raise HTTPException(status_code=404, detail="Unknown local model")
+    await warmup_resource(name)
+    return resource.status()

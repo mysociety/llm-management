@@ -13,7 +13,6 @@ from llm_management import server, systemone
 @pytest.fixture
 def clef_client(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {"client": "client-secret"})
-    monkeypatch.setattr(server.settings, "cpu_inference_preload", False)
     monkeypatch.setattr(server.cache, "all_active", lambda: [])
     ensure = AsyncMock(
         return_value=(

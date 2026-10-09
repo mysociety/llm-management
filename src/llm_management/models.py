@@ -19,6 +19,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_store import BaseModel
 
 from .settings import CONFIG_PATH, settings
+from .local_resources import local_resources, register_builtin_resources
 
 
 class LLMManagementError(Exception):
@@ -386,7 +387,7 @@ DeploymentConfig = ExoscaleDeploymentConfig | ComputeDeploymentConfig
 
 
 class DeploymentGroupConfig(PydanticBaseModel):
-    """A named collection of deployments to prepare concurrently."""
+    """A named collection of remote deployments and local resources to warm."""
 
     slug: str = Field(min_length=1)
     deployments: list[str] = Field(min_length=1)
@@ -402,7 +403,14 @@ class ExoscaleConfig(BaseModel):
     def validate_groups(self):
         if len({d.slug for d in self.deployment}) != len(self.deployment):
             raise ValueError("Deployment slugs must be unique")
-        known = {d.slug for d in self.deployment}
+        register_builtin_resources()
+        remote_names = {d.slug for d in self.deployment}
+        local_names = local_resources.names()
+        if remote_names & local_names:
+            raise ValueError(
+                "Remote deployments and local resources must have distinct names"
+            )
+        known = remote_names | local_names
         names: set[str] = set()
         for group in self.deployment_group:
             if group.slug in names:
@@ -413,7 +421,7 @@ class ExoscaleConfig(BaseModel):
             unknown = set(group.deployments) - known
             if unknown:
                 raise ValueError(
-                    f"Unknown deployments in group {group.slug}: {sorted(unknown)}"
+                    f"Unknown resources in group {group.slug}: {sorted(unknown)}"
                 )
         return self
 

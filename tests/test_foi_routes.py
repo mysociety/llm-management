@@ -20,7 +20,6 @@ from llm_management.foi.question_slice import build_extraction_result
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.settings, "cpu_inference_preload", False)
     monkeypatch.setattr(server.cache, "all_active", lambda: [])
     # The app lifespan must never manage real deployments in these tests.
     with TestClient(server.app, raise_server_exceptions=True) as test_client:
@@ -180,7 +179,6 @@ def topic_data():
 @pytest.fixture
 def pipeline(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.settings, "cpu_inference_preload", False)
     monkeypatch.setattr(server.cache, "all_active", lambda: [])
     extractor = AsyncMock(return_value=extraction())
     monkeypatch.setattr(foi_pipeline, "extract_questions", extractor)

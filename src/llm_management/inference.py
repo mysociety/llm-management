@@ -14,6 +14,7 @@ from collections.abc import Callable
 import httpx
 
 from .errors import ClassifierUnavailable, ClassifierBusy, ClassifierOutputError
+from .local_resources import LocalResource, local_resources
 
 
 class LocalSequenceClassifier:
@@ -30,6 +31,7 @@ class LocalSequenceClassifier:
         cache_dir: str | None = None,
         token: str | None = None,
         model_kwargs: dict[str, Any] | None = None,
+        resource_name: str | None = None,
     ):
         if min(max_tokens, max_units, batch_size, threads) < 1 or not labels:
             raise ValueError("Classifier limits must be positive and labels nonempty")
@@ -43,11 +45,14 @@ class LocalSequenceClassifier:
         self.cache_dir = cache_dir
         self.token = token
         self.model_kwargs = dict(model_kwargs or {})
-        self._tokenizer = None
-        self._model = None
-        self._torch = None
+        self._tokenizer: Any = None
+        self._model: Any = None
+        self._torch: Any = None
         self._load_lock = threading.RLock()
         self._work_lock = threading.Lock()
+        self.resource = local_resources.register(
+            LocalResource(resource_name or model, self.warmup, self.unload)
+        )
 
     def _tokenize(self, texts: list[str]):
         if not texts or len(texts) > self.max_units:
@@ -80,10 +85,15 @@ class LocalSequenceClassifier:
         return encoded
 
     def validate_inputs(self, texts: list[str]) -> None:
-        self._tokenize(texts)
+        with self.resource.use():
+            self._tokenize(texts)
+
+    def unload(self) -> None:
+        with self._load_lock:
+            self._model = self._tokenizer = self._torch = None
 
     def warmup(self) -> None:
-        with self._load_lock:
+        with self.resource.use(), self._load_lock:
             if self._model is not None:
                 return
             try:
@@ -93,6 +103,7 @@ class LocalSequenceClassifier:
                 raise ClassifierUnavailable(
                     "Run poetry install to install CPU inference dependencies"
                 ) from exc
+            self._tokenize(["Warmup."])
             try:
                 # PyTorch's thread count is process-wide; use the same policy for
                 # every local classifier in this API worker.
@@ -112,6 +123,7 @@ class LocalSequenceClassifier:
                     )
                 self._torch = torch
                 self._model = model
+                self.resource.mark_ready()
             except ClassifierUnavailable:
                 raise
             except Exception as exc:
@@ -123,23 +135,27 @@ class LocalSequenceClassifier:
         if not self._work_lock.acquire(blocking=False):
             raise ClassifierBusy("CPU classifier is busy; retry the request")
         try:
-            encoded = self._tokenize(texts)
-            self.warmup()
-            rows = []
-            with self._torch.inference_mode():
-                for start in range(0, len(texts), self.batch_size):
-                    batch = {
-                        key: value[start : start + self.batch_size]
-                        for key, value in encoded.items()
-                    }
-                    with self._load_lock:
-                        batch = self._tokenizer.pad(
-                            batch, padding=True, return_tensors="pt"
-                        )
-                    rows.extend(self._model(**batch).logits.softmax(-1).tolist())
-            return rows
+            with self.resource.use():
+                return self._classify(texts)
         finally:
             self._work_lock.release()
+
+    def _classify(self, texts):
+        encoded = self._tokenize(texts)
+        self.warmup()
+        rows = []
+        with self._torch.inference_mode():
+            for start in range(0, len(texts), self.batch_size):
+                batch = {
+                    key: value[start : start + self.batch_size]
+                    for key, value in encoded.items()
+                }
+                with self._load_lock:
+                    batch = self._tokenizer.pad(
+                        batch, padding=True, return_tensors="pt"
+                    )
+                rows.extend(self._model(**batch).logits.softmax(-1).tolist())
+        return rows
 
 
 async def classify_remote(
@@ -151,14 +167,15 @@ async def classify_remote(
     batch_size: int = 8,
     embedding_head: Callable[[list[list[float]]], list[list[float]]],
 ) -> list[list[float]]:
+    clean_texts = texts
     base = deployment_url.rstrip("/")
     url = base + "/embeddings"
     rows = []
     async with httpx.AsyncClient(
         timeout=120, headers={"Authorization": f"Bearer {api_key}"}
     ) as client:
-        for start in range(0, len(texts), batch_size):
-            batch = texts[start : start + batch_size]
+        for start in range(0, len(clean_texts), batch_size):
+            batch = clean_texts[start : start + batch_size]
             payload = {"model": model, "input": batch, "encoding_format": "float"}
             response = await client.post(url, json=payload)
             response.raise_for_status()

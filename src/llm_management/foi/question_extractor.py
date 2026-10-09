@@ -15,6 +15,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from .schemas import ExtractedQuestion, TopicOutput
+from ..local_resources import LocalResource, local_resources
 from ..settings import settings
 
 SYSTEM_PROMPT = (
@@ -126,6 +127,15 @@ def question_extractor_tokenizer():
     )
 
 
+question_extractor_resource = local_resources.register(
+    LocalResource(
+        "question_extractor_tokenizer",
+        lambda: question_extractor_tokenizer(),
+        question_extractor_tokenizer.cache_clear,
+    )
+)
+
+
 def prepare_topic_request(
     request_text: str, questions: list[ExtractedQuestion]
 ) -> dict:
@@ -164,13 +174,14 @@ def prepare_topic_request(
             },
         },
     }
-    tokenizer = question_extractor_tokenizer()
-    token_ids = tokenizer.apply_chat_template(
-        payload["messages"],
-        tokenize=True,
-        add_generation_prompt=True,
-        truncation=False,
-    )
+    with question_extractor_resource.use():
+        tokenizer = question_extractor_resource.warmup()
+        token_ids = tokenizer.apply_chat_template(
+            payload["messages"],
+            tokenize=True,
+            add_generation_prompt=True,
+            truncation=False,
+        )
     if len(token_ids) > settings.foi_topic_input_limit:
         raise ValueError(
             f"Topic model prompt has {len(token_ids)} tokens; limit is {settings.foi_topic_input_limit}. Input was not truncated."

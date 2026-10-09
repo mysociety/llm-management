@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import threading
+from typing import Any
 from functools import lru_cache
 
 from ..errors import ClassifierOutputError, ClassifierUnavailable
@@ -16,10 +17,12 @@ from ..inference import LocalSequenceClassifier, classify_remote
 from ..cache import DeploymentState
 from ..models import DeploymentConfig
 from .schemas import UNIT_LABELS, ExtractionBackend
+from .model_spec import QUESTION_SLICE_CPU_RESOURCE, QUESTION_SLICE_HEAD_CPU_RESOURCE
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 import asyncio
 from ..settings import settings
+from ..local_resources import LocalResource, local_resources
 
 
 class ModernBertClassificationHead:
@@ -41,11 +44,18 @@ class ModernBertClassificationHead:
         self.threads = threads
         self._lock = threading.RLock()
         self._weights = None
-        self._config = None
-        self._torch = None
+        self._config: Any = None
+        self._torch: Any = None
+        self.resource = local_resources.register(
+            LocalResource(QUESTION_SLICE_HEAD_CPU_RESOURCE, self.load, self.unload)
+        )
+
+    def unload(self):
+        with self._lock:
+            self._weights = self._config = self._torch = None
 
     def load(self):
-        with self._lock:
+        with self.resource.use(), self._lock:
             if self._weights is not None:
                 return
             try:
@@ -58,7 +68,7 @@ class ModernBertClassificationHead:
                     "Run poetry install to install classification head dependencies"
                 ) from exc
             try:
-                kwargs = dict(
+                kwargs: dict[str, Any] = dict(
                     revision=self.revision, token=self.token, cache_dir=self.cache_dir
                 )
                 config = AutoConfig.from_pretrained(self.model, **kwargs)
@@ -66,7 +76,9 @@ class ModernBertClassificationHead:
                     config.model_type != "modernbert"
                     or config.classifier_pooling != "mean"
                     or config.classifier_activation != "gelu"
-                    or tuple(config.id2label.get(i) for i in range(config.num_labels))
+                    or tuple(
+                        (config.id2label or {}).get(i) for i in range(config.num_labels)
+                    )
                     != self.labels
                 ):
                     raise ClassifierUnavailable(
@@ -93,6 +105,7 @@ class ModernBertClassificationHead:
                 self._torch = torch
                 self._config = config
                 self._weights = weights
+                self.resource.mark_ready()
             except ClassifierUnavailable:
                 raise
             except Exception as exc:
@@ -101,8 +114,9 @@ class ModernBertClassificationHead:
                 ) from exc
 
     def classify(self, embeddings: list[list[float]]) -> list[list[float]]:
-        self.load()
-        with self._lock:
+        with self.resource.use(), self._lock:
+            self.load()
+            assert self._weights is not None
             if not embeddings or any(
                 len(row) != self._config.hidden_size
                 or any(not math.isfinite(v) for v in row)
@@ -156,6 +170,7 @@ def question_classifier() -> LocalSequenceClassifier:
         threads=settings.cpu_inference_threads,
         cache_dir=settings.classifier_cache_dir,
         token=settings.huggingface_token or None,
+        resource_name=QUESTION_SLICE_CPU_RESOURCE,
         model_kwargs={"attn_implementation": "sdpa", "reference_compile": False},
     )
 
@@ -177,18 +192,24 @@ class ClassificationRows:
 
 
 async def classify_question_units(
-    texts: list[str], *, backend: ExtractionBackend, deployments: DeploymentAccess
+    texts: list[str],
+    *,
+    backend: ExtractionBackend,
+    deployments: DeploymentAccess,
 ) -> ClassificationRows:
     """Run the full CPU classifier or the Exoscale encoder plus original local head."""
+    clean_texts = texts
     classifier = question_classifier()
     if backend == "cpu":
-        rows = await asyncio.to_thread(classifier.classify, texts)
+        rows = await asyncio.to_thread(classifier.classify, clean_texts)
         return ClassificationRows(rows, classifier.model_name, classifier.revision)
     if not settings.question_slice_gpu_enabled:
         raise ClassifierUnavailable(
             "Exoscale extraction is disabled by QUESTION_SLICE_GPU_ENABLED."
         )
-    await asyncio.to_thread(classifier.validate_inputs, texts)
+    await asyncio.to_thread(classifier.validate_inputs, clean_texts)
+    # The managed gateway exposes embeddings, so the trained head runs locally.
+    # A custom Compute template could serve the encoder and head together.
     head = question_classification_head()
     await asyncio.to_thread(head.load)
     slug = settings.question_slice_deployment
@@ -205,9 +226,19 @@ async def classify_question_units(
             deployment_url=state.deployment_url,
             api_key=state.api_key,
             batch_size=classifier.batch_size,
+            # A remote classification endpoint would return these probabilities directly.
             embedding_head=head.classify,
         )
     finally:
         deployments.touch(slug)
     # Exoscale imports by repository name; the remote weight SHA is unverified.
     return ClassificationRows(rows, classifier.model_name, None)
+
+
+# Make cold controllers discoverable for individual and group warm-up.
+local_resources.register_factory(
+    QUESTION_SLICE_CPU_RESOURCE, lambda: question_classifier().resource
+)
+local_resources.register_factory(
+    QUESTION_SLICE_HEAD_CPU_RESOURCE, lambda: question_classification_head().resource
+)

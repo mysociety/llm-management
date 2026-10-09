@@ -406,7 +406,6 @@ def test_shutdown_tears_down_compute(deployed, monkeypatch):
     cache.touch("clef")
     monkeypatch.setattr(server, "cache", cache)
     monkeypatch.setattr(server, "get_deployment_config", lambda slug: config)
-    monkeypatch.setattr(server.settings, "cpu_inference_preload", False)
 
     async def run():
         async with server.lifespan(server.app):

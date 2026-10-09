@@ -28,7 +28,7 @@ class Settings(FOIModelSettings):
     classifier_max_units: int = Field(default=256, ge=1, le=4096)
     cpu_inference_threads: int = Field(default=1, ge=1)
     classifier_cache_dir: str | None = None
-    cpu_inference_preload: bool = False
+    cpu_idle_timeout_minutes: int = Field(default=15, ge=1)
 
 
 settings = Settings()

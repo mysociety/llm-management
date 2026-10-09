@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
@@ -10,12 +10,21 @@ from starlette.testclient import TestClient
 from llm_management import server
 from llm_management.cache import DeploymentCache, DeploymentState
 from llm_management.models import ExoscaleConfig
+from llm_management.local_resources import LocalResource, ResourceRegistry
 
 
 def config(groups=None):
     data = ExoscaleConfig.load().model_dump()
-    if groups is not None:
-        data["deployment_group"] = groups
+    data["deployment_group"] = (
+        groups
+        if groups is not None
+        else [
+            {
+                "slug": "foi_pipeline",
+                "deployments": ["question_slice_v2", "foi_topic_v2"],
+            }
+        ]
+    )
     return ExoscaleConfig.model_validate(data)
 
 
@@ -124,3 +133,95 @@ def test_group_endpoint_contract_and_auth(monkeypatch):
     assert response.status_code == 200
     assert response.json()["success"] is True
     assert len(response.json()["deployments"]) == 2
+
+
+@pytest.mark.parametrize("fail_local", [False, True])
+def test_mixed_group_resolves_arbitrary_registered_local_resource(
+    monkeypatch, fail_local
+):
+    data = ExoscaleConfig.load().model_dump()
+    data["deployment_group"] = [
+        {"slug": "mixed", "deployments": ["custom_cpu", "foi_topic_v2"]}
+    ]
+    registry = ResourceRegistry()
+    load = Mock(
+        side_effect=RuntimeError("private local detail") if fail_local else None
+    )
+    registry.register_factory(
+        "custom_cpu", lambda: LocalResource("custom_cpu", load, Mock())
+    )
+    monkeypatch.setattr(server, "local_resources", registry)
+    monkeypatch.setattr("llm_management.models.local_resources", registry)
+    mixed = ExoscaleConfig.model_validate(data)
+    monkeypatch.setattr(server, "load_config", lambda: mixed)
+    remote = AsyncMock(
+        return_value=(None, DeploymentState(slug="foi_topic_v2", replicas=1))
+    )
+    monkeypatch.setattr(server, "ensure_running", remote)
+    result = asyncio.run(server.ensure_deployment_group("mixed"))
+    assert [member.slug for member in result.deployments] == [
+        "custom_cpu",
+        "foi_topic_v2",
+    ]
+    assert result.success is (not fail_local)
+    assert result.deployments[0].success is (not fail_local)
+    assert result.deployments[0].replicas is None
+    assert result.deployments[1].success
+    load.assert_called_once()
+    remote.assert_awaited_once_with("foi_topic_v2", allow_start=True)
+    assert "private local detail" not in result.model_dump_json()
+
+
+def test_single_ensure_resolves_registry_without_remote_calls(monkeypatch):
+    registry = ResourceRegistry()
+    load = Mock()
+    resource = registry.register(LocalResource("custom_cpu", load, Mock()))
+    monkeypatch.setattr(server, "local_resources", registry)
+    remote = AsyncMock(side_effect=AssertionError("No remote startup"))
+    monkeypatch.setattr(server, "ensure_running", remote)
+    result = asyncio.run(server.ensure_deployment("custom_cpu"))
+    assert result.model_dump() == {
+        "slug": "custom_cpu",
+        "action": "warmed",
+        "replicas": None,
+    }
+    assert resource.status()["ready"]
+    assert asyncio.run(server.ensure_local_model("custom_cpu"))["ready"]
+    assert load.call_count == 2
+    remote.assert_not_called()
+
+
+def test_shipped_foi_group_includes_registered_local_resources():
+    members = ExoscaleConfig.load().get_group("foi_pipeline").deployments
+    assert members == [
+        "question_slice_v2_head_cpu",
+        "question_extractor_tokenizer",
+        "question_slice_v2",
+        "foi_topic_v2",
+    ]
+
+
+def test_ambiguous_local_and_remote_names_rejected(monkeypatch):
+    registry = ResourceRegistry()
+    registry.register(LocalResource("foi_topic_v2", Mock(), Mock()))
+    monkeypatch.setattr("llm_management.models.local_resources", registry)
+    with pytest.raises(ValidationError, match="distinct names"):
+        config()
+
+
+def test_question_slice_cpu_resources_share_the_deployment_name():
+    from llm_management.foi.model_spec import (
+        QUESTION_SLICE_DEPLOYMENT,
+        QUESTION_SLICE_CPU_RESOURCE,
+        QUESTION_SLICE_HEAD_CPU_RESOURCE,
+    )
+    from llm_management.local_resources import local_resources
+
+    assert QUESTION_SLICE_CPU_RESOURCE == f"{QUESTION_SLICE_DEPLOYMENT}_cpu"
+    assert QUESTION_SLICE_HEAD_CPU_RESOURCE == f"{QUESTION_SLICE_DEPLOYMENT}_head_cpu"
+    names = local_resources.names()
+    assert {QUESTION_SLICE_CPU_RESOURCE, QUESTION_SLICE_HEAD_CPU_RESOURCE} <= names
+    assert "question_classifier" not in names
+    assert "question_classification_head" not in names
+    cpu_members = ExoscaleConfig.load().get_group("foi_pipeline_cpu").deployments
+    assert QUESTION_SLICE_CPU_RESOURCE in cpu_members

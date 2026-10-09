@@ -421,7 +421,7 @@ Optional environment settings:
 | `FOI_TOPIC_OUTPUT_OVERHEAD` | `64` | Fixed completion allowance |
 | `FOI_TOPIC_OUTPUT_TOKENS_PER_QUESTION` | `192` | Additional completion allowance per question |
 | `CPU_INFERENCE_THREADS` | `1` | Process-wide PyTorch intra-op thread count |
-| `CPU_INFERENCE_PRELOAD` | `false` | Load CPU model during application startup instead of the first CPU request |
+| `CPU_IDLE_TIMEOUT_MINUTES` | `15` | Unload unused local CPU resources; checked every minute |
 | `CLASSIFIER_BATCH_SIZE` | `8` | Maximum semantic units per inference call |
 | `CLASSIFIER_MAX_UNITS` | `256` | Maximum semantic units accepted per request |
 | `CLASSIFIER_CACHE_DIR` | Hugging Face default | Persistent tokenizer/weight cache location |
@@ -506,3 +506,21 @@ Call `POST /deployment-groups/foi_pipeline/ensure` with the usual authentication
 A known group returns HTTP 200 with `slug`, overall `success`, and an ordered `deployments` list. Each member has `slug`, `success`, `replicas` (null on failure) and `error` (null on success). Inspect the success flags: a partial or complete startup failure is reported in the body. Unknown groups return 404. Successful members are not rolled back when another fails; retrying the group reuses running deployments. Idle scaling and shutdown cleanup remain per deployment, and warm-up does not keep a group running indefinitely.
 
 Groups must be nonempty, have unique names, and reference existing deployment slugs without repeated members.
+
+## Local CPU resource lifecycle
+
+Local classifiers and tokenizers load on demand and unload after
+`CPU_IDLE_TIMEOUT_MINUTES` of inactivity. Startup preloading has been replaced by
+explicit warm-up. Active work holds a resource lease, including when its async
+caller is cancelled. Resources and timers belong to each API worker process;
+unloading drops references but does not guarantee memory returns to the OS.
+
+`GET /local-models` reports constructed local controllers. Warm a resource using
+`POST /local-models/{name}/ensure` or `POST /deployments/{name}/ensure`; the shared
+endpoint returns `action: "warmed"` and `replicas: null` for local resources.
+Registered local names can join remote deployment slugs in deployment groups.
+The FOI GPU group warms the local head and topic tokenizer; the CPU group warms
+the full QuestionSlice classifier and topic tokenizer. Both start the remote topic
+model. The QuestionSlice tokenizer still loads on the first GPU extraction request.
+Shutdown logs local cleanup failures and continues cleaning up other resources
+and remote deployments.
