@@ -7,6 +7,7 @@ Deployment access is injected so this module never imports the HTTP server.
 
 import asyncio
 import logging
+from typing import NamedTuple
 
 import httpx
 
@@ -34,15 +35,23 @@ class PipelineOutputError(RuntimeError):
     """A model request failed or produced invalid/incomplete output."""
 
 
+class QuestionExtractionResult(NamedTuple):
+    """Original extraction and sanitized text for downstream classification."""
+
+    original: QuestionSliceResult
+    sanitized: QuestionSliceResult
+    sanitized_request: str
+
+
 async def _extract_questions(
     request_text: str,
     *,
     deployments: DeploymentAccess,
     backend: ExtractionBackend = "cpu",
-) -> tuple[QuestionSliceResult, QuestionSliceResult, str]:
+) -> QuestionExtractionResult:
     try:
         units = segment_request(request_text)
-        clean_request, sanitized_units, model_inputs = await asyncio.to_thread(
+        sanitized = await asyncio.to_thread(
             presidio.sanitize_request,
             request_text,
             [unit.text for unit in units],
@@ -50,10 +59,10 @@ async def _extract_questions(
         )
         clean_units = [
             unit.model_copy(update={"text": text})
-            for unit, text in zip(units, sanitized_units, strict=True)
+            for unit, text in zip(units, sanitized.units, strict=True)
         ]
         classified = await backends.classify_question_units(
-            model_inputs, backend=backend, deployments=deployments
+            sanitized.model_inputs, backend=backend, deployments=deployments
         )
         original = build_extraction_result(
             units,
@@ -69,7 +78,9 @@ async def _extract_questions(
             model=classified.model,
             revision=classified.revision,
         )
-        return original, clean, clean_request
+        return QuestionExtractionResult(
+            original=original, sanitized=clean, sanitized_request=sanitized.request_text
+        )
     except ClassifierUnavailable as exc:
         raise PipelineUnavailable(str(exc)) from exc
     except (ClassifierOutputError, httpx.HTTPError) as exc:
@@ -89,10 +100,10 @@ async def extract_questions(
     deployments: DeploymentAccess,
     backend: ExtractionBackend = "cpu",
 ) -> QuestionSliceResult:
-    original, _, _ = await _extract_questions(
+    extraction = await _extract_questions(
         request_text, deployments=deployments, backend=backend
     )
-    return original
+    return extraction.original
 
 
 async def process_information_request(
@@ -101,9 +112,10 @@ async def process_information_request(
     deployments: DeploymentAccess,
     backend: ExtractionBackend = "cpu",
 ) -> InformationRequestResult:
-    extraction, clean_extraction, clean_request = await _extract_questions(
+    extracted = await _extract_questions(
         request_text, backend=backend, deployments=deployments
     )
+    extraction = extracted.original
     result = InformationRequestResult(
         **extraction.model_dump(),
         request_text=request_text,
@@ -115,8 +127,8 @@ async def process_information_request(
     try:
         payload = await asyncio.to_thread(
             question_extractor.prepare_topic_request,
-            clean_request,
-            clean_extraction.questions,
+            extracted.sanitized_request,
+            extracted.sanitized.questions,
         )
     except ValueError as exc:
         raise PipelineInputError(str(exc)) from exc
@@ -130,7 +142,9 @@ async def process_information_request(
             "FOI classification requires the configured fine-tuned topic checkpoint"
         )
     try:
-        cfg, state = await deployments.ensure_running(slug)
+        deployment = await deployments.ensure_running(slug)
+        cfg = deployment.config
+        state = deployment.state
         result.classification = await question_extractor.classify_topics(
             payload=payload,
             model=cfg.model,

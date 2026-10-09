@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from llm_management import inference
+from llm_management.cache import RunningDeployment
 from llm_management.errors import ClassifierUnavailable
 from llm_management.local_resources import ResourceRegistry
 from llm_management.foi import backends, question_extractor, pipeline, response_analysis
@@ -121,9 +122,9 @@ def test_topic_payload_is_sanitized_before_provisioning(monkeypatch):
     deployments = DeploymentAccess(
         lambda _: cfg,
         AsyncMock(
-            return_value=(
-                cfg,
-                SimpleNamespace(deployment_url="unused", api_key="unused"),
+            return_value=RunningDeployment(
+                config=cfg,
+                state=SimpleNamespace(deployment_url="unused", api_key="unused"),
             )
         ),
         Mock(),

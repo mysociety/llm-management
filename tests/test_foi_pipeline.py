@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+from llm_management.cache import RunningDeployment
 from llm_management.foi import backends, question_extractor, pipeline
 from llm_management.sanitization import presidio
 from llm_management.foi.backends import ClassificationRows, DeploymentAccess
@@ -48,9 +49,9 @@ def test_waiting_topic_model_does_not_block_other_extractions(monkeypatch):
     deployments = DeploymentAccess(
         lambda slug: cfg,
         AsyncMock(
-            return_value=(
-                cfg,
-                SimpleNamespace(deployment_url="https://test/v1", api_key="test"),
+            return_value=RunningDeployment(
+                config=cfg,
+                state=SimpleNamespace(deployment_url="https://test/v1", api_key="test"),
             )
         ),
         Mock(),

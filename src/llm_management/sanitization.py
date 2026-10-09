@@ -7,7 +7,7 @@ wrappers only here; never accept attestations supplied by an API client.
 import asyncio
 from dataclasses import dataclass
 import re
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, NamedTuple, Protocol, TypeVar, cast
 
 from pydantic import TypeAdapter
 
@@ -68,6 +68,14 @@ def require_sanitized(value: Sanitized[T]) -> T:
 
 def _attest(value: T) -> Sanitized[T]:
     return Sanitized(value, _seal=_SEAL)
+
+
+class SanitizedRequest(NamedTuple):
+    """Request text, units, and attested model inputs with shared PII mapping."""
+
+    request_text: str
+    units: list[str]
+    model_inputs: Sanitized[list[str]]
 
 
 class PresidioSanitizer:
@@ -224,9 +232,13 @@ class PresidioSanitizer:
 
     def sanitize_request(
         self, request_text: str, units: list[str], contexts: list[str]
-    ) -> tuple[str, list[str], Sanitized[list[str]]]:
+    ) -> SanitizedRequest:
         clean = self.sanitize_strings([request_text, *units, *contexts])
-        return clean[0], clean[1 : 1 + len(units)], _attest(clean[1 + len(units) :])
+        return SanitizedRequest(
+            request_text=clean[0],
+            units=clean[1 : 1 + len(units)],
+            model_inputs=_attest(clean[1 + len(units) :]),
+        )
 
     def sanitize_texts(self, texts: list[str]) -> Sanitized[list[str]]:
         return _attest(self.sanitize_strings(texts))

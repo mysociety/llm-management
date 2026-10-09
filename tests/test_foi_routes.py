@@ -5,6 +5,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from llm_management import server
+from llm_management.cache import RunningDeployment
 from llm_management.sanitization import presidio
 from llm_management.foi import backends
 from llm_management.foi.question_slice import segment_request
@@ -93,7 +94,11 @@ def test_backend_switch_shares_reconstruction(client, classifier, monkeypatch):
     cfg = SimpleNamespace(model=classifier.model_name)
     state = SimpleNamespace(deployment_url="https://example.test/v1", api_key="secret")
     monkeypatch.setattr(server, "get_deployment_config", lambda slug: cfg)
-    monkeypatch.setattr(server, "ensure_running", AsyncMock(return_value=(cfg, state)))
+    monkeypatch.setattr(
+        server,
+        "ensure_running",
+        AsyncMock(return_value=RunningDeployment(config=cfg, state=state)),
+    )
     remote = AsyncMock(return_value=rows)
     monkeypatch.setattr(backends, "classify_remote", remote)
     results = []
@@ -185,7 +190,9 @@ def pipeline(monkeypatch):
 
     async def extracted(request_text, **kwargs):
         result = await extractor(request_text, **kwargs)
-        return result, result, request_text
+        return foi_pipeline.QuestionExtractionResult(
+            original=result, sanitized=result, sanitized_request=request_text
+        )
 
     monkeypatch.setattr(foi_pipeline, "_extract_questions", extracted)
     monkeypatch.setattr(
@@ -196,9 +203,9 @@ def pipeline(monkeypatch):
     cfg = SimpleNamespace(model=settings.foi_topic_model)
     monkeypatch.setattr(server, "get_deployment_config", lambda slug: cfg)
     ensure = AsyncMock(
-        return_value=(
-            cfg,
-            SimpleNamespace(deployment_url="https://test/v1", api_key="test"),
+        return_value=RunningDeployment(
+            config=cfg,
+            state=SimpleNamespace(deployment_url="https://test/v1", api_key="test"),
         )
     )
     classify = AsyncMock(
