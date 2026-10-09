@@ -45,7 +45,8 @@ from .settings import settings
 from . import systemone
 from .errors import ClassifierBusy, ClassifierUnavailable
 from .local_resources import local_resources
-from .foi import backends, pipeline
+from .foi import backends, pipeline, response_analysis
+from .foi.response_schemas import ExtractionOutput, ResponseAnalysisInput
 from .foi.schemas import (
     ExtractionBackend,
     InformationRequestResult,
@@ -690,6 +691,16 @@ async def information_request_endpoint(
         )
 
 
+@app.post("/agents/foi_response_analysis", response_model=ExtractionOutput)
+async def foi_response_analysis_endpoint(
+    body: ResponseAnalysisInput,
+) -> ExtractionOutput:
+    """Analyze response sources against the questions extracted from a request."""
+    with foi_http_errors():
+        try:
+            return await response_analysis.analyze_response(body)
+        except response_analysis.ResponseModelNotReady as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
 
 
 @app.get("/local-models")

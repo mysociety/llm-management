@@ -7,13 +7,16 @@ wrappers only here; never accept attestations supplied by an API client.
 import asyncio
 from dataclasses import dataclass
 import re
-from typing import Any, Generic, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 
 from pydantic import TypeAdapter
 
 from .errors import ClassifierUnavailable
 from .local_resources import LocalResource, ResourceRegistry, local_resources
 from .settings import settings
+
+if TYPE_CHECKING:
+    from .foi.response_schemas import ExtractionInput
 
 T = TypeVar("T")
 POLICY_VERSION = "foi-pii-v1"
@@ -239,6 +242,32 @@ class PresidioSanitizer:
             message["content"] = content
         return _attest(payload)
 
+    def sanitize_extraction(
+        self, observed: "ExtractionInput"
+    ) -> "Sanitized[ExtractionInput]":
+        """Sanitize the explicit text fields of a response model input together."""
+        from .foi.response_schemas import ExtractionInput
+
+        data = observed.model_dump()
+        fields = []
+
+        def field(owner, key):
+            if owner[key] is not None:
+                fields.append((owner, key))
+
+        field(data, "request_text")
+        for question in data["request"]["questions"]:
+            field(question, "text")
+        additional = data["request"]["additional_text"]
+        for index in range(len(additional)):
+            fields.append((additional, index))
+        for source in data["sources"]:
+            field(source, "text")
+            field(source, "filename")
+        clean = self.sanitize_strings([owner[key] for owner, key in fields])
+        for (owner, key), text in zip(fields, clean, strict=True):
+            owner[key] = text
+        return _attest(ExtractionInput.model_validate(data))
 
 
 presidio = PresidioSanitizer()

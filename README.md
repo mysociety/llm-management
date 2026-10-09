@@ -124,6 +124,7 @@ available without authentication.
 | `/agents/foi_structure/extract` | POST | QuestionSlice extraction only |
 | `/local-models` | GET | Local CPU resource readiness and idle timers in this worker |
 | `/local-models/{name}/ensure` | POST | Warm a local CPU resource and reset its idle timer |
+| `/agents/foi_response_analysis` | POST | Response extraction v4 against upstream request questions; returns 501 until the response model is connected |
 | `/agents/immigration_detection` | POST | Validated plain-text example — classifies a request as immigration-related (`IMM`) or FOI (`FOI`) |
 
 ### Clef / System One
@@ -297,8 +298,12 @@ these extraction tests. These smoke tests do not establish production accuracy.
 
 ## FOI sanitization and local CPU lifecycle
 
-The FOI request pipeline runs Presidio locally on CPU before model inference. It uses sanitized text for both CPU and Exoscale QuestionSlice and for Granite
+Both FOI pipelines run Presidio locally on CPU before model inference. The request
+pipeline uses sanitized text for both CPU and Exoscale QuestionSlice and for Granite
 classification, while API extraction results retain the original request text.
+The response pipeline sanitizes request context, question text, additional text,
+source bodies, and filenames together; question/source IDs and structural metadata
+are preserved. Response inference remains a placeholder until its model is connected.
 
 The initial policy replaces person names, email addresses, phone numbers, credit
 card/IBAN identifiers, UK NHS/National Insurance numbers, and obvious numbered UK
@@ -373,6 +378,63 @@ contains unique request-level topics. Question IDs match the source-grounded
 `questions` array exactly. `classification` and `classification_model` are null when no
 classification is needed. The old summary, five keywords and `ir_type` schema,
 metadata endpoint and legacy extraction flow have been removed.
+
+`POST /agents/foi_response_analysis` accepts a `request` containing the complete
+output of either request endpoint, or just its `questions`, `extraction_status`
+and `additional_text`. It also requires a nonempty `sources` list describing
+response emails/attachments. Each source has a unique `id`, `kind` (`email` or
+`attachment`), `role` (`current`, `prior`, `quoted`), nullable `sender`
+(`authority`, `requester`, `other`, `unknown`), nullable `filename`,
+`availability` (`visible`, `unavailable`, `unknown`) and nullable `text`.
+Visible sources require text; other sources require null text. Sender and
+filename keys are required even when null.
+
+```json
+{
+  "request": {
+    "questions": [{"question_id": "q1", "text": "Please provide the report."}],
+    "extraction_status": "questions_found",
+    "additional_text": []
+  },
+  "request_text": "Please provide the report.",
+  "sources": [{
+    "id": "email1",
+    "kind": "email",
+    "role": "current",
+    "sender": "authority",
+    "filename": null,
+    "availability": "visible",
+    "text": "We do not hold this report."
+  }]
+}
+```
+
+The output contract follows the supplied response extraction v4 example:
+`outcomes`, `events`, optional nullable `process_states`, and `process_references`.
+Question/narrower scopes must reference upstream question IDs; supplied content
+must reference provided source IDs with compatible visibility. Whole-request and
+unresolved scopes remain available even when no questions were found.
+Invalid inputs return 422; invalid model output returns 502. The response model
+is still in training: the placeholder `foi-response-analysis-placeholder` returns
+501 without provisioning a deployment or generating analysis. Replace `predict`
+in `foi/response_analysis.py` when the checkpoint and serving contract are ready.
+
+Contract differences from the request step:
+
+- The training input needs only three request fields. Diagnostics (`ignored_text`,
+  `unit_predictions`, extraction provenance and promotion index) and classification
+  metadata are accepted in full upstream results but excluded from model input.
+- Original request text lives inside the full upstream result, whereas v4 places
+  it at the top level. The adapter copies it automatically; an explicit conflicting
+  `request_text` is rejected. Extraction-only results require callers to supply
+  original text separately if they want that optional context.
+- `classification.questions` contains regime/topic metadata, not question text.
+  Response analysis uses the top-level reconstructed `questions` array. The v4
+  model does not consume topics or regimes or return the request-step diagnostics.
+- The existing request schemas do not enforce unique IDs or status/list consistency.
+  Response analysis enforces both v4 invariants without changing the request endpoints.
+- A response is represented as identified sources, rather than a single raw string.
+  Ingestion diagnostics must be converted explicitly to v4 availability values.
 
 Example full-pipeline request:
 
@@ -508,6 +570,8 @@ be called from batch code without a FastAPI request or `TestClient`.
 |---|---|
 | `foi/pipeline.py` | Stage ordering, skipped classification and domain errors |
 | `foi/schemas.py` | Labels and request-stage input/output structures |
+| `foi/response_schemas.py` | Strict response extraction v4 contracts and upstream request adapter |
+| `foi/response_analysis.py` | Response model placeholder and output reference validation |
 | `foi/question_slice.py` | Segmentation, contextual windows, probability validation and question reconstruction |
 | `foi/backends.py` | Cached classifier/head factories and CPU versus Exoscale execution |
 | `foi/question_extractor.py` | Tokenizer loading, training-compatible prompts and constrained topic output |

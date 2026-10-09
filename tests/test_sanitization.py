@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -7,18 +8,61 @@ import pytest
 from llm_management import inference
 from llm_management.errors import ClassifierUnavailable
 from llm_management.local_resources import ResourceRegistry
-from llm_management.foi import backends, question_extractor, pipeline
+from llm_management.foi import backends, question_extractor, pipeline, response_analysis
 from llm_management.foi.backends import ClassificationRows, DeploymentAccess
 from llm_management.settings import settings
+from llm_management.foi.response_schemas import (
+    ExtractionInput,
+    ExtractionOutput,
+    ResponseAnalysisInput,
+)
 from llm_management.sanitization import (
     PresidioSanitizer,
+    Sanitized,
     presidio,
     require_sanitized,
 )
 
 
+def observed():
+    return ExtractionInput(
+        request={
+            "questions": [{"question_id": "q1", "text": "Records about Alice Smith"}],
+            "extraction_status": "questions_found",
+            "additional_text": ["Email alice@example.org"],
+        },
+        request_text="Alice Smith: alice@example.org",
+        sources=[
+            {
+                "id": "alice@example.org",
+                "kind": "email",
+                "role": "current",
+                "sender": "authority",
+                "filename": "Alice Smith.pdf",
+                "availability": "visible",
+                "text": "Dear Alice Smith, alice@example.org",
+            }
+        ],
+    )
 
 
+def test_response_fields_share_mapping_preserve_metadata_and_snapshot():
+    original = observed()
+    sanitized = presidio.sanitize_extraction(original)
+    clean = require_sanitized(sanitized)
+    assert clean.request_text == "<PERSON_1>: <EMAIL_ADDRESS_1>"
+    assert clean.request.questions[0].text == "Records about <PERSON_1>"
+    assert clean.request.additional_text == ["Email <EMAIL_ADDRESS_1>"]
+    assert clean.sources[0].filename == "<PERSON_1>.pdf"
+    assert clean.sources[0].id == "alice@example.org"
+    assert clean.sources[0].text == "Dear <PERSON_1>, <EMAIL_ADDRESS_1>"
+    clean.sources[0].text = "New raw text"
+    assert sanitized.value.sources[0].text != "New raw text"
+    assert "Alice Smith" in original.sources[0].text
+    with pytest.raises(FrozenInstanceError):
+        sanitized.policy_version = "old"
+    with pytest.raises(TypeError):
+        Sanitized(original)
 
 
 def test_existing_placeholders_and_request_scoped_mapping():
@@ -96,7 +140,7 @@ def test_topic_payload_is_sanitized_before_provisioning(monkeypatch):
     assert "Alice Smith" in result.request_text
 
 
-def test_sanitizer_failure_prevents_request_inference(monkeypatch):
+def test_sanitizer_failure_prevents_request_and_response_inference(monkeypatch):
     monkeypatch.setattr(
         presidio,
         "sanitize_strings",
@@ -113,6 +157,15 @@ def test_sanitizer_failure_prevents_request_inference(monkeypatch):
         )
     classify.assert_not_called()
     deployments.ensure_running.assert_not_called()
+    predict = AsyncMock()
+    monkeypatch.setattr(response_analysis, "predict", predict)
+    with pytest.raises(pipeline.PipelineUnavailable):
+        asyncio.run(
+            response_analysis.analyze_response(
+                ResponseAnalysisInput.model_validate(observed().model_dump())
+            )
+        )
+    predict.assert_not_called()
 
 
 def test_external_adapters_reject_raw_input_before_http(monkeypatch):
@@ -141,8 +194,18 @@ def test_external_adapters_reject_raw_input_before_http(monkeypatch):
                 question_ids=[],
             )
         )
+    with pytest.raises(TypeError, match="sanitization policy"):
+        asyncio.run(response_analysis.predict(observed(), model="test"))
 
 
+def test_response_predict_receives_sanitized_input(monkeypatch):
+    output = ExtractionOutput(outcomes=[], events=[], process_references=[])
+    predict = AsyncMock(return_value=output)
+    monkeypatch.setattr(response_analysis, "predict", predict)
+    body = ResponseAnalysisInput.model_validate(observed().model_dump())
+    assert asyncio.run(response_analysis.analyze_response(body)) == output
+    assert isinstance(predict.call_args.args[0], Sanitized)
+    assert "Alice Smith" not in predict.call_args.args[0].value.sources[0].text
 
 
 def test_real_presidio_cpu_recognizers(monkeypatch):
