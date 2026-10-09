@@ -12,8 +12,8 @@ from llm_management.inference import (
 )
 
 
-from llm_management.foi import granite as foi_topic, pipeline as foi_pipeline
-from llm_management.foi.model_spec import GRANITE_MERGED
+from llm_management.foi import question_extractor as foi_topic, pipeline as foi_pipeline
+from llm_management.settings import settings
 from llm_management.foi.question_slice import build_extraction_result
 
 
@@ -187,7 +187,7 @@ def pipeline(monkeypatch):
     monkeypatch.setattr(
         foi_topic, "prepare_topic_request", lambda *args: {"max_tokens": 256}
     )
-    cfg = SimpleNamespace(model=GRANITE_MERGED)
+    cfg = SimpleNamespace(model=settings.foi_topic_model)
     monkeypatch.setattr(server, "get_deployment_config", lambda slug: cfg)
     ensure = AsyncMock(
         return_value=(
@@ -221,7 +221,7 @@ def test_new_route_orchestrates_and_keeps_source_diagnostics(pipeline):
     assert result["questions"][0]["text"] == "Please provide report 0."
     assert result["promoted_continuation_index"] == 0
     assert result["unit_predictions"][0]["label"] == "QUESTION_CONTINUATION"
-    assert result["classification_model"] == GRANITE_MERGED
+    assert result["classification_model"] == settings.foi_topic_model
     assert result["extraction_model"] == "modernbert"
     assert result["extraction_revision"] == "pinned"
     assert result["extraction_backend"] == "cpu"  # The mocked extractor's result.
@@ -230,15 +230,15 @@ def test_new_route_orchestrates_and_keeps_source_diagnostics(pipeline):
         "model",
         "revision",
         "backend",
-        "granite_model",
-        "granite_base_model",
-        "granite_adapter",
+        "question_extractor_model",
+        "question_extractor_base_model",
+        "question_extractor_adapter",
     }.intersection(result)
     assert pipeline.extractor.call_args.kwargs["backend"] == "exoscale"
     assert pipeline.classify.call_args.kwargs["question_ids"] == ["q1"]
 
 
-def test_no_questions_never_starts_granite(pipeline):
+def test_no_questions_never_starts_question_extractor(pipeline):
     pipeline.extractor.return_value = extraction((0,))
     response = pipeline.client.post(
         "/agents/foi_structure", json={"request": "Thank you."}
@@ -261,7 +261,7 @@ def test_partial_uncertainty_is_retained(pipeline):
 
 
 def test_base_model_cannot_be_substituted(pipeline):
-    pipeline.cfg.model = "ibm-granite/granite-4.0-1b"
+    pipeline.cfg.model = "ibm-question_extractor/question_extractor-4.0-1b"
     response = pipeline.client.post(
         "/agents/foi_structure", json={"request": "Request"}
     )

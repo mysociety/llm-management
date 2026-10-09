@@ -16,7 +16,6 @@ from ..inference import LocalSequenceClassifier, classify_remote
 from ..cache import DeploymentState
 from ..models import DeploymentConfig
 from .schemas import UNIT_LABELS, ExtractionBackend
-from .model_spec import QUESTION_SLICE_INPUT_LIMIT
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 import asyncio
@@ -151,7 +150,7 @@ def question_classifier() -> LocalSequenceClassifier:
         model=settings.question_slice_model,
         revision=settings.question_slice_revision,
         labels=UNIT_LABELS,
-        max_tokens=QUESTION_SLICE_INPUT_LIMIT,
+        max_tokens=settings.question_slice_input_limit,
         max_units=settings.classifier_max_units,
         batch_size=settings.classifier_batch_size,
         threads=settings.cpu_inference_threads,

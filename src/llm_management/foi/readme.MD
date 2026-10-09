@@ -30,7 +30,7 @@ The model names below are Hugging Face repository IDs. They identify the trained
 
 Keep the remote import and local model/tokenizer versions aligned when updating either model. For that reason, Exoscale extraction returns `extraction_revision: null` rather than claiming a verified remote revision.
 
-[model_spec.py](model_spec.py) records the default model identities and pinned revisions. [settings.py](../settings.py) provides the QuestionSlice model/revision overrides and deployment names; [exoscale.toml](../../../conf/exoscale.toml) defines the remote models and GPU settings. The `v2` and `grounded-v2` strings are parts of the trained model names, not separate API versions.
+[model_spec.py](model_spec.py) defines typed Pydantic settings for model identities, pinned revisions and token limits. [settings.py](../settings.py) includes these fields alongside deployment names and runtime controls; [exoscale.toml](../../../conf/exoscale.toml) defines the remote models and GPU settings. The `v2` and `grounded-v2` strings are parts of the trained model names, not separate API versions.
 
 ## 1. Split the request into manageable parts
 
@@ -76,7 +76,7 @@ The extraction stage returns a `QuestionSliceResult`, which is also the response
 
 ## 4. Classify the extracted questions with foi-topic-v2
 
-[granite.py](granite.py) sends the original request and extracted questions to the merged, fine-tuned foi-topic-v2 checkpoint. Its training adapter is already incorporated into the model; no separate adapter is loaded during a request.
+[question_extractor.py](question_extractor.py) sends the original request and extracted questions to the merged, fine-tuned foi-topic-v2 checkpoint. Its training adapter is already incorporated into the model; no separate adapter is loaded during a request.
 
 For each question, foi-topic-v2 returns:
 

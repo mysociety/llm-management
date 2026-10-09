@@ -339,7 +339,8 @@ Granite serves `mySociety/granite-tiny-foi-topic-grounded-v2-merged`, containing
 at revision `c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79`; its tokenizer/chat template
 is pinned locally to that revision. Exoscale imports weights by repository name,
 so keep that import and local tokenizer in sync when updating the model. No base
-Granite substitution is allowed. Model merging and publication are handled in
+Granite substitution is allowed. The deployment must match `FOI_TOPIC_MODEL`;
+update `FOI_TOPIC_REVISION` with it to keep the local tokenizer aligned. Model merging and publication are handled in
 the fine-tuning project; this service does not require PEFT.
 
 Granite uses JSON-schema constrained generation and validates IDs, counts, regimes,
@@ -412,6 +413,13 @@ Optional environment settings:
 | Setting | Default | Purpose |
 |---|---|---|
 | `FOI_TOPIC_DEPLOYMENT` | `foi_topic_v2` | Merged fine-tuned Granite deployment for the full FOI pipeline |
+| `FOI_TOPIC_MODEL` | `mySociety/granite-tiny-foi-topic-grounded-v2-merged` | Expected topic checkpoint; must match the remote deployment |
+| `FOI_TOPIC_REVISION` | `c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79` | Pinned local topic tokenizer revision |
+| `FOI_TOPIC_INPUT_LIMIT` | `2048` | Maximum sanitized prompt tokens |
+| `FOI_TOPIC_OUTPUT_LIMIT` | `2048` | Maximum completion tokens |
+| `FOI_TOPIC_MIN_OUTPUT_TOKENS` | `256` | Minimum completion allowance |
+| `FOI_TOPIC_OUTPUT_OVERHEAD` | `64` | Fixed completion allowance |
+| `FOI_TOPIC_OUTPUT_TOKENS_PER_QUESTION` | `192` | Additional completion allowance per question |
 | `CPU_INFERENCE_THREADS` | `1` | Process-wide PyTorch intra-op thread count |
 | `CPU_INFERENCE_PRELOAD` | `false` | Load CPU model during application startup instead of the first CPU request |
 | `CLASSIFIER_BATCH_SIZE` | `8` | Maximum semantic units per inference call |
@@ -419,6 +427,7 @@ Optional environment settings:
 | `CLASSIFIER_CACHE_DIR` | Hugging Face default | Persistent tokenizer/weight cache location |
 | `QUESTION_SLICE_MODEL` | `mySociety/modernbert-question-slice-v2` | Classifier checkpoint |
 | `QUESTION_SLICE_REVISION` | `eb0436d4be96f113f35b5f891f9cc876a0f0bd6b` | Pinned local tokenizer/model revision |
+| `QUESTION_SLICE_INPUT_LIMIT` | `768` | Maximum tokens per extraction context window |
 | `QUESTION_SLICE_DEPLOYMENT` | `question_slice_v2` | Remote deployment slug |
 | `QUESTION_SLICE_GPU_ENABLED` | `true` | Allow the tested Exoscale encoder + local-head backend |
 
@@ -447,7 +456,7 @@ be called from batch code without a FastAPI request or `TestClient`.
 | `foi/schemas.py` | Labels and input/output structures shared by both stages |
 | `foi/question_slice.py` | Segmentation, contextual windows, probability validation and question reconstruction |
 | `foi/backends.py` | Cached classifier/head factories and CPU versus Exoscale execution |
-| `foi/granite.py` | Tokenizer loading, training-compatible prompts and constrained topic output |
+| `foi/question_extractor.py` | Tokenizer loading, training-compatible prompts and constrained topic output |
 | `foi/model_spec.py` | Checkpoint identities, revisions and model input/output limits |
 | `inference.py` / `errors.py` | Reusable classifier execution and runtime errors, independent of FOI code |
 | `settings.py` | Runtime settings/environment variables; deployment hardware is in `conf/exoscale.toml` |
@@ -464,7 +473,7 @@ The original orphan indices may therefore remain present when the final status i
 `questions_found`; `promoted_continuation_index` explains the recovery.
 
 Tests follow these boundaries: `test_question_slice.py` covers pure processing,
-`test_inference.py` covers reusable runtime behavior, `test_granite.py` covers prompts
+`test_inference.py` covers reusable runtime behavior, `test_question_extractor.py` covers prompts
 and transport validation, `test_foi_pipeline.py` calls the pipeline directly, and
 `test_foi_routes.py` checks HTTP contracts. The existing external test modules
 exercise real models through the unchanged API routes.

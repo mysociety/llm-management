@@ -3,14 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
 
-from .foi.model_spec import QUESTION_SLICE_MODEL, QUESTION_SLICE_REVISION
+from .foi.model_spec import FOIModelSettings, QUESTION_SLICE_DEPLOYMENT
 
 CONFIG_PATH = Path("conf/exoscale.toml")
 
 
-class Settings(BaseSettings):
+class Settings(FOIModelSettings):
     model_config = SettingsConfigDict(
         env_file=".env", extra="ignore", hide_input_in_errors=True
     )
@@ -21,9 +21,7 @@ class Settings(BaseSettings):
     huggingface_token: str = ""
     server_role: str = "test"
     auth_tokens: dict[str, str] = Field(default_factory=dict)
-    question_slice_model: str = QUESTION_SLICE_MODEL
-    question_slice_revision: str = QUESTION_SLICE_REVISION
-    question_slice_deployment: str = "question_slice_v2"
+    question_slice_deployment: str = QUESTION_SLICE_DEPLOYMENT
     question_slice_gpu_enabled: bool = True
     foi_topic_deployment: str = "foi_topic_v2"
     classifier_batch_size: int = Field(default=8, ge=1, le=256)
