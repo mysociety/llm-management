@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from llm_management import inference
+from llm_management.sanitization import presidio
 from llm_management.inference import (
     ClassifierBusy,
     ClassifierOutputError,
@@ -68,7 +69,7 @@ def test_remote_reorders_results_and_rejects_duplicate_indices(monkeypatch):
     )
     kwargs = dict(
         embedding_head=lambda vectors: vectors,
-        texts=["a", "b"],
+        texts=presidio.sanitize_texts(["a", "b"]),
         model="test",
         deployment_url="https://example.test/v1/",
         api_key="secret",
@@ -104,7 +105,7 @@ def test_remote_embeddings_preserve_raw_vectors_for_head(monkeypatch):
 
     output = asyncio.run(
         inference.classify_remote(
-            texts=["request"],
+            texts=presidio.sanitize_texts(["request"]),
             model="test",
             deployment_url="https://example.test/v1",
             api_key="secret",

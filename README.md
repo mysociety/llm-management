@@ -122,6 +122,8 @@ available without authentication.
 | `/agents/capital_city` | POST | Native structured-output example — returns a country's capital city |
 | `/agents/foi_structure` | POST | QuestionSlice extraction followed by fine-tuned Granite regimes/topics; `backend=cpu` or `exoscale` selects extraction |
 | `/agents/foi_structure/extract` | POST | QuestionSlice extraction only |
+| `/local-models` | GET | Local CPU resource readiness and idle timers in this worker |
+| `/local-models/{name}/ensure` | POST | Warm a local CPU resource and reset its idle timer |
 | `/agents/immigration_detection` | POST | Validated plain-text example — classifies a request as immigration-related (`IMM`) or FOI (`FOI`) |
 
 ### Clef / System One
@@ -293,6 +295,52 @@ without questions and a continuation recovered by the local heuristic. A fourth
 check verifies the exact recovered single question. No OLMo deployment is used by
 these extraction tests. These smoke tests do not establish production accuracy.
 
+## FOI sanitization and local CPU lifecycle
+
+The FOI request pipeline runs Presidio locally on CPU before model inference. It uses sanitized text for both CPU and Exoscale QuestionSlice and for Granite
+classification, while API extraction results retain the original request text.
+
+The initial policy replaces person names, email addresses, phone numbers, credit
+card/IBAN identifiers, UK NHS/National Insurance numbers, and obvious numbered UK
+street addresses. It preserves ordinary dates, organisations, and geographic names.
+Addresses use a conservative custom pattern; detection is best effort and does not
+cover every possible personal identifier or address format. Replacements such as
+`<PERSON_1>` are consistent for matching detected values within one analysis. Existing
+placeholders are preserved; replacement maps are discarded after each operation.
+A sanitizer failure returns 503 and blocks inference.
+
+`poetry install` installs Presidio and the pinned English spaCy model. Presidio loads
+that installed model explicitly on CPU and never downloads a model during a request.
+An alternative `PRESIDIO_SPACY_MODEL` must be installed before starting the service.
+
+Model resources share the same model-family/version name across runtimes:
+`question_slice_v2` identifies the remote GPU deployment, `question_slice_v2_cpu`
+the full local CPU model, and `question_slice_v2_head_cpu` its local classification
+head used with GPU embeddings. Use these names in warm-up calls and groups.
+
+Local resources load on demand. Use `POST /local-models/presidio/ensure`,
+`POST /local-models/question_slice_v2_cpu/ensure`,
+`POST /local-models/question_slice_v2_head_cpu/ensure`, or
+`POST /local-models/question_extractor_tokenizer/ensure` to warm them explicitly. These endpoints
+use the same authentication as the rest of the API. The shared
+`POST /deployments/{slug}/ensure` endpoint also accepts registered local resource
+names; local success returns `action: "warmed"` and `replicas: null`. The local
+endpoint is an alias returning resource status. `GET /local-models` reports resource
+controllers constructed in the current worker. Local resource names can also be
+included alongside remote deployment slugs in deployment groups.
+
+Idle cleanup drops model/tokenizer references after `CPU_IDLE_TIMEOUT_MINUTES`
+(default 15), and the next request reloads them from the persistent model cache.
+Active work is protected even when its HTTP caller disconnects. This is in-process
+unloading: Python/native allocators may retain memory. Multiple API workers each own
+their resources and idle timers, so warm-up reaches the worker handling that call.
+
+External FOI adapters require `Sanitized[T]` and check its policy version at runtime.
+Only sanitizers construct these wrappers; they store immutable JSON snapshots and
+return fresh typed views. Chat payloads are sanitized after construction as well.
+Future GPU adapters should require this contract and unwrap only at the transport
+boundary. Raw proxy and other agent endpoints retain their existing contracts.
+
 ## Fine-tuned QuestionSlice extraction (experimental)
 
 `POST /agents/foi_structure/extract?backend=cpu` runs the fine-tuned ModernBERT
@@ -422,6 +470,8 @@ Optional environment settings:
 | `FOI_TOPIC_OUTPUT_TOKENS_PER_QUESTION` | `192` | Additional completion allowance per question |
 | `CPU_INFERENCE_THREADS` | `1` | Process-wide PyTorch intra-op thread count |
 | `CPU_IDLE_TIMEOUT_MINUTES` | `15` | Unload unused local CPU resources; checked every minute |
+| `PRESIDIO_SPACY_MODEL` | `en_core_web_sm` | Installed local English NLP model; the default version is pinned to 3.8.0 |
+| `PRESIDIO_SCORE_THRESHOLD` | `0.5` | Minimum confidence for PII replacement |
 | `CLASSIFIER_BATCH_SIZE` | `8` | Maximum semantic units per inference call |
 | `CLASSIFIER_MAX_UNITS` | `256` | Maximum semantic units accepted per request |
 | `CLASSIFIER_CACHE_DIR` | Hugging Face default | Persistent tokenizer/weight cache location |
@@ -430,6 +480,10 @@ Optional environment settings:
 | `QUESTION_SLICE_INPUT_LIMIT` | `768` | Maximum tokens per extraction context window |
 | `QUESTION_SLICE_DEPLOYMENT` | `question_slice_v2` | Remote deployment slug |
 | `QUESTION_SLICE_GPU_ENABLED` | `true` | Allow the tested Exoscale encoder + local-head backend |
+
+Model identities and limits are validated by `FOIModelSettings`, inherited by the
+application settings. The maximum topic question count is derived from the output
+budget. Change limits only to values supported by the trained checkpoint.
 
 A model instance is cached per API worker process. CPU inference runs outside the
 async event loop with one in-flight request per model instance. Overload returns
@@ -453,7 +507,7 @@ be called from batch code without a FastAPI request or `TestClient`.
 | Module | Responsibility |
 |---|---|
 | `foi/pipeline.py` | Stage ordering, skipped classification and domain errors |
-| `foi/schemas.py` | Labels and input/output structures shared by both stages |
+| `foi/schemas.py` | Labels and request-stage input/output structures |
 | `foi/question_slice.py` | Segmentation, contextual windows, probability validation and question reconstruction |
 | `foi/backends.py` | Cached classifier/head factories and CPU versus Exoscale execution |
 | `foi/question_extractor.py` | Tokenizer loading, training-compatible prompts and constrained topic output |
@@ -493,34 +547,23 @@ provenance; they are not independently served models.
 
 ## Deployment groups
 
-Named groups in `conf/exoscale.toml` let batch clients prepare several deployments concurrently:
+Named groups in `conf/exoscale.toml` let batch clients warm remote deployments and registered local CPU resources concurrently:
 
 ```toml
 [[deployment_group]]
 slug = "foi_pipeline"
-deployments = ["question_slice_v2", "foi_topic_v2"]
+deployments = [
+    "presidio", "question_slice_v2_head_cpu", "question_extractor_tokenizer",
+    "question_slice_v2", "foi_topic_v2",
+]
+
+[[deployment_group]]
+slug = "foi_pipeline_cpu"
+deployments = ["presidio", "question_slice_v2_cpu", "question_extractor_tokenizer", "foi_topic_v2"]
 ```
 
-Call `POST /deployment-groups/foi_pipeline/ensure` with the usual authentication before a batch using GPU extraction. This explicitly creates or resumes both deployments, even when automatic startup on inference requests is disabled. Existing per-deployment locks prevent overlapping group and inference requests from starting the same deployment twice within one API process.
+Call `POST /deployment-groups/foi_pipeline/ensure` with the usual authentication before a batch using GPU extraction. This warms Presidio, the local classification head and Granite tokenizer while creating or resuming both GPU deployments, even when automatic startup on inference requests is disabled. For CPU extraction, use `POST /deployment-groups/foi_pipeline_cpu/ensure`, which warms the full CPU classifier and the remote topic model. Existing per-deployment locks prevent overlapping group and inference requests from starting the same deployment twice within one API process.
 
-A known group returns HTTP 200 with `slug`, overall `success`, and an ordered `deployments` list. Each member has `slug`, `success`, `replicas` (null on failure) and `error` (null on success). Inspect the success flags: a partial or complete startup failure is reported in the body. Unknown groups return 404. Successful members are not rolled back when another fails; retrying the group reuses running deployments. Idle scaling and shutdown cleanup remain per deployment, and warm-up does not keep a group running indefinitely.
+A known group returns HTTP 200 with `slug`, overall `success`, and an ordered `deployments` list. Each member has `slug`, `success`, `replicas` (null for local resources or on failure) and `error` (null on success). Inspect the success flags: a partial or complete startup failure is reported in the body. Unknown groups return 404. Successful members are not rolled back when another fails; retrying the group reuses loaded local resources and running deployments. Idle scaling and shutdown cleanup follow each resource's lifecycle, and warm-up does not keep a group running indefinitely.
 
-Groups must be nonempty, have unique names, and reference existing deployment slugs without repeated members.
-
-## Local CPU resource lifecycle
-
-Local classifiers and tokenizers load on demand and unload after
-`CPU_IDLE_TIMEOUT_MINUTES` of inactivity. Startup preloading has been replaced by
-explicit warm-up. Active work holds a resource lease, including when its async
-caller is cancelled. Resources and timers belong to each API worker process;
-unloading drops references but does not guarantee memory returns to the OS.
-
-`GET /local-models` reports constructed local controllers. Warm a resource using
-`POST /local-models/{name}/ensure` or `POST /deployments/{name}/ensure`; the shared
-endpoint returns `action: "warmed"` and `replicas: null` for local resources.
-Registered local names can join remote deployment slugs in deployment groups.
-The FOI GPU group warms the local head and topic tokenizer; the CPU group warms
-the full QuestionSlice classifier and topic tokenizer. Both start the remote topic
-model. The QuestionSlice tokenizer still loads on the first GPU extraction request.
-Shutdown logs local cleanup failures and continues cleaning up other resources
-and remote deployments.
+Groups must be nonempty, have unique names, and reference existing deployment slugs or registered local resource names without repeated members. Local and remote names must not collide. Resource owners register guards or cold factories in code; config validation discovers these names without loading models. Adding a new local owner registration makes it available to individual and group warm-up without changing the HTTP handlers.

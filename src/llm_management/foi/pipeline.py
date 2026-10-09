@@ -13,6 +13,7 @@ import httpx
 from ..errors import ClassifierOutputError, ClassifierUnavailable
 from ..models import LLMManagementError
 from ..settings import settings
+from ..sanitization import presidio
 from . import backends, question_extractor
 from .backends import DeploymentAccess
 from .question_slice import build_extraction_result, contextual_inputs, segment_request
@@ -33,24 +34,42 @@ class PipelineOutputError(RuntimeError):
     """A model request failed or produced invalid/incomplete output."""
 
 
-async def extract_questions(
+async def _extract_questions(
     request_text: str,
     *,
     deployments: DeploymentAccess,
     backend: ExtractionBackend = "cpu",
-) -> QuestionSliceResult:
+) -> tuple[QuestionSliceResult, QuestionSliceResult, str]:
     try:
         units = segment_request(request_text)
-        classified = await backends.classify_question_units(
-            contextual_inputs(units), backend=backend, deployments=deployments
+        clean_request, sanitized_units, model_inputs = await asyncio.to_thread(
+            presidio.sanitize_request,
+            request_text,
+            [unit.text for unit in units],
+            contextual_inputs(units),
         )
-        return build_extraction_result(
+        clean_units = [
+            unit.model_copy(update={"text": text})
+            for unit, text in zip(units, sanitized_units, strict=True)
+        ]
+        classified = await backends.classify_question_units(
+            model_inputs, backend=backend, deployments=deployments
+        )
+        original = build_extraction_result(
             units,
             classified.probabilities,
             backend=backend,
             model=classified.model,
             revision=classified.revision,
         )
+        clean = build_extraction_result(
+            clean_units,
+            classified.probabilities,
+            backend=backend,
+            model=classified.model,
+            revision=classified.revision,
+        )
+        return original, clean, clean_request
     except ClassifierUnavailable as exc:
         raise PipelineUnavailable(str(exc)) from exc
     except (ClassifierOutputError, httpx.HTTPError) as exc:
@@ -64,13 +83,25 @@ async def extract_questions(
         raise PipelineInputError(str(exc)) from exc
 
 
+async def extract_questions(
+    request_text: str,
+    *,
+    deployments: DeploymentAccess,
+    backend: ExtractionBackend = "cpu",
+) -> QuestionSliceResult:
+    original, _, _ = await _extract_questions(
+        request_text, deployments=deployments, backend=backend
+    )
+    return original
+
+
 async def process_information_request(
     request_text: str,
     *,
     deployments: DeploymentAccess,
     backend: ExtractionBackend = "cpu",
 ) -> InformationRequestResult:
-    extraction = await extract_questions(
+    extraction, clean_extraction, clean_request = await _extract_questions(
         request_text, backend=backend, deployments=deployments
     )
     result = InformationRequestResult(
@@ -83,7 +114,9 @@ async def process_information_request(
         return result
     try:
         payload = await asyncio.to_thread(
-            question_extractor.prepare_topic_request, request_text, extraction.questions
+            question_extractor.prepare_topic_request,
+            clean_request,
+            clean_extraction.questions,
         )
     except ValueError as exc:
         raise PipelineInputError(str(exc)) from exc

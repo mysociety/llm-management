@@ -15,6 +15,7 @@ import httpx
 
 from .errors import ClassifierUnavailable, ClassifierBusy, ClassifierOutputError
 from .local_resources import LocalResource, local_resources
+from .sanitization import Sanitized, require_sanitized
 
 
 class LocalSequenceClassifier:
@@ -160,14 +161,14 @@ class LocalSequenceClassifier:
 
 async def classify_remote(
     *,
-    texts: list[str],
+    texts: Sanitized[list[str]],
     model: str,
     deployment_url: str,
     api_key: str,
     batch_size: int = 8,
     embedding_head: Callable[[list[list[float]]], list[list[float]]],
 ) -> list[list[float]]:
-    clean_texts = texts
+    clean_texts = require_sanitized(texts)
     base = deployment_url.rstrip("/")
     url = base + "/embeddings"
     rows = []

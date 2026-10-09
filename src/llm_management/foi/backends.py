@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable
 import asyncio
 from ..settings import settings
 from ..local_resources import LocalResource, local_resources
+from ..sanitization import Sanitized, require_sanitized
 
 
 class ModernBertClassificationHead:
@@ -192,13 +193,13 @@ class ClassificationRows:
 
 
 async def classify_question_units(
-    texts: list[str],
+    texts: Sanitized[list[str]],
     *,
     backend: ExtractionBackend,
     deployments: DeploymentAccess,
 ) -> ClassificationRows:
     """Run the full CPU classifier or the Exoscale encoder plus original local head."""
-    clean_texts = texts
+    clean_texts = require_sanitized(texts)
     classifier = question_classifier()
     if backend == "cpu":
         rows = await asyncio.to_thread(classifier.classify, clean_texts)

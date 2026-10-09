@@ -56,6 +56,7 @@ def test_prompt_uses_training_payload_and_exact_chat_tokenization(monkeypatch):
     payload = foi_topic.prepare_topic_request(
         "Original request", extraction().questions
     )
+    payload = payload.value
     user = json.loads(payload["messages"][1]["content"])
     assert list(user) == ["questions", "request_text"]
     assert user["questions"] == [
@@ -174,9 +175,30 @@ def test_remote_output_validation(monkeypatch, case):
     assert request.headers["Authorization"] == "Bearer test"
     body = json.loads(request.content)
     assert body["model"] == settings.foi_topic_model
-    assert body["messages"] == payload["messages"]
-    assert body["response_format"] == payload["response_format"]
-    assert body["temperature"] == payload["temperature"]
-    assert body["max_tokens"] == payload["max_tokens"]
+    assert body["messages"] == payload.value["messages"]
+    assert body["response_format"] == payload.value["response_format"]
+    assert body["temperature"] == payload.value["temperature"]
+    assert body["max_tokens"] == payload.value["max_tokens"]
     assert "max_completion_tokens" not in body
     assert "tools" not in body
+    assert "alice@example.org" not in request.content.decode()
+
+
+def test_token_budget_checks_final_sanitized_messages(monkeypatch):
+    seen = []
+
+    def tokenize(messages, **kwargs):
+        seen.extend(messages)
+        return [1]
+
+    monkeypatch.setattr(
+        foi_topic,
+        "question_extractor_tokenizer",
+        lambda: SimpleNamespace(apply_chat_template=tokenize),
+    )
+    payload = foi_topic.prepare_topic_request(
+        "Email alice@example.org", extraction().questions
+    )
+    assert "alice@example.org" not in seen[1]["content"]
+    assert "<EMAIL_ADDRESS_1>" in seen[1]["content"]
+    assert seen == payload.value["messages"]

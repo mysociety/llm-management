@@ -29,6 +29,8 @@ class Settings(FOIModelSettings):
     cpu_inference_threads: int = Field(default=1, ge=1)
     classifier_cache_dir: str | None = None
     cpu_idle_timeout_minutes: int = Field(default=15, ge=1)
+    presidio_spacy_model: str = "en_core_web_sm"
+    presidio_score_threshold: float = Field(default=0.5, ge=0, le=1)
 
 
 settings = Settings()

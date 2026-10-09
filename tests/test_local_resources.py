@@ -8,6 +8,7 @@ from starlette.testclient import TestClient
 from llm_management import server
 from llm_management.local_resources import LocalResource, ResourceRegistry
 from llm_management.inference import LocalSequenceClassifier
+from llm_management.sanitization import presidio
 
 
 def test_shutdown_continues_after_local_unload_failure(caplog):
@@ -114,6 +115,19 @@ def test_classifier_unloads_model_and_tokenizer_under_lease():
     assert classifier._model is None and classifier._tokenizer is None
 
 
+def test_cpu_ensure_status_and_failure(monkeypatch):
+    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(server.cache, "all_active", lambda: [])
+    with TestClient(server.app) as client:
+        assert client.post("/local-models/presidio/ensure").json()["ready"]
+        rows = client.get("/local-models").json()
+        assert any(row["name"] == "presidio" and row["ready"] for row in rows)
+        assert client.post("/local-models/missing/ensure").status_code == 404
+        monkeypatch.setattr(
+            presidio.resource, "_load", Mock(side_effect=RuntimeError("load failed"))
+        )
+        assert client.post("/local-models/presidio/ensure").status_code == 503
+    assert not presidio.resource.status()["ready"]
 
 
 def test_registry_cold_factory_discovery_and_concurrent_lookup():
@@ -140,18 +154,3 @@ def test_registry_cold_factory_discovery_and_concurrent_lookup():
     assert all(resource is results[0] for resource in results)
     results[0].warmup()
     load.assert_called_once()
-
-
-def test_cpu_ensure_status_and_failure(monkeypatch):
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.cache, "all_active", lambda: [])
-    registry = ResourceRegistry()
-    resource = registry.register(LocalResource("custom_cpu", Mock(), Mock()))
-    monkeypatch.setattr(server, "local_resources", registry)
-    with TestClient(server.app) as client:
-        assert client.post("/local-models/custom_cpu/ensure").json()["ready"]
-        assert client.get("/local-models").json()[0]["ready"]
-        assert client.post("/local-models/missing/ensure").status_code == 404
-        monkeypatch.setattr(resource, "_load", Mock(side_effect=RuntimeError("load failed")))
-        assert client.post("/local-models/custom_cpu/ensure").status_code == 503
-    assert not resource.status()["ready"]

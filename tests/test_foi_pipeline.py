@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 from llm_management.foi import backends, question_extractor, pipeline
+from llm_management.sanitization import presidio
 from llm_management.foi.backends import ClassificationRows, DeploymentAccess
 from llm_management.settings import settings
 from llm_management.foi.schemas import TopicOutput
@@ -27,7 +28,7 @@ def test_pipeline_can_run_without_http_and_skip_empty_classification(monkeypatch
     deployments.ensure_running.assert_not_called()
 
 
-def test_waiting_question_extractor_does_not_block_other_extractions(monkeypatch):
+def test_waiting_topic_model_does_not_block_other_extractions(monkeypatch):
     calls = 0
 
     async def classify_units(texts, **kwargs):
@@ -38,7 +39,11 @@ def test_waiting_question_extractor_does_not_block_other_extractions(monkeypatch
         )
 
     monkeypatch.setattr(backends, "classify_question_units", classify_units)
-    monkeypatch.setattr(question_extractor, "prepare_topic_request", lambda *args: {})
+    monkeypatch.setattr(
+        question_extractor,
+        "prepare_topic_request",
+        lambda *args: presidio.sanitize_payload({"messages": []}),
+    )
     cfg = SimpleNamespace(model=settings.foi_topic_model)
     deployments = DeploymentAccess(
         lambda slug: cfg,

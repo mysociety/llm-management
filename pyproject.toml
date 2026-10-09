@@ -30,6 +30,9 @@ httpx = "^0.28.1"
 # Native Pydantic AI System One transport.
 httpx2 = "^2.13.1"
 pysbd = "^0.3.4"
+presidio-analyzer = "2.2.364"
+# Ship the pinned local NLP model; request handling never downloads it.
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
 # Both backends use these: full CPU inference or the local head for Exoscale.
 transformers = "4.57.6"
 torch = { version = "2.14.0", source = "pytorch-cpu" }

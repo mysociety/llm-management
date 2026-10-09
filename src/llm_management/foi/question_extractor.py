@@ -17,6 +17,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from .schemas import ExtractedQuestion, TopicOutput
 from ..local_resources import LocalResource, local_resources
 from ..settings import settings
+from ..sanitization import Sanitized, presidio, require_sanitized
 
 SYSTEM_PROMPT = (
     "For each extracted UK information-request question, identify its access regime "
@@ -138,7 +139,7 @@ question_extractor_resource = local_resources.register(
 
 def prepare_topic_request(
     request_text: str, questions: list[ExtractedQuestion]
-) -> dict:
+) -> Sanitized[dict]:
     budget = completion_budget(len(questions))
     schema = TopicOutput.model_json_schema()
     messages = [
@@ -161,23 +162,25 @@ def prepare_topic_request(
             ),
         },
     ]
-    payload = {
-        "messages": messages,
-        "temperature": 0.0,
-        "max_tokens": budget,
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "TopicOutput",
-                "strict": True,
-                "schema": schema,
+    payload = presidio.sanitize_payload(
+        {
+            "messages": messages,
+            "temperature": 0.0,
+            "max_tokens": budget,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "TopicOutput",
+                    "strict": True,
+                    "schema": schema,
+                },
             },
-        },
-    }
+        }
+    )
     with question_extractor_resource.use():
         tokenizer = question_extractor_resource.warmup()
         token_ids = tokenizer.apply_chat_template(
-            payload["messages"],
+            payload.value["messages"],
             tokenize=True,
             add_generation_prompt=True,
             truncation=False,
@@ -191,13 +194,13 @@ def prepare_topic_request(
 
 async def classify_topics(
     *,
-    payload: dict,
+    payload: Sanitized[dict],
     model: str,
     deployment_url: str,
     api_key: str,
     question_ids: list[str],
 ) -> TopicOutput:
-    clean_payload = payload
+    clean_payload = require_sanitized(payload)
     messages = clean_payload["messages"]
     # The SDK owns and closes its HTTP client, including on failed requests.
     async with AsyncOpenAI(

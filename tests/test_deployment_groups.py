@@ -194,6 +194,7 @@ def test_single_ensure_resolves_registry_without_remote_calls(monkeypatch):
 def test_shipped_foi_group_includes_registered_local_resources():
     members = ExoscaleConfig.load().get_group("foi_pipeline").deployments
     assert members == [
+        "presidio",
         "question_slice_v2_head_cpu",
         "question_extractor_tokenizer",
         "question_slice_v2",

@@ -5,6 +5,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from llm_management import server
+from llm_management.sanitization import presidio
 from llm_management.foi import backends
 from llm_management.foi.question_slice import segment_request
 from llm_management.inference import (
@@ -108,7 +109,7 @@ def test_backend_switch_shares_reconstruction(client, classifier, monkeypatch):
     assert results[0]["unit_predictions"] == results[1]["unit_predictions"]
     assert results[0]["extraction_revision"] == "pinned"
     assert results[1]["extraction_revision"] is None
-    assert remote.call_args.kwargs["texts"] == [
+    assert remote.call_args.kwargs["texts"].value == [
         "[PREVIOUS] [NONE]\n[CURRENT] Please provide the report.\n[NEXT] [NONE]"
     ]
 
@@ -181,9 +182,16 @@ def pipeline(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
     monkeypatch.setattr(server.cache, "all_active", lambda: [])
     extractor = AsyncMock(return_value=extraction())
-    monkeypatch.setattr(foi_pipeline, "extract_questions", extractor)
+
+    async def extracted(request_text, **kwargs):
+        result = await extractor(request_text, **kwargs)
+        return result, result, request_text
+
+    monkeypatch.setattr(foi_pipeline, "_extract_questions", extracted)
     monkeypatch.setattr(
-        foi_topic, "prepare_topic_request", lambda *args: {"max_tokens": 256}
+        foi_topic,
+        "prepare_topic_request",
+        lambda *args: presidio.sanitize_payload({"messages": [], "max_tokens": 256}),
     )
     cfg = SimpleNamespace(model=settings.foi_topic_model)
     monkeypatch.setattr(server, "get_deployment_config", lambda slug: cfg)
@@ -228,15 +236,15 @@ def test_new_route_orchestrates_and_keeps_source_diagnostics(pipeline):
         "model",
         "revision",
         "backend",
-        "question_extractor_model",
-        "question_extractor_base_model",
-        "question_extractor_adapter",
+        "granite_model",
+        "granite_base_model",
+        "granite_adapter",
     }.intersection(result)
     assert pipeline.extractor.call_args.kwargs["backend"] == "exoscale"
     assert pipeline.classify.call_args.kwargs["question_ids"] == ["q1"]
 
 
-def test_no_questions_never_starts_question_extractor(pipeline):
+def test_no_questions_never_starts_topic_model(pipeline):
     pipeline.extractor.return_value = extraction((0,))
     response = pipeline.client.post(
         "/agents/foi_structure", json={"request": "Thank you."}
@@ -259,7 +267,7 @@ def test_partial_uncertainty_is_retained(pipeline):
 
 
 def test_base_model_cannot_be_substituted(pipeline):
-    pipeline.cfg.model = "ibm-question_extractor/question_extractor-4.0-1b"
+    pipeline.cfg.model = "ibm-granite/granite-4.0-1b"
     response = pipeline.client.post(
         "/agents/foi_structure", json={"request": "Request"}
     )

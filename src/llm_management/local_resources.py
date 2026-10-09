@@ -269,5 +269,5 @@ def register_builtin_resources():
     """
     from importlib import import_module
 
-    for module in ("foi.backends", "foi.question_extractor"):
+    for module in ("foi.backends", "foi.question_extractor", "sanitization"):
         import_module(f"llm_management.{module}")

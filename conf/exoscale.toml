@@ -99,6 +99,7 @@ template = "clef_flash"
 slug = "foi_pipeline"
 # Remote deployments and registered local CPU resources share the warm-up path.
 deployments = [
+    "presidio",
     "question_slice_v2_head_cpu",
     "question_extractor_tokenizer",
     "question_slice_v2",
@@ -108,4 +109,4 @@ deployments = [
 
 [[deployment_group]]
 slug = "foi_pipeline_cpu"
-deployments = ["question_slice_v2_cpu", "question_extractor_tokenizer", "foi_topic_v2"]
+deployments = ["presidio", "question_slice_v2_cpu", "question_extractor_tokenizer", "foi_topic_v2"]
