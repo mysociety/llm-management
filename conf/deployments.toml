@@ -1,4 +1,77 @@
-[[deployment]]
+# Shared checkpoint identities; local resources pin these revisions.
+# Exoscale managed imports by repository name and cannot attest the served SHA.
+[model.question_slice_v2]
+repo = "mySociety/modernbert-question-slice-v2"
+revision = "eb0436d4be96f113f35b5f891f9cc876a0f0bd6b"
+
+[model.foi_topic_v2]
+repo = "mySociety/granite-tiny-foi-topic-grounded-v2-merged"
+revision = "c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79"
+
+[model.sar_logistic_v1]
+repo = "mySociety/logistic-sar-detector-v1"
+revision = "ade6333a06995cbde835648d758d8b092900bc52"
+
+[model.sar_deberta_v1]
+repo = "mySociety/deberta-sar-detecter-v1"
+revision = "199883a0387af896f34f7bf0978472268a9474b9"
+
+[[local.deployment]]
+slug = "question_slice_v2_cpu"
+loader = "modernbert_classifier"
+model_ref = "question_slice_v2"
+max_tokens = 768
+
+[[local.deployment]]
+slug = "question_slice_v2_head_cpu"
+loader = "modernbert_head"
+model_ref = "question_slice_v2"
+
+[[local.deployment]]
+slug = "question_extractor_tokenizer"
+loader = "topic_tokenizer"
+model_ref = "foi_topic_v2"
+max_tokens = 2048
+
+[[local.deployment]]
+slug = "presidio"
+loader = "presidio"
+spacy_model = "en_core_web_sm"
+score_threshold = 0.5
+
+[[local.deployment]]
+slug = "sar_logistic_v1_cpu"
+loader = "sar_logistic_v1"
+model_ref = "sar_logistic_v1"
+artifact = "model.json"
+
+[[local.deployment]]
+slug = "sar_deberta_v1_cpu"
+loader = "sar_deberta_v1"
+model_ref = "sar_deberta_v1"
+max_tokens = 512
+
+[foi]
+classifier = "question_slice_v2_cpu"
+head = "question_slice_v2_head_cpu"
+tokenizer = "question_extractor_tokenizer"
+extraction_deployment = "question_slice_v2"
+topic_deployment = "foi_topic_v2"
+
+[foi.topic]
+output_limit = 2048
+min_output_tokens = 256
+output_overhead = 64
+output_tokens_per_question = 192
+
+[sanitization]
+deployment = "presidio"
+
+[sar]
+logistic = "sar_logistic_v1_cpu"
+classifier = "sar_deberta_v1_cpu"
+
+[[exoscale.deployment]]
 
 slug = "olmo3_7b"
 model = "allenai/Olmo-3-7B-Instruct"
@@ -15,7 +88,7 @@ inference_engine_params = [
     "--structured-outputs-config={\"backend\":\"xgrammar\",\"disable_any_whitespace\":true}",
 ]
 
-[[deployment]]
+[[exoscale.deployment]]
 
 slug = "dunno_llama_3b"
 model = "mySociety/Dunno_Llama_3B_safetensors"
@@ -31,7 +104,7 @@ inference_engine_params = [
 ]
 
 
-[[deployment]]
+[[exoscale.deployment]]
 # doesn't actually support tool calls
 slug = "toast_llama"
 model = "mySociety/Toast_Llama_safetensors"
@@ -48,11 +121,11 @@ inference_engine_params = [
 
 
 
-[[deployment]]
+[[exoscale.deployment]]
 # Fine-tuned encoder on GPU; its original classification head runs in the API.
 # Native /classify is not exposed by the managed gateway, so use /v1/embeddings.
 slug = "question_slice_v2"
-model = "mySociety/modernbert-question-slice-v2"
+model_ref = "question_slice_v2"
 gpu_type = "gpua5000"
 gpu_count = 1
 replicas = 1
@@ -69,11 +142,11 @@ inference_engine_params = [
 ]
 
 
-[[deployment]]
+[[exoscale.deployment]]
 # Full checkpoint: Granite 4.0 1B with the grounded-v2 adapter merged in.
 # Merged artifact validated at c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79.
 slug = "foi_topic_v2"
-model = "mySociety/granite-tiny-foi-topic-grounded-v2-merged"
+model_ref = "foi_topic_v2"
 gpu_type = "gpua5000"
 gpu_count = 1
 replicas = 1
@@ -87,7 +160,7 @@ inference_engine_params = [
 ]
 
 
-[[deployment]]
+[[exoscale.deployment]]
 # Prepared GPU Compute server; model and VM settings come from the recipe.
 slug = "clef"
 backend = "exoscale_compute"
@@ -110,3 +183,8 @@ deployments = [
 [[deployment_group]]
 slug = "foi_pipeline_cpu"
 deployments = ["presidio", "question_slice_v2_cpu", "question_extractor_tokenizer", "foi_topic_v2"]
+
+
+[[deployment_group]]
+slug = "sar_pipeline_cpu"
+deployments = ["sar_logistic_v1_cpu", "sar_deberta_v1_cpu"]

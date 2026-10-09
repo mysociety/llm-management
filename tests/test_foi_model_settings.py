@@ -1,25 +1,23 @@
+"""FOI model identities and budgets come from the validated deployment catalog."""
+
 import pytest
 from pydantic import ValidationError
 
+from llm_management.deployments import DeploymentCatalog
 from llm_management.foi import question_extractor
-from llm_management.foi.model_spec import FOIModelSettings
-from llm_management.settings import Settings
 
 
-def test_model_settings_read_environment_and_derive_question_limit(monkeypatch):
-    monkeypatch.setenv("QUESTION_SLICE_MODEL", "example/question-slice")
-    monkeypatch.setenv("QUESTION_SLICE_INPUT_LIMIT", "512")
-    monkeypatch.setenv("FOI_TOPIC_MODEL", "example/question-topics")
-    monkeypatch.setenv("FOI_TOPIC_REVISION", "pinned-revision")
-    monkeypatch.setenv("FOI_TOPIC_OUTPUT_LIMIT", "1024")
-    configured = Settings(_env_file=None)
-    assert isinstance(configured, FOIModelSettings)
-    assert configured.question_slice_model == "example/question-slice"
-    assert configured.question_slice_input_limit == 512
-    assert configured.foi_topic_model == "example/question-topics"
-    assert configured.foi_topic_revision == "pinned-revision"
-    assert configured.foi_topic_max_questions == 5
-    monkeypatch.setattr(question_extractor, "settings", configured)
+def test_catalog_drives_topic_budget_and_checkpoint(monkeypatch):
+    data = DeploymentCatalog.load().model_dump()
+    data["model"]["foi_topic_v2"]["repo"] = "example/question-topics"
+    for deployment in data["exoscale"]["deployment"]:
+        if deployment.get("model_ref") == "foi_topic_v2":
+            deployment.pop("model")
+    data["foi"]["topic"]["output_limit"] = 1024
+    configured = DeploymentCatalog.model_validate(data)
+    assert configured.get("foi_topic_v2").model == "example/question-topics"
+    assert configured.require_foi().topic.max_questions == 5
+    monkeypatch.setattr(question_extractor, "get_catalog", lambda: configured)
     assert question_extractor.completion_budget(5) == 1024
     with pytest.raises(ValueError, match="1–5"):
         question_extractor.completion_budget(6)
@@ -28,14 +26,15 @@ def test_model_settings_read_environment_and_derive_question_limit(monkeypatch):
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"question_slice_input_limit": 0},
-        {"foi_topic_input_limit": 0},
-        {"foi_topic_output_tokens_per_question": 0},
-        {"foi_topic_output_overhead": -1},
-        {"foi_topic_min_output_tokens": 2049},
-        {"foi_topic_output_overhead": 2048},
+        {"output_limit": 0},
+        {"output_tokens_per_question": 0},
+        {"output_overhead": -1},
+        {"min_output_tokens": 2049},
+        {"output_overhead": 2048},
     ],
 )
 def test_invalid_model_limits_rejected(overrides):
+    data = DeploymentCatalog.load().model_dump()
+    data["foi"]["topic"].update(overrides)
     with pytest.raises(ValidationError):
-        FOIModelSettings(**overrides)
+        DeploymentCatalog.model_validate(data)

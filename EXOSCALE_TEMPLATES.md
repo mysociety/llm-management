@@ -162,12 +162,12 @@ Then run the test, which reconnects to that VM and removes it on completion.
 
 ## Deploying a prepared server
 
-Deployment entries in `conf/exoscale.toml` reference a recipe slug. The recipe
+Deployment entries in `conf/deployments.toml` reference a recipe slug. The recipe
 supplies the template name, zone, model and VM settings. The checked-in Clef
 entry is:
 
 ```toml
-[[deployment]]
+[[exoscale.deployment]]
 slug = "clef"
 backend = "exoscale_compute"
 protocol = "systemone"

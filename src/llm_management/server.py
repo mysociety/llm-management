@@ -40,9 +40,10 @@ from .agents.immigration_detection import (
     immigration_decision_agent,
 )
 from .cache import RunningDeployment, cache
-from .models import ExoscaleConfig, DeploymentConfig, LLMManagementError
+from .models import DeploymentConfig, LLMManagementError
+from .deployments import DeploymentCatalog, get_catalog
 from .settings import settings
-from . import systemone
+from . import systemone, sar
 from .errors import ClassifierBusy, ClassifierUnavailable
 from .local_resources import local_resources
 from .foi import backends, pipeline, response_analysis
@@ -117,11 +118,11 @@ class AllDeploymentsResponse(BaseModel):
 
 
 @lru_cache
-def load_config() -> ExoscaleConfig:
+def load_config() -> DeploymentCatalog:
     """
-    Load the ExoscaleConfig from the default config file.
+    Load the deployment catalog and register its cold local factories.
     """
-    return ExoscaleConfig.load()
+    return get_catalog()
 
 
 @lru_cache
@@ -268,6 +269,7 @@ async def lifespan(app: FastAPI):
             "internet traffic."
         )
 
+    load_config()
     task = asyncio.create_task(idle_scaler())
     yield
     task.cancel()
@@ -461,7 +463,7 @@ def all_deployments_overview() -> AllDeploymentsResponse:
     now = time.time()
     overviews: list[DeploymentOverview] = []
 
-    for cfg in config.deployment:
+    for cfg in config.exoscale.deployment:
         state = cache.ensure(cfg)
         if state.last_request_time > 0 and state.replicas > 0:
             idle = now - state.last_request_time
@@ -703,6 +705,12 @@ async def foi_response_analysis_endpoint(
             return await response_analysis.analyze_response(body)
         except response_analysis.ResponseModelNotReady as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
+
+
+@app.post("/agents/sar_detection", response_model=sar.SARResult)
+async def sar_detection_endpoint(body: QuestionSliceRequest) -> sar.SARResult:
+    """Flag personal-records correspondence; inference failures retain the flag."""
+    return await sar.detect_sar(body.request)
 
 
 @app.get("/local-models")

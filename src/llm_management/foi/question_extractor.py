@@ -17,6 +17,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from .schemas import ExtractedQuestion, TopicOutput
 from ..local_resources import LocalResource, local_resources
 from ..settings import settings
+from ..deployments import get_catalog, TopicTokenizerDeployment
 from ..sanitization import Sanitized, presidio, require_sanitized
 
 SYSTEM_PROMPT = (
@@ -87,20 +88,29 @@ def topic_model(model: str, client: AsyncOpenAI) -> QuestionTopicChatModel:
 
 
 def completion_budget(question_count: int) -> int:
+    topic = get_catalog().require_foi().topic
     budget = max(
-        settings.foi_topic_min_output_tokens,
-        settings.foi_topic_output_overhead
-        + settings.foi_topic_output_tokens_per_question * question_count,
+        topic.min_output_tokens,
+        topic.output_overhead + topic.output_tokens_per_question * question_count,
     )
-    if question_count < 1 or budget > settings.foi_topic_output_limit:
+    if question_count < 1 or budget > topic.output_limit:
         raise ValueError(
-            f"Topic model supports 1–{settings.foi_topic_max_questions} questions within its {settings.foi_topic_output_limit:,}-token output budget"
+            f"Topic model supports 1–{topic.max_questions} questions within its {topic.output_limit:,}-token output budget"
         )
     return budget
 
 
-@lru_cache(maxsize=1)
-def question_extractor_tokenizer():
+_tokenizers: dict[str, object] = {}
+
+
+def question_extractor_tokenizer(config: TopicTokenizerDeployment | None = None):
+    catalog = get_catalog()
+    config = config or catalog.local.get(
+        catalog.require_foi().tokenizer, TopicTokenizerDeployment
+    )
+    if config.slug in _tokenizers:
+        return _tokenizers[config.slug]
+    checkpoint = catalog.model[config.model_ref]
     from transformers import AutoTokenizer
 
     from huggingface_hub import snapshot_download
@@ -108,8 +118,8 @@ def question_extractor_tokenizer():
     # Load locally after an explicitly authenticated download. Transformers may
     # perform additional Hub metadata requests without forwarding token=.
     snapshot = snapshot_download(
-        settings.foi_topic_model,
-        revision=settings.foi_topic_revision,
+        checkpoint.repo,
+        revision=checkpoint.revision,
         token=settings.huggingface_token or None,
         cache_dir=settings.classifier_cache_dir,
         allow_patterns=[
@@ -123,18 +133,29 @@ def question_extractor_tokenizer():
         ],
     )
     # Preserve the trained Granite tokenizer; do not apply Mistral regex changes.
-    return AutoTokenizer.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(
         snapshot, local_files_only=True, fix_mistral_regex=False
     )
+    _tokenizers[config.slug] = tokenizer
+    return tokenizer
 
 
-question_extractor_resource = local_resources.register(
-    LocalResource(
-        "question_extractor_tokenizer",
-        lambda: question_extractor_tokenizer(),
-        question_extractor_tokenizer.cache_clear,
+@lru_cache(maxsize=None)
+def _tokenizer_resource(slug: str):
+    config = get_catalog().local.get(slug, TopicTokenizerDeployment)
+
+    def unload() -> None:
+        _tokenizers.pop(config.slug, None)
+
+    return local_resources.register(
+        LocalResource(config.slug, lambda: question_extractor_tokenizer(config), unload)
     )
-)
+
+
+def tokenizer_resource(config: TopicTokenizerDeployment | None = None):
+    return _tokenizer_resource(
+        config.slug if config else get_catalog().require_foi().tokenizer
+    )
 
 
 def prepare_topic_request(
@@ -177,17 +198,21 @@ def prepare_topic_request(
             },
         }
     )
-    with question_extractor_resource.use():
-        tokenizer = question_extractor_resource.warmup()
+    resource = tokenizer_resource()
+    with resource.use():
+        tokenizer = resource.warmup()
         token_ids = tokenizer.apply_chat_template(
             payload.value["messages"],
             tokenize=True,
             add_generation_prompt=True,
             truncation=False,
         )
-    if len(token_ids) > settings.foi_topic_input_limit:
+    config = get_catalog().local.get(
+        get_catalog().require_foi().tokenizer, TopicTokenizerDeployment
+    )
+    if len(token_ids) > config.max_tokens:
         raise ValueError(
-            f"Topic model prompt has {len(token_ids)} tokens; limit is {settings.foi_topic_input_limit}. Input was not truncated."
+            f"Topic model prompt has {len(token_ids)} tokens; limit is {config.max_tokens}. Input was not truncated."
         )
     return payload
 

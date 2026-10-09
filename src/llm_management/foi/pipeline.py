@@ -13,7 +13,7 @@ import httpx
 
 from ..errors import ClassifierOutputError, ClassifierUnavailable
 from ..models import LLMManagementError
-from ..settings import settings
+from ..deployments import get_catalog, TopicTokenizerDeployment
 from ..sanitization import presidio
 from . import backends, question_extractor
 from .backends import DeploymentAccess
@@ -135,9 +135,12 @@ async def process_information_request(
     except Exception as exc:
         logger.warning("Question topic tokenizer unavailable: %s", type(exc).__name__)
         raise PipelineUnavailable("Question topic tokenizer unavailable") from exc
-    slug = settings.foi_topic_deployment
+    catalog = get_catalog()
+    foi = catalog.require_foi()
+    slug = foi.topic_deployment
+    tokenizer = catalog.local.get(foi.tokenizer, TopicTokenizerDeployment)
     cfg = deployments.get_config(slug)
-    if cfg.model != settings.foi_topic_model:
+    if cfg.model != catalog.model[tokenizer.model_ref].repo:
         raise PipelineUnavailable(
             "FOI classification requires the configured fine-tuned topic checkpoint"
         )

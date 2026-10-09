@@ -15,10 +15,11 @@ import os
 
 from .models import (
     DeploymentNotFoundError,
-    ExoscaleConfig,
     LLMManagementError,
     get_client,
 )
+
+from .deployments import DeploymentCatalog
 
 from .templates.cli import app as templates_app
 
@@ -48,7 +49,7 @@ def handle_errors(func):
 @handle_errors
 def create(
     slug: Optional[str] = typer.Argument(
-        None, help="Deployment slug from exoscale.toml"
+        None, help="Deployment slug from deployments.toml"
     ),
     all_: bool = typer.Option(False, "--all", help="Apply to all deployments"),
     refresh_model: bool = typer.Option(
@@ -56,8 +57,8 @@ def create(
     ),
 ):
     """Create deployment(s). Ensures the model exists in the zone first."""
-    config = ExoscaleConfig.load()
-    for cfg in config.resolve(slug, all_):
+    config = DeploymentCatalog.load()
+    for cfg in config.exoscale.resolve(slug, all_):
         cfg.create_deployment(refresh_model=refresh_model)
 
 
@@ -65,13 +66,13 @@ def create(
 @handle_errors
 def destroy(
     slug: Optional[str] = typer.Argument(
-        None, help="Deployment slug from exoscale.toml"
+        None, help="Deployment slug from deployments.toml"
     ),
     all_: bool = typer.Option(False, "--all", help="Apply to all deployments"),
 ):
     """Delete deployment(s)."""
-    config = ExoscaleConfig.load()
-    for cfg in config.resolve(slug, all_):
+    config = DeploymentCatalog.load()
+    for cfg in config.exoscale.resolve(slug, all_):
         if all_:
             try:
                 cfg.delete_deployment()
@@ -86,43 +87,43 @@ def destroy(
 @handle_errors
 def pause(
     slug: Optional[str] = typer.Argument(
-        None, help="Deployment slug from exoscale.toml"
+        None, help="Deployment slug from deployments.toml"
     ),
     all_: bool = typer.Option(False, "--all", help="Apply to all deployments"),
 ):
     """Scale deployment(s) to zero replicas."""
-    config = ExoscaleConfig.load()
-    for cfg in config.resolve(slug, all_):
+    config = DeploymentCatalog.load()
+    for cfg in config.exoscale.resolve(slug, all_):
         cfg.scale_to_zero()
 
 
 @app.command()
 @handle_errors
 def resume(
-    slug: str = typer.Argument(..., help="Deployment slug from exoscale.toml"),
+    slug: str = typer.Argument(..., help="Deployment slug from deployments.toml"),
 ):
     """Resume a deployment from zero replicas."""
-    config = ExoscaleConfig.load()
+    config = DeploymentCatalog.load()
     config.get(slug).resume_from_zero()
 
 
 @app.command("create-or-resume")
 @handle_errors
 def create_or_resume(
-    slug: str = typer.Argument(..., help="Deployment slug from exoscale.toml"),
+    slug: str = typer.Argument(..., help="Deployment slug from deployments.toml"),
 ):
     """Create or resume a deployment."""
-    config = ExoscaleConfig.load()
+    config = DeploymentCatalog.load()
     config.get(slug).create_or_resume()
 
 
 @app.command()
 @handle_errors
 def connect(
-    slug: str = typer.Argument(..., help="Deployment slug from exoscale.toml"),
+    slug: str = typer.Argument(..., help="Deployment slug from deployments.toml"),
 ):
     """Show connection URL and API key for a deployment."""
-    config = ExoscaleConfig.load()
+    config = DeploymentCatalog.load()
     info = config.get(slug).connection_info()
     json_info = json.dumps(info, indent=2)
     rich.print(f"{json_info}")
@@ -132,8 +133,8 @@ def connect(
 @handle_errors
 def list_deployments():
     """List all currently deployed Exoscale models across configured zones."""
-    config = ExoscaleConfig.load()
-    config.list_deployments()
+    config = DeploymentCatalog.load()
+    config.exoscale.list_deployments()
 
 
 @app.command("list-models")
@@ -230,11 +231,11 @@ def clear_models(
 @app.command()
 @handle_errors
 def logs(
-    slug: str = typer.Argument(..., help="Deployment slug from exoscale.toml"),
+    slug: str = typer.Argument(..., help="Deployment slug from deployments.toml"),
     tail: int = typer.Option(100, "--tail", "-n", help="Number of log lines to show"),
 ):
     """Show log tail for a deployment."""
-    config = ExoscaleConfig.load()
+    config = DeploymentCatalog.load()
     cfg = config.get(slug)
     if cfg.backend == "exoscale_compute":
         typer.echo(cfg.adapter.logs(tail))
@@ -264,13 +265,13 @@ def llm_test(
     mode: Literal["basic", "instruct"] = typer.Argument(
         ..., help="Test mode: 'basic' or 'instruct'"
     ),
-    slug: str = typer.Argument(..., help="Deployment slug from exoscale.toml"),
+    slug: str = typer.Argument(..., help="Deployment slug from deployments.toml"),
 ):
     """Test a deployment by asking the LLM for the capital of France."""
     if mode not in ("basic", "instruct"):
         rich.print(f"Error: mode must be 'basic' or 'instruct', got '{mode}'.")
         raise typer.Exit(1)
-    config = ExoscaleConfig.load()
+    config = DeploymentCatalog.load()
     cfg = config.get(slug)
     rich.print(f"Testing deployment {slug} ({mode})...")
     if mode == "basic":

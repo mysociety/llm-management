@@ -15,7 +15,7 @@ from llm_management.inference import (
 
 
 from llm_management.foi import question_extractor as foi_topic, pipeline as foi_pipeline
-from llm_management.settings import settings
+from llm_management.deployments import get_catalog
 from llm_management.foi.question_slice import build_extraction_result
 
 
@@ -200,7 +200,9 @@ def pipeline(monkeypatch):
         "prepare_topic_request",
         lambda *args: presidio.sanitize_payload({"messages": [], "max_tokens": 256}),
     )
-    cfg = SimpleNamespace(model=settings.foi_topic_model)
+    cfg = SimpleNamespace(
+        model=get_catalog().get(get_catalog().require_foi().topic_deployment).model
+    )
     monkeypatch.setattr(server, "get_deployment_config", lambda slug: cfg)
     ensure = AsyncMock(
         return_value=RunningDeployment(
@@ -234,7 +236,10 @@ def test_new_route_orchestrates_and_keeps_source_diagnostics(pipeline):
     assert result["questions"][0]["text"] == "Please provide report 0."
     assert result["promoted_continuation_index"] == 0
     assert result["unit_predictions"][0]["label"] == "QUESTION_CONTINUATION"
-    assert result["classification_model"] == settings.foi_topic_model
+    assert (
+        result["classification_model"]
+        == get_catalog().get(get_catalog().require_foi().topic_deployment).model
+    )
     assert result["extraction_model"] == "modernbert"
     assert result["extraction_revision"] == "pinned"
     assert result["extraction_backend"] == "cpu"  # The mocked extractor's result.

@@ -8,7 +8,7 @@ from llm_management.cache import RunningDeployment
 from llm_management.foi import backends, question_extractor, pipeline
 from llm_management.sanitization import presidio
 from llm_management.foi.backends import ClassificationRows, DeploymentAccess
-from llm_management.settings import settings
+from llm_management.deployments import get_catalog
 from llm_management.foi.schemas import TopicOutput
 
 
@@ -45,7 +45,9 @@ def test_waiting_topic_model_does_not_block_other_extractions(monkeypatch):
         "prepare_topic_request",
         lambda *args: presidio.sanitize_payload({"messages": []}),
     )
-    cfg = SimpleNamespace(model=settings.foi_topic_model)
+    cfg = SimpleNamespace(
+        model=get_catalog().get(get_catalog().require_foi().topic_deployment).model
+    )
     deployments = DeploymentAccess(
         lambda slug: cfg,
         AsyncMock(

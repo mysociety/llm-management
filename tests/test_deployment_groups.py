@@ -9,12 +9,12 @@ from starlette.testclient import TestClient
 
 from llm_management import server
 from llm_management.cache import DeploymentCache, DeploymentState, RunningDeployment
-from llm_management.models import ExoscaleConfig
+from llm_management.deployments import DeploymentCatalog
 from llm_management.local_resources import LocalResource, ResourceRegistry
 
 
 def config(groups=None):
-    data = ExoscaleConfig.load().model_dump()
+    data = DeploymentCatalog.load().model_dump()
     data["deployment_group"] = (
         groups
         if groups is not None
@@ -25,7 +25,7 @@ def config(groups=None):
             }
         ]
     )
-    return ExoscaleConfig.model_validate(data)
+    return DeploymentCatalog.model_validate(data)
 
 
 @pytest.mark.parametrize(
@@ -45,7 +45,7 @@ def test_invalid_groups_rejected(groups):
 def test_groups_optional():
     data = config().model_dump()
     data.pop("deployment_group")
-    assert ExoscaleConfig.model_validate(data).deployment_group == []
+    assert DeploymentCatalog.model_validate(data).deployment_group == []
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -145,7 +145,7 @@ def test_group_endpoint_contract_and_auth(monkeypatch):
 def test_mixed_group_resolves_arbitrary_registered_local_resource(
     monkeypatch, fail_local
 ):
-    data = ExoscaleConfig.load().model_dump()
+    data = DeploymentCatalog.load().model_dump()
     data["deployment_group"] = [
         {"slug": "mixed", "deployments": ["custom_cpu", "foi_topic_v2"]}
     ]
@@ -157,8 +157,15 @@ def test_mixed_group_resolves_arbitrary_registered_local_resource(
         "custom_cpu", lambda: LocalResource("custom_cpu", load, Mock())
     )
     monkeypatch.setattr(server, "local_resources", registry)
-    monkeypatch.setattr("llm_management.models.local_resources", registry)
-    mixed = ExoscaleConfig.model_validate(data)
+    data["local"]["deployment"].append(
+        {
+            "slug": "custom_cpu",
+            "loader": "presidio",
+            "spacy_model": "en_core_web_sm",
+            "score_threshold": 0.5,
+        }
+    )
+    mixed = DeploymentCatalog.model_validate(data)
     monkeypatch.setattr(server, "load_config", lambda: mixed)
     remote = AsyncMock(
         return_value=RunningDeployment(
@@ -200,7 +207,7 @@ def test_single_ensure_resolves_registry_without_remote_calls(monkeypatch):
 
 
 def test_shipped_foi_group_includes_registered_local_resources():
-    members = ExoscaleConfig.load().get_group("foi_pipeline").deployments
+    members = DeploymentCatalog.load().get_group("foi_pipeline").deployments
     assert members == [
         "presidio",
         "question_slice_v2_head_cpu",
@@ -210,27 +217,21 @@ def test_shipped_foi_group_includes_registered_local_resources():
     ]
 
 
-def test_ambiguous_local_and_remote_names_rejected(monkeypatch):
-    registry = ResourceRegistry()
-    registry.register(LocalResource("foi_topic_v2", Mock(), Mock()))
-    monkeypatch.setattr("llm_management.models.local_resources", registry)
+def test_ambiguous_local_and_remote_names_rejected():
+    data = DeploymentCatalog.load().model_dump()
+    data["local"]["deployment"][0]["slug"] = "foi_topic_v2"
     with pytest.raises(ValidationError, match="distinct names"):
-        config()
+        DeploymentCatalog.model_validate(data)
 
 
 def test_question_slice_cpu_resources_share_the_deployment_name():
-    from llm_management.foi.model_spec import (
-        QUESTION_SLICE_DEPLOYMENT,
-        QUESTION_SLICE_CPU_RESOURCE,
-        QUESTION_SLICE_HEAD_CPU_RESOURCE,
-    )
+    from llm_management.deployments import get_catalog
     from llm_management.local_resources import local_resources
 
-    assert QUESTION_SLICE_CPU_RESOURCE == f"{QUESTION_SLICE_DEPLOYMENT}_cpu"
-    assert QUESTION_SLICE_HEAD_CPU_RESOURCE == f"{QUESTION_SLICE_DEPLOYMENT}_head_cpu"
-    names = local_resources.names()
-    assert {QUESTION_SLICE_CPU_RESOURCE, QUESTION_SLICE_HEAD_CPU_RESOURCE} <= names
-    assert "question_classifier" not in names
-    assert "question_classification_head" not in names
-    cpu_members = ExoscaleConfig.load().get_group("foi_pipeline_cpu").deployments
-    assert QUESTION_SLICE_CPU_RESOURCE in cpu_members
+    catalog = get_catalog()
+    foi = catalog.require_foi()
+    assert foi.classifier == f"{foi.extraction_deployment}_cpu"
+    assert foi.head == f"{foi.extraction_deployment}_head_cpu"
+    assert {foi.classifier, foi.head} <= local_resources.names()
+    cpu_members = catalog.get_group("foi_pipeline_cpu").deployments
+    assert foi.classifier in cpu_members

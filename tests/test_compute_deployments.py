@@ -13,10 +13,10 @@ from pydantic import ValidationError
 from starlette.testclient import TestClient
 
 from llm_management import compute_deployments as module, server
+from llm_management.deployments import DeploymentCatalog
 from llm_management.cache import DeploymentCache
 from llm_management.models import (
     ComputeDeploymentConfig,
-    ExoscaleConfig,
     LLMManagementError,
 )
 from llm_management.templates import TemplateConfig
@@ -147,7 +147,7 @@ def deployed(tmp_path, monkeypatch):
 
 
 def test_config_resolves_recipe_and_rejects_managed_options():
-    cfg = ExoscaleConfig.load().get("clef")
+    cfg = DeploymentCatalog.load().get("clef")
     assert isinstance(cfg, ComputeDeploymentConfig)
     assert cfg.template == "clef_flash"
     assert cfg.model == cfg.recipe.model
@@ -449,7 +449,9 @@ def test_cli_uses_alternate_lifecycle(deployed, monkeypatch):
 
     config, adapter, cloud, _ = deployed
     monkeypatch.setattr(
-        cli.ExoscaleConfig, "load", lambda: ExoscaleConfig(deployment=[config])
+        cli.DeploymentCatalog,
+        "load",
+        lambda: DeploymentCatalog(exoscale={"deployment": [config]}),
     )
     runner = CliRunner()
     result = runner.invoke(cli.app, ["create-or-resume", "clef"])

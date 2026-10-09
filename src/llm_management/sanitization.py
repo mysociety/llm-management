@@ -13,7 +13,8 @@ from pydantic import TypeAdapter
 
 from .errors import ClassifierUnavailable
 from .local_resources import LocalResource, ResourceRegistry, local_resources
-from .settings import settings
+from .deployments import get_catalog, PresidioDeployment
+from functools import lru_cache
 
 if TYPE_CHECKING:
     from .foi.response_schemas import ExtractionInput
@@ -79,11 +80,30 @@ class SanitizedRequest(NamedTuple):
 
 
 class PresidioSanitizer:
-    def __init__(self, registry: ResourceRegistry = local_resources):
+    def __init__(
+        self,
+        registry: ResourceRegistry = local_resources,
+        config: PresidioDeployment | None = None,
+    ):
+        self._config = config
+        self._registry = registry
+        self._resource = None
         self._analyzer = None
-        self.resource = registry.register(
-            LocalResource("presidio", self._load, self._unload)
-        )
+
+    @property
+    def config(self) -> PresidioDeployment:
+        if self._config is None:
+            self._config = get_catalog().require_sanitizer()
+        return self._config
+
+    @property
+    def resource(self) -> LocalResource:
+        if self._resource is None:
+            self._resource = self._registry.register_once(
+                self.config.slug,
+                lambda: LocalResource(self.config.slug, self._load, self._unload),
+            )
+        return self._resource
 
     def _load(self):
         if self._analyzer is not None:
@@ -98,11 +118,9 @@ class PresidioSanitizer:
 
             require_cpu()
             # Explicit local loading avoids Presidio's automatic model download.
-            nlp = spacy.load(settings.presidio_spacy_model)
+            nlp = spacy.load(self.config.spacy_model)
             engine = SpacyNlpEngine(
-                models=[
-                    {"lang_code": "en", "model_name": settings.presidio_spacy_model}
-                ]
+                models=[{"lang_code": "en", "model_name": self.config.spacy_model}]
             )
             engine.nlp = {"en": nlp}
             analyzer = AnalyzerEngine(nlp_engine=engine, supported_languages=["en"])
@@ -178,7 +196,7 @@ class PresidioSanitizer:
                             text=text,
                             language="en",
                             entities=_ENTITIES,
-                            score_threshold=settings.presidio_score_threshold,
+                            score_threshold=self.config.score_threshold,
                         )
                         if text
                         else []
@@ -280,6 +298,18 @@ class PresidioSanitizer:
         for (owner, key), text in zip(fields, clean, strict=True):
             owner[key] = text
         return _attest(ExtractionInput.model_validate(data))
+
+
+@lru_cache(maxsize=None)
+def _configured_presidio(slug: str):
+    return PresidioSanitizer(config=get_catalog().local.get(slug, PresidioDeployment))
+
+
+def configured_presidio(config: PresidioDeployment):
+    selected = get_catalog().sanitization
+    if selected is not None and config.slug == selected.deployment:
+        return presidio
+    return _configured_presidio(config.slug)
 
 
 presidio = PresidioSanitizer()

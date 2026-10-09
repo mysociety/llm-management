@@ -3,7 +3,7 @@
 import pytest
 from starlette.testclient import TestClient
 from llm_management.server import app
-from llm_management.settings import settings
+from llm_management.deployments import get_catalog
 from llm_management.foi.schemas import InformationRequestResult
 
 pytestmark = pytest.mark.external
@@ -46,7 +46,10 @@ def test_full_pipeline(client, backend, text, regime):
         assert result.classification is None
         return
     assert result.extraction_status == "questions_found"
-    assert result.classification_model == settings.foi_topic_model
+    assert (
+        result.classification_model
+        == get_catalog().get(get_catalog().require_foi().topic_deployment).model
+    )
     assert result.classification is not None
     assert [q.question_id for q in result.classification.questions] == [
         q.question_id for q in result.questions

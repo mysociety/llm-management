@@ -32,7 +32,7 @@ The model names below are Hugging Face repository IDs. They identify the trained
 
 Keep the remote import and local model/tokenizer versions aligned when updating either model. For that reason, Exoscale extraction returns `extraction_revision: null` rather than claiming a verified remote revision.
 
-[model_spec.py](model_spec.py) defines typed Pydantic settings for model identities, pinned revisions and token limits. [settings.py](../settings.py) includes these fields alongside deployment names and runtime controls; [exoscale.toml](../../../conf/exoscale.toml) defines the remote models and GPU settings. The `v2` and `grounded-v2` strings are parts of the trained model names, not separate API versions.
+[deployments.py](../deployments.py) defines the typed deployment catalog. [deployments.toml](../../../conf/deployments.toml) stores shared checkpoint identities, pinned local revisions, local and remote deployments, pipeline bindings, and model limits. [settings.py](../settings.py) supplies credentials and host environment settings. The `v2` and `grounded-v2` strings are parts of the trained model names, not separate API versions.
 
 ## 1. Split the request into manageable parts
 
@@ -95,13 +95,13 @@ The full pipeline returns an `InformationRequestResult`. This extends `QuestionS
 
 ## Limits and waiting
 
-Inputs that exceed model limits are rejected rather than silently shortened. QuestionSlice allows 768 tokens per context window. foi-topic-v2 allows a 2,048-token prompt and up to ten questions under the current output-budget rule. Tokens are pieces of text used by models, not necessarily whole words. These limits live in [model_spec.py](model_spec.py).
+Inputs that exceed model limits are rejected rather than silently shortened. QuestionSlice allows 768 tokens per context window. foi-topic-v2 allows a 2,048-token prompt and up to ten questions under the current output-budget rule. Tokens are pieces of text used by models, not necessarily whole words. These limits live in [deployments.toml](../../../conf/deployments.toml).
 
 Local model work runs outside the async event loop, and remote calls are awaited, so one request waiting for foi-topic-v2 does not block all other requests. CPU classification accepts one in-flight request per model instance; additional calls receive a busy response and should retry. This is not a background batch queue. Remote deployments are created or resumed when needed and use the application's existing idle-scaling lifecycle.
 
 ## Prepare both deployments before a batch
 
-For batches using Exoscale extraction, call `POST /deployment-groups/foi_pipeline/ensure` before submitting requests. The `foi_pipeline` group in [exoscale.toml](../../../conf/exoscale.toml) contains `question_slice_v2` and `foi_topic_v2`, plus local `presidio`, `question_slice_v2_head_cpu`, and `question_extractor_tokenizer` resources. The endpoint warms local resources and starts or resumes remote deployments concurrently, so their startup waits overlap. It does not run inference or change the order of extraction and classification within a request.
+For batches using Exoscale extraction, call `POST /deployment-groups/foi_pipeline/ensure` before submitting requests. The `foi_pipeline` group in [deployments.toml](../../../conf/deployments.toml) contains `question_slice_v2` and `foi_topic_v2`, plus local `presidio`, `question_slice_v2_head_cpu`, and `question_extractor_tokenizer` resources. The endpoint warms local resources and starts or resumes remote deployments concurrently, so their startup waits overlap. It does not run inference or change the order of extraction and classification within a request.
 
 A known group returns HTTP 200 with an overall `success` flag and a `deployments` list containing each member's `slug`, `success`, `replicas` and `error`. Check the flags before starting the batch: one member can fail while another succeeds. Failed members have null `replicas`; successful members have null `error`. Unknown groups return 404. The usual API authentication applies.
 

@@ -5,6 +5,6 @@ services:
     env_file:
       - .env
     volumes:
-      - ./conf/exoscale.toml:/workspaces/llm-management/conf/exoscale.toml:ro
+      - ./conf/deployments.toml:/workspaces/llm-management/conf/deployments.toml:ro
     ports:
       - "8080:8080"

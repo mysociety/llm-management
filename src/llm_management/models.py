@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from typing import Literal, Optional
 from functools import cached_property
 
@@ -11,15 +10,14 @@ from exoscale.api.exceptions import (
     ExoscaleAPIServerException,
 )
 from exoscale.api.v2 import Client
-from pydantic import Field, model_validator
+from pydantic import Field
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_store import BaseModel
 
-from .settings import CONFIG_PATH, settings
-from .local_resources import local_resources, register_builtin_resources
+from .settings import settings
 
 
 class LLMManagementError(Exception):
@@ -52,10 +50,12 @@ def get_client(zone: str) -> Client:
 
 
 class ExoscaleDeploymentConfig(BaseModel):
+    model_config = {"extra": "forbid"}
     backend: Literal["exoscale_managed"] = "exoscale_managed"
     protocol: Literal["openai"] = "openai"
     slug: str
     model: str
+    model_ref: str | None = None
     gpu_type: str
     gpu_count: int
     replicas: int
@@ -386,58 +386,12 @@ class ComputeDeploymentConfig(PydanticBaseModel):
 DeploymentConfig = ExoscaleDeploymentConfig | ComputeDeploymentConfig
 
 
-class DeploymentGroupConfig(PydanticBaseModel):
-    """A named collection of remote deployments and local resources to warm."""
+class ExoscaleDeployments(BaseModel):
+    """Remote deployment operations within the deployment catalog."""
 
-    slug: str = Field(min_length=1)
-    deployments: list[str] = Field(min_length=1)
+    model_config = {"extra": "forbid"}
 
-
-class ExoscaleConfig(BaseModel):
-    """Container for all deployment configs, loaded from exoscale.toml."""
-
-    deployment: list[DeploymentConfig]
-    deployment_group: list[DeploymentGroupConfig] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_groups(self):
-        if len({d.slug for d in self.deployment}) != len(self.deployment):
-            raise ValueError("Deployment slugs must be unique")
-        register_builtin_resources()
-        remote_names = {d.slug for d in self.deployment}
-        local_names = local_resources.names()
-        if remote_names & local_names:
-            raise ValueError(
-                "Remote deployments and local resources must have distinct names"
-            )
-        known = remote_names | local_names
-        names: set[str] = set()
-        for group in self.deployment_group:
-            if group.slug in names:
-                raise ValueError(f"Duplicate deployment group: {group.slug}")
-            names.add(group.slug)
-            if len(set(group.deployments)) != len(group.deployments):
-                raise ValueError(f"Duplicate members in deployment group: {group.slug}")
-            unknown = set(group.deployments) - known
-            if unknown:
-                raise ValueError(
-                    f"Unknown resources in group {group.slug}: {sorted(unknown)}"
-                )
-        return self
-
-    def get_group(self, slug: str) -> DeploymentGroupConfig:
-        for group in self.deployment_group:
-            if group.slug == slug:
-                return group
-        raise LLMManagementError(f"No deployment group found with slug '{slug}'.")
-
-    @classmethod
-    def load(cls, config_path: Path = CONFIG_PATH) -> ExoscaleConfig:
-        config = cls.from_file(config_path)
-        for deployment in config.deployment:
-            if isinstance(deployment, ComputeDeploymentConfig):
-                deployment.recipe  # Validate recipe references before provisioning.
-        return config
+    deployment: list[DeploymentConfig] = Field(default_factory=list)
 
     def get(self, slug: str) -> DeploymentConfig:
         for d in self.deployment:

@@ -11,7 +11,7 @@ from llm_management.errors import ClassifierUnavailable
 from llm_management.local_resources import ResourceRegistry
 from llm_management.foi import backends, question_extractor, pipeline, response_analysis
 from llm_management.foi.backends import ClassificationRows, DeploymentAccess
-from llm_management.settings import settings
+from llm_management.deployments import get_catalog
 from llm_management.foi.response_schemas import (
     ExtractionInput,
     ExtractionOutput,
@@ -118,7 +118,9 @@ def test_topic_payload_is_sanitized_before_provisioning(monkeypatch):
     monkeypatch.setattr(question_extractor, "prepare_topic_request", prepare)
     classify = AsyncMock(return_value=None)
     monkeypatch.setattr(question_extractor, "classify_topics", classify)
-    cfg = SimpleNamespace(model=settings.foi_topic_model)
+    cfg = SimpleNamespace(
+        model=get_catalog().get(get_catalog().require_foi().topic_deployment).model
+    )
     deployments = DeploymentAccess(
         lambda _: cfg,
         AsyncMock(

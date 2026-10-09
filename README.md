@@ -21,10 +21,10 @@ Set the following via environment variables or a `.env` file in the working dire
 
 ### Deployment config
 
-Deployments are defined in `conf/exoscale.toml`. Each `[[deployment]]` block describes a model to deploy:
+Deployments are defined in `conf/deployments.toml`. Each `[[exoscale.deployment]]` block describes a remote deployment:
 
 ```toml
-[[deployment]]
+[[exoscale.deployment]]
 slug = "olmo3"
 model = "allenai/Olmo-3-7B-Instruct"
 gpu_type = "gpua5000"
@@ -47,6 +47,44 @@ inference_engine_params = [
 | `replicas` | Number of replicas |
 | `zone` | Exoscale zone (e.g. `at-vie-2`) |
 | `inference_engine_params` | Optional vLLM engine parameters |
+
+Local resources use `[[local.deployment]]` with a `slug` and a typed `loader`.
+Checkpoint identities live once in `[model.<name>]`, referenced by `model_ref`:
+
+```toml
+[model.sar_logistic_v1]
+repo = "mySociety/logistic-sar-detector-v1"
+revision = "ade6333a06995cbde835648d758d8b092900bc52"
+
+[[local.deployment]]
+slug = "sar_logistic_v1_cpu"
+loader = "sar_logistic_v1"
+model_ref = "sar_logistic_v1"
+artifact = "model.json"
+```
+
+Supported loaders are `modernbert_classifier`, `modernbert_head`,
+`topic_tokenizer`, `sar_logistic_v1`, `sar_deberta_v1`, and `presidio`.
+Each has a validated schema: classifiers and the topic tokenizer require
+`max_tokens`; Presidio requires `spacy_model` and `score_threshold`.
+Resource names come from their configured slugs. `[foi]`, `[sar]`, and
+`[sanitization]` select those slugs for the application pipelines;
+`[foi.topic]` defines the completion budget.
+
+The catalog validates unique names, group membership, pinned local revisions,
+and shared checkpoint references before registering cold resource factories.
+Loading config or registering factories does not download or load model weights.
+Remote Exoscale commands and `--all` operate on `exoscale.deployment` only.
+Template preparation recipes remain in `conf/exoscale_templates.toml`.
+
+Set `DEPLOYMENT_CONFIG` to use another catalog file; restart the process after
+changing configuration. This replaces `conf/exoscale.toml` and its top-level
+`[[deployment]]` entries. Model identities, pipeline bindings, token limits,
+and Presidio options now come from the catalog; the previous `FOI_TOPIC_*`,
+`QUESTION_SLICE_MODEL`, `QUESTION_SLICE_REVISION`, `QUESTION_SLICE_INPUT_LIMIT`,
+`QUESTION_SLICE_DEPLOYMENT`, and `PRESIDIO_*` environment overrides have been removed.
+Credentials, cache paths, host settings, and `QUESTION_SLICE_GPU_ENABLED` remain
+environment settings.
 
 ### Deployment naming
 
@@ -74,7 +112,7 @@ llm-management [COMMAND] [OPTIONS]
 | `llm-test [basic\|instruct] SLUG` | Test a deployment by asking the LLM for the capital of France |
 | `clear-models ZONE [ID] [--all]` | Remove model(s) from a zone (fails if in use by a deployment) |
 
-Most commands accept a deployment `SLUG` (matching a slug in `conf/exoscale.toml`) or `--all` to apply to every configured deployment.
+Most commands accept a deployment `SLUG` (matching a slug in `conf/deployments.toml`) or `--all` to apply to every configured deployment.
 
 ## FastAPI proxy server
 
@@ -118,6 +156,7 @@ available without authentication.
 | `/deployments/{slug}/scale-to-zero` | POST | Scale a deployment to zero replicas (pause without destroying) |
 | `/deployments/{slug}/v1/{path}` | POST | Proxy requests to the underlying Exoscale deployment, injecting auth |
 | `/v1/systemone` | POST | Proxy System One decision requests to the selected Exoscale deployment |
+| `/agents/sar_detection` | POST | Local personal-records moderation; failures retain an unclear flag |
 | `/agents/immigration_detection/clef` | POST | Single Clef choice question returning `IMM` or `FOI` |
 | `/agents/capital_city` | POST | Native structured-output example — returns a country's capital city |
 | `/agents/foi_structure` | POST | QuestionSlice extraction followed by fine-tuned Granite regimes/topics; `backend=cpu` or `exoscale` selects extraction |
@@ -129,7 +168,7 @@ available without authentication.
 
 ### Clef / System One
 
-The `clef` entry in `conf/exoscale.toml` uses `backend = "exoscale_compute"` and
+The `clef` entry in `conf/deployments.toml` uses `backend = "exoscale_compute"` and
 references the `clef_flash` recipe in `conf/exoscale_templates.toml`. The recipe
 selects the prepared template, model revision and VM size. The checked-in recipe
 points to the named template verified on 8 October 2026. See
@@ -316,7 +355,7 @@ A sanitizer failure returns 503 and blocks inference.
 
 `poetry install` installs Presidio and the pinned English spaCy model. Presidio loads
 that installed model explicitly on CPU and never downloads a model during a request.
-An alternative `PRESIDIO_SPACY_MODEL` must be installed before starting the service.
+An alternative `spacy_model` in the local Presidio deployment must be installed before starting the service.
 
 Model resources share the same model-family/version name across runtimes:
 `question_slice_v2` identifies the remote GPU deployment, `question_slice_v2_cpu`
@@ -449,8 +488,8 @@ Granite serves `mySociety/granite-tiny-foi-topic-grounded-v2-merged`, containing
 at revision `c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79`; its tokenizer/chat template
 is pinned locally to that revision. Exoscale imports weights by repository name,
 so keep that import and local tokenizer in sync when updating the model. No base
-Granite substitution is allowed. The deployment must match `FOI_TOPIC_MODEL`;
-update `FOI_TOPIC_REVISION` with it to keep the local tokenizer aligned. Model merging and publication are handled in
+Granite substitution is allowed. The deployment and local tokenizer must reference the same `[model.<name>]` entry;
+update its `repo` and `revision` together to keep them aligned. Model merging and publication are handled in
 the fine-tuning project; this service does not require PEFT.
 
 Granite uses JSON-schema constrained generation and validates IDs, counts, regimes,
@@ -501,7 +540,7 @@ curl -X POST 'http://localhost:8080/agents/foi_structure/extract?backend=exoscal
   -d '{"request":"Please provide the annual expenditure report."}'
 ```
 
-This uses the `question_slice_v2` deployment in `conf/exoscale.toml`, with the
+This uses the `question_slice_v2` deployment in `conf/deployments.toml`, with the
 existing ensure/resume/idle-scaling lifecycle. Exoscale's gateway does not expose
 vLLM's native `/classify`, so this backend serves the **fine-tuned encoder** through
 `/v1/embeddings` with mean pooling and normalisation disabled, then applies the
@@ -510,7 +549,7 @@ split across devices, not an unadapted embedding model or a replacement classifi
 Prefix caching must be disabled for this encoder on the tested vLLM 0.29.0 runtime.
 
 GPU probabilities may differ slightly due to float16 execution. Keep the imported
-encoder and local head from the same checkpoint release. The local head uses `QUESTION_SLICE_REVISION`;
+encoder and local head from the same checkpoint release. The local head uses the shared checkpoint’s pinned `revision`;
 remote responses use `extraction_revision: null` because the Exoscale importer does not verify
 the encoder SHA. Loading the head currently downloads the full safetensors artifact
 into the cache, but retains only its small head tensors for inference.
@@ -522,29 +561,15 @@ Optional environment settings:
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `FOI_TOPIC_DEPLOYMENT` | `foi_topic_v2` | Merged fine-tuned Granite deployment for the full FOI pipeline |
-| `FOI_TOPIC_MODEL` | `mySociety/granite-tiny-foi-topic-grounded-v2-merged` | Expected topic checkpoint; must match the remote deployment |
-| `FOI_TOPIC_REVISION` | `c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79` | Pinned local topic tokenizer revision |
-| `FOI_TOPIC_INPUT_LIMIT` | `2048` | Maximum sanitized prompt tokens |
-| `FOI_TOPIC_OUTPUT_LIMIT` | `2048` | Maximum completion tokens |
-| `FOI_TOPIC_MIN_OUTPUT_TOKENS` | `256` | Minimum completion allowance |
-| `FOI_TOPIC_OUTPUT_OVERHEAD` | `64` | Fixed completion allowance |
-| `FOI_TOPIC_OUTPUT_TOKENS_PER_QUESTION` | `192` | Additional completion allowance per question |
+| `DEPLOYMENT_CONFIG` | `conf/deployments.toml` | Deployment catalog path |
 | `CPU_INFERENCE_THREADS` | `1` | Process-wide PyTorch intra-op thread count |
 | `CPU_IDLE_TIMEOUT_MINUTES` | `15` | Unload unused local CPU resources; checked every minute |
-| `PRESIDIO_SPACY_MODEL` | `en_core_web_sm` | Installed local English NLP model; the default version is pinned to 3.8.0 |
-| `PRESIDIO_SCORE_THRESHOLD` | `0.5` | Minimum confidence for PII replacement |
 | `CLASSIFIER_BATCH_SIZE` | `8` | Maximum semantic units per inference call |
 | `CLASSIFIER_MAX_UNITS` | `256` | Maximum semantic units accepted per request |
 | `CLASSIFIER_CACHE_DIR` | Hugging Face default | Persistent tokenizer/weight cache location |
-| `QUESTION_SLICE_MODEL` | `mySociety/modernbert-question-slice-v2` | Classifier checkpoint |
-| `QUESTION_SLICE_REVISION` | `eb0436d4be96f113f35b5f891f9cc876a0f0bd6b` | Pinned local tokenizer/model revision |
-| `QUESTION_SLICE_INPUT_LIMIT` | `768` | Maximum tokens per extraction context window |
-| `QUESTION_SLICE_DEPLOYMENT` | `question_slice_v2` | Remote deployment slug |
 | `QUESTION_SLICE_GPU_ENABLED` | `true` | Allow the tested Exoscale encoder + local-head backend |
 
-Model identities and limits are validated by `FOIModelSettings`, inherited by the
-application settings. The maximum topic question count is derived from the output
+Model identities and limits are validated by `DeploymentCatalog`. The maximum topic question count is derived from the output
 budget. Change limits only to values supported by the trained checkpoint.
 
 A model instance is cached per API worker process. CPU inference runs outside the
@@ -575,9 +600,9 @@ be called from batch code without a FastAPI request or `TestClient`.
 | `foi/question_slice.py` | Segmentation, contextual windows, probability validation and question reconstruction |
 | `foi/backends.py` | Cached classifier/head factories and CPU versus Exoscale execution |
 | `foi/question_extractor.py` | Tokenizer loading, training-compatible prompts and constrained topic output |
-| `foi/model_spec.py` | Checkpoint identities, revisions and model input/output limits |
+| `deployments.py` | Typed catalog, checkpoint references, pipeline bindings and limits |
 | `inference.py` / `errors.py` | Reusable classifier execution and runtime errors, independent of FOI code |
-| `settings.py` | Runtime settings/environment variables; deployment hardware is in `conf/exoscale.toml` |
+| `settings.py` | Credentials and host environment settings; model and deployment config is in `conf/deployments.toml` |
 | `server.py` | HTTP contracts, error translation and existing deployment lifecycle wiring |
 
 `agents/` contains the actual Pydantic AI agent implementations. FOI extraction
@@ -611,7 +636,7 @@ provenance; they are not independently served models.
 
 ## Deployment groups
 
-Named groups in `conf/exoscale.toml` let batch clients warm remote deployments and registered local CPU resources concurrently:
+Named groups in `conf/deployments.toml` let batch clients warm remote deployments and registered local CPU resources concurrently:
 
 ```toml
 [[deployment_group]]
@@ -630,4 +655,62 @@ Call `POST /deployment-groups/foi_pipeline/ensure` with the usual authentication
 
 A known group returns HTTP 200 with `slug`, overall `success`, and an ordered `deployments` list. Each member has `slug`, `success`, `replicas` (null for local resources or on failure) and `error` (null on success). Inspect the success flags: a partial or complete startup failure is reported in the body. Unknown groups return 404. Successful members are not rolled back when another fails; retrying the group reuses loaded local resources and running deployments. Idle scaling and shutdown cleanup follow each resource's lifecycle, and warm-up does not keep a group running indefinitely.
 
-Groups must be nonempty, have unique names, and reference existing deployment slugs or registered local resource names without repeated members. Local and remote names must not collide. Resource owners register guards or cold factories in code; config validation discovers these names without loading models. Adding a new local owner registration makes it available to individual and group warm-up without changing the HTTP handlers.
+Groups must be nonempty, have unique names, and reference local or Exoscale deployment slugs declared in the catalog without repeated members. Local and remote names must not collide. Catalog validation checks these references before registering cold factories, without importing resource owners or loading models. Adding a local deployment with a supported loader makes it available to individual and group warm-up without changing the HTTP handlers.
+
+### SAR moderation on local CPU
+
+`POST /agents/sar_detection` accepts `{"request": "the complete original correspondence"}`
+and returns `is_sar`, `status` (`complete` or `unclear`), `reason`,
+`logistic_score` and `deberta_score`. It flags requests for personal records,
+including personal immigration correspondence and mixed personal/public requests;
+it is not a general personal-information detector. This endpoint uses the usual
+API authentication and does not start an Exoscale deployment or run the FOI pipeline.
+
+The strict logistic model receives raw text. Every logistic positive proceeds to
+DeBERTa using the vendored predictor's placeholder removal, NFKC, casefold and
+whitespace normalization. Only a successful negative can clear the flag. Loading,
+inference, invalid-score, overlength and busy failures return HTTP 200 with
+`is_sar: true`, `status: "unclear"` and a reason. Invalid HTTP request bodies still
+receive normal validation errors. Treat unclear results as requiring moderator review.
+Scores describe model outputs, not established real-world probabilities.
+
+Models are lazy local resources named `sar_logistic_v1_cpu` and
+`sar_deberta_v1_cpu`. Before a batch, call
+`POST /deployment-groups/sar_pipeline_cpu/ensure`, or use individual
+`POST /local-models/{name}/ensure` calls. Inspect the group's member success flags.
+Warm-up and loading are per API worker, and resources follow the normal CPU idle
+unloading policy. Allow roughly 1.28 GB for the reported SAR process footprint,
+plus other resources loaded in the same worker. DeBERTa uses CPU float32, the shared
+`CPU_INFERENCE_THREADS` setting (default 1), and one in-flight inference per worker;
+concurrent DeBERTa calls return an unclear busy flag. Logistic negatives can continue
+while DeBERTa is busy. Blocking inference runs off the event loop.
+
+Private artifact access uses Pydantic Settings: `HF_TOKEN` takes precedence over
+legacy `HUGGINGFACE_TOKEN`. `CLASSIFIER_CACHE_DIR` controls the Hugging Face cache;
+mount it persistently in containers to avoid repeat downloads. Tokens and model
+weights are not included in the repository. Artifact identities are pinned in
+`conf/deployments.toml`; trained cutoff checks remain in the detector implementation:
+
+| Model | Commit | Inclusive positive cutoff |
+|---|---|---|
+| `mySociety/logistic-sar-detector-v1` | `ade6333a06995cbde835648d758d8b092900bc52` | JSON cutoff `0.0018603434604847564` |
+| `mySociety/deberta-sar-detecter-v1` | `199883a0387af896f34f7bf0978472268a9474b9` | Softmax index 1, `0.5` |
+
+DeBERTa rejects inputs above 512 tokens including special tokens without truncation.
+The upstream artifacts record Unicode database **16.0.0**. This service intentionally
+relaxes the upstream runtime-version check and uses the host Python's Unicode tables
+(Python 3.11 uses Unicode 14.0.0). Placeholder removal, NFKC, casefold, whitespace
+collapse and logistic word-ngram tokenization are unchanged. Python/runtime and ML
+dependency versions remain unchanged. This is a documented compatibility adaptation:
+characters whose normalization, casing or word membership changed between Unicode
+versions may produce different features or prepared text. Representative correspondence
+comparisons do not establish parity for every possible Unicode input. A comparison
+of 20 synthetic samples (including accented/decomposed names, several scripts,
+whitespace, placeholders and emoji) between Python 3.11 / Unicode 14 and Python
+3.14 / Unicode 16 found identical prepared text, active logistic features, scores
+and logistic decisions. This checks compatibility on those examples, not accuracy
+on real correspondence.
+
+The shipped pair still needs validation on fresh real correspondence; historical procedure metrics do not validate
+this deployment. Vendored inference code is MIT; cached model artifacts are
+Apache-2.0 with upstream DeBERTa MIT notices retained in their repositories.

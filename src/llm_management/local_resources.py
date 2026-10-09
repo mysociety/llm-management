@@ -19,7 +19,10 @@ from contextlib import contextmanager
 import logging
 import threading
 import time
-from typing import Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
+
+if TYPE_CHECKING:
+    from .deployments import DeploymentCatalog, LocalDeploymentConfig
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
@@ -196,6 +199,18 @@ class ResourceRegistry:
             self._resources[resource.name] = resource
         return resource
 
+    def register_once(
+        self, name: str, factory: Callable[[], LocalResource]
+    ) -> LocalResource:
+        """Construct a guard once under the registry lock, without loading it."""
+        with self._lock:
+            if name not in self._resources:
+                resource = factory()
+                if resource.name != name:
+                    raise ValueError("Local resource factory returned a different name")
+                self._resources[name] = resource
+            return self._resources[name]
+
     def register_factory(self, name: str, factory: Callable[[], LocalResource]):
         """Register a cold resource without constructing its owner or loading it.
 
@@ -260,14 +275,26 @@ class ResourceRegistry:
 local_resources = ResourceRegistry()
 
 
-def register_builtin_resources():
-    """Import resource owners so their registrations exist for config validation.
-
-    Owners register their own guards or lightweight factories at module import.
-    No model is loaded here. This also supports CLI configuration loading before
-    the HTTP server has imported its inference components.
-    """
+def register_configured_resources(
+    catalog: "DeploymentCatalog", registry: ResourceRegistry = local_resources
+):
+    """Register validated catalog entries as cold factories without owner imports."""
     from importlib import import_module
 
-    for module in ("foi.backends", "foi.question_extractor", "sanitization"):
-        import_module(f"llm_management.{module}")
+    owners = {
+        "modernbert_classifier": ("foi.backends", "question_classifier"),
+        "modernbert_head": ("foi.backends", "question_classification_head"),
+        "topic_tokenizer": ("foi.question_extractor", "tokenizer_resource"),
+        "sar_logistic_v1": ("sar", "logistic_detector"),
+        "sar_deberta_v1": ("sar", "deberta_detector"),
+        "presidio": ("sanitization", "configured_presidio"),
+    }
+
+    def create(config: "LocalDeploymentConfig"):
+        module_name, factory_name = owners[config.loader]
+        factory = getattr(import_module(f"llm_management.{module_name}"), factory_name)
+        owner = factory(config)
+        return owner if isinstance(owner, LocalResource) else owner.resource
+
+    for config in catalog.local.deployment:
+        registry.register_factory(config.slug, lambda config=config: create(config))

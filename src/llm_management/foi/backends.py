@@ -17,7 +17,11 @@ from ..inference import LocalSequenceClassifier, classify_remote
 from ..cache import RunningDeployment
 from ..models import DeploymentConfig
 from .schemas import UNIT_LABELS, ExtractionBackend
-from .model_spec import QUESTION_SLICE_CPU_RESOURCE, QUESTION_SLICE_HEAD_CPU_RESOURCE
+from ..deployments import (
+    get_catalog,
+    QuestionSliceDeployment,
+    QuestionSliceHeadDeployment,
+)
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 import asyncio
@@ -36,6 +40,7 @@ class ModernBertClassificationHead:
         token: str | None = None,
         cache_dir: str | None = None,
         threads: int = 1,
+        resource_name: str = "classification_head",
     ):
         self.model = model
         self.revision = revision
@@ -48,7 +53,7 @@ class ModernBertClassificationHead:
         self._config: Any = None
         self._torch: Any = None
         self.resource = local_resources.register(
-            LocalResource(QUESTION_SLICE_HEAD_CPU_RESOURCE, self.load, self.unload)
+            LocalResource(resource_name, self.load, self.unload)
         )
 
     def unload(self):
@@ -147,32 +152,55 @@ class ModernBertClassificationHead:
                 return x.softmax(-1).tolist()
 
 
-@lru_cache(maxsize=1)
-def question_classification_head() -> ModernBertClassificationHead:
+@lru_cache(maxsize=None)
+def _question_classification_head(slug: str) -> ModernBertClassificationHead:
+    catalog = get_catalog()
+    config = catalog.local.get(slug, QuestionSliceHeadDeployment)
+    checkpoint = catalog.model[config.model_ref]
     return ModernBertClassificationHead(
-        model=settings.question_slice_model,
-        revision=settings.question_slice_revision,
+        model=checkpoint.repo,
+        revision=checkpoint.revision,
         labels=UNIT_LABELS,
         token=settings.huggingface_token or None,
         cache_dir=settings.classifier_cache_dir,
         threads=settings.cpu_inference_threads,
+        resource_name=config.slug,
     )
 
 
-@lru_cache(maxsize=1)
-def question_classifier() -> LocalSequenceClassifier:
+@lru_cache(maxsize=None)
+def _question_classifier(slug: str) -> LocalSequenceClassifier:
+    catalog = get_catalog()
+    config = catalog.local.get(slug, QuestionSliceDeployment)
+    checkpoint = catalog.model[config.model_ref]
     return LocalSequenceClassifier(
-        model=settings.question_slice_model,
-        revision=settings.question_slice_revision,
+        model=checkpoint.repo,
+        revision=checkpoint.revision,
         labels=UNIT_LABELS,
-        max_tokens=settings.question_slice_input_limit,
+        max_tokens=config.max_tokens,
         max_units=settings.classifier_max_units,
         batch_size=settings.classifier_batch_size,
         threads=settings.cpu_inference_threads,
         cache_dir=settings.classifier_cache_dir,
         token=settings.huggingface_token or None,
-        resource_name=QUESTION_SLICE_CPU_RESOURCE,
+        resource_name=config.slug,
         model_kwargs={"attn_implementation": "sdpa", "reference_compile": False},
+    )
+
+
+def question_classification_head(
+    config: QuestionSliceHeadDeployment | None = None,
+) -> ModernBertClassificationHead:
+    return _question_classification_head(
+        config.slug if config else get_catalog().require_foi().head
+    )
+
+
+def question_classifier(
+    config: QuestionSliceDeployment | None = None,
+) -> LocalSequenceClassifier:
+    return _question_classifier(
+        config.slug if config else get_catalog().require_foi().classifier
     )
 
 
@@ -213,7 +241,7 @@ async def classify_question_units(
     # A custom Compute template could serve the encoder and head together.
     head = question_classification_head()
     await asyncio.to_thread(head.load)
-    slug = settings.question_slice_deployment
+    slug = get_catalog().require_foi().extraction_deployment
     cfg = deployments.get_config(slug)
     if cfg.model != classifier.model_name:
         raise ClassifierUnavailable(
@@ -236,12 +264,3 @@ async def classify_question_units(
         deployments.touch(slug)
     # Exoscale imports by repository name; the remote weight SHA is unverified.
     return ClassificationRows(rows, classifier.model_name, None)
-
-
-# Make cold controllers discoverable for individual and group warm-up.
-local_resources.register_factory(
-    QUESTION_SLICE_CPU_RESOURCE, lambda: question_classifier().resource
-)
-local_resources.register_factory(
-    QUESTION_SLICE_HEAD_CPU_RESOURCE, lambda: question_classification_head().resource
-)

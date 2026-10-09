@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from llm_management.foi import question_extractor as foi_topic
-from llm_management.settings import settings
+from llm_management.deployments import get_catalog
 from llm_management.foi.question_slice import build_extraction_result, segment_request
 
 
@@ -51,7 +51,7 @@ def test_prompt_uses_training_payload_and_exact_chat_tokenization(monkeypatch):
     monkeypatch.setattr(
         foi_topic,
         "question_extractor_tokenizer",
-        lambda: SimpleNamespace(apply_chat_template=tokenize),
+        lambda *args: SimpleNamespace(apply_chat_template=tokenize),
     )
     payload = foi_topic.prepare_topic_request(
         "Original request", extraction().questions
@@ -69,7 +69,7 @@ def test_prompt_uses_training_payload_and_exact_chat_tokenization(monkeypatch):
     monkeypatch.setattr(
         foi_topic,
         "question_extractor_tokenizer",
-        lambda: SimpleNamespace(apply_chat_template=lambda *a, **kw: [1] * 2049),
+        lambda *args: SimpleNamespace(apply_chat_template=lambda *a, **kw: [1] * 2049),
     )
     with pytest.raises(ValueError, match="not truncated"):
         foi_topic.prepare_topic_request("Original request", extraction().questions)
@@ -113,7 +113,7 @@ def test_remote_output_validation(monkeypatch, case):
         "id": "test-completion",
         "object": "chat.completion",
         "created": 1,
-        "model": settings.foi_topic_model,
+        "model": get_catalog().get(get_catalog().require_foi().topic_deployment).model,
         "choices": [
             {
                 "index": 0,
@@ -129,7 +129,7 @@ def test_remote_output_validation(monkeypatch, case):
     monkeypatch.setattr(
         foi_topic,
         "question_extractor_tokenizer",
-        lambda: SimpleNamespace(apply_chat_template=lambda *a, **kw: [1]),
+        lambda *args: SimpleNamespace(apply_chat_template=lambda *a, **kw: [1]),
     )
     payload = foi_topic.prepare_topic_request(
         "Email alice@example.org", extraction().questions
@@ -156,7 +156,7 @@ def test_remote_output_validation(monkeypatch, case):
     async def call():
         return await foi_topic.classify_topics(
             payload=payload,
-            model=settings.foi_topic_model,
+            model=get_catalog().get(get_catalog().require_foi().topic_deployment).model,
             deployment_url="https://test/v1/",
             api_key="test",
             question_ids=["q1", "q2"] if case == "count" else ["q1"],
@@ -174,7 +174,10 @@ def test_remote_output_validation(monkeypatch, case):
     assert request.url.path == "/v1/chat/completions"
     assert request.headers["Authorization"] == "Bearer test"
     body = json.loads(request.content)
-    assert body["model"] == settings.foi_topic_model
+    assert (
+        body["model"]
+        == get_catalog().get(get_catalog().require_foi().topic_deployment).model
+    )
     assert body["messages"] == payload.value["messages"]
     assert body["response_format"] == payload.value["response_format"]
     assert body["temperature"] == payload.value["temperature"]
@@ -194,7 +197,7 @@ def test_token_budget_checks_final_sanitized_messages(monkeypatch):
     monkeypatch.setattr(
         foi_topic,
         "question_extractor_tokenizer",
-        lambda: SimpleNamespace(apply_chat_template=tokenize),
+        lambda *args: SimpleNamespace(apply_chat_template=tokenize),
     )
     payload = foi_topic.prepare_topic_request(
         "Email alice@example.org", extraction().questions
