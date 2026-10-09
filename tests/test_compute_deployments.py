@@ -264,7 +264,7 @@ def test_server_ensure_dispatches_compute_once_and_pauses_by_deletion(
         results = await asyncio.gather(
             server.ensure_running("clef"), server.ensure_running("clef")
         )
-        assert all(state.replicas == 1 for _, state in results)
+        assert all(result.state.replicas == 1 for result in results)
         assert len(cloud.created) == 1
         await server.scale_to_zero("clef")
         assert cache.get("clef").exists is False

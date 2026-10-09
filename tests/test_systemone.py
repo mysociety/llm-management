@@ -8,6 +8,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from llm_management import server, systemone
+from llm_management.cache import RunningDeployment
 
 
 @pytest.fixture
@@ -15,9 +16,9 @@ def clef_client(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {"client": "client-secret"})
     monkeypatch.setattr(server.cache, "all_active", lambda: [])
     ensure = AsyncMock(
-        return_value=(
-            SimpleNamespace(model="Cloudflare/clef-flash"),
-            SimpleNamespace(
+        return_value=RunningDeployment(
+            config=SimpleNamespace(model="Cloudflare/clef-flash"),
+            state=SimpleNamespace(
                 deployment_url="https://clef.test/v1/", api_key="upstream-secret"
             ),
         )

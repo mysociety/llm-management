@@ -14,7 +14,7 @@ from functools import lru_cache
 
 from ..errors import ClassifierOutputError, ClassifierUnavailable
 from ..inference import LocalSequenceClassifier, classify_remote
-from ..cache import DeploymentState
+from ..cache import RunningDeployment
 from ..models import DeploymentConfig
 from .schemas import UNIT_LABELS, ExtractionBackend
 from .model_spec import QUESTION_SLICE_CPU_RESOURCE, QUESTION_SLICE_HEAD_CPU_RESOURCE
@@ -181,7 +181,7 @@ class DeploymentAccess:
     """Deployment operations supplied by the application; no HTTP dependency here."""
 
     get_config: Callable[[str], DeploymentConfig]
-    ensure_running: Callable[[str], Awaitable[tuple[DeploymentConfig, DeploymentState]]]
+    ensure_running: Callable[[str], Awaitable[RunningDeployment]]
     touch: Callable[[str], None]
 
 
@@ -219,7 +219,9 @@ async def classify_question_units(
         raise ClassifierUnavailable(
             "Extraction deployment must use the configured QuestionSlice model"
         )
-    cfg, state = await deployments.ensure_running(slug)
+    deployment = await deployments.ensure_running(slug)
+    cfg = deployment.config
+    state = deployment.state
     try:
         rows = await classify_remote(
             texts=texts,

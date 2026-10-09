@@ -39,7 +39,7 @@ from .agents.immigration_detection import (
     immigration_detection_agent,
     immigration_decision_agent,
 )
-from .cache import DeploymentState, cache
+from .cache import RunningDeployment, cache
 from .models import ExoscaleConfig, DeploymentConfig, LLMManagementError
 from .settings import settings
 from . import systemone
@@ -138,9 +138,7 @@ def get_deployment_config(slug: str) -> DeploymentConfig:
         )
 
 
-async def ensure_running(
-    slug: str, *, allow_start: bool = False
-) -> tuple[DeploymentConfig, DeploymentState]:
+async def ensure_running(slug: str, *, allow_start: bool = False) -> RunningDeployment:
     """
     Return the config and a live deployment state for *slug*.
 
@@ -189,7 +187,7 @@ async def ensure_running(
         if leases is not None and slug not in leases:
             cache.begin_request(slug)
             leases.add(slug)
-    return cfg, state
+    return RunningDeployment(config=cfg, state=state)
 
 
 async def chat_model_from_slug(slug: str) -> OpenAIChatModel:
@@ -203,7 +201,9 @@ async def chat_model_from_slug(slug: str) -> OpenAIChatModel:
         raise HTTPException(
             status_code=400, detail="This endpoint requires an OpenAI deployment."
         )
-    cfg, state = await ensure_running(slug)
+    deployment = await ensure_running(slug)
+    cfg = deployment.config
+    state = deployment.state
     return OpenAIChatModel(
         cfg.model,
         provider=OpenAIProvider(api_key=state.api_key, base_url=state.deployment_url),
@@ -372,8 +372,8 @@ async def warmup_resource(name: str) -> int | None:
     """
     resource = local_resources.get(name)
     if resource is None:
-        _, state = await ensure_running(name, allow_start=True)
-        return state.replicas
+        deployment = await ensure_running(name, allow_start=True)
+        return deployment.state.replicas
     try:
         await asyncio.to_thread(resource.warmup)
     except ClassifierUnavailable as exc:
@@ -496,7 +496,7 @@ async def proxy_to_deployment(slug: str, path: str, request: Request):
     corresponding Exoscale deployment endpoint, injecting the correct
     bearer token. Resets the idle-scaler timer for this deployment.
     """
-    cfg, state = await ensure_running(slug)
+    state = (await ensure_running(slug)).state
 
     target_url = f"{state.deployment_url.rstrip('/')}/{path}"
     body = await request.body()
@@ -539,7 +539,7 @@ def systemone_http_errors():
 @app.post("/v1/systemone")
 async def proxy_to_systemone(request: Request, deployment: str = "clef"):
     """Forward System One JSON through the shared Exoscale lifecycle."""
-    _, state = await ensure_running(deployment)
+    state = (await ensure_running(deployment)).state
     with systemone_http_errors():
         response = await systemone.send_systemone(
             await request.body(),
@@ -606,7 +606,9 @@ async def clef_immigration_detection_endpoint(
     deployment: str = "clef",
 ) -> ClassificationResponse:
     """Classify a request with one Clef choice question using existing labels."""
-    cfg, state = await ensure_running(deployment)
+    running = await ensure_running(deployment)
+    cfg = running.config
+    state = running.state
     # The provider owns the /v1/systemone URL and response validation.
     async with httpx2.AsyncClient(timeout=300.0) as client:
         model = SystemOneModel(

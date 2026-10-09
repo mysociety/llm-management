@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from pydantic import BaseModel
 
@@ -33,6 +33,13 @@ class DeploymentState(BaseModel):
     last_request_time: float = 0.0
     last_refreshed: float = 0.0
     requests_in_flight: int = 0
+
+
+class RunningDeployment(NamedTuple):
+    """Configuration and live state of a running deployment."""
+
+    config: DeploymentConfig
+    state: DeploymentState
 
 
 class DeploymentCache:

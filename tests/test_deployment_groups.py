@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from starlette.testclient import TestClient
 
 from llm_management import server
-from llm_management.cache import DeploymentCache, DeploymentState
+from llm_management.cache import DeploymentCache, DeploymentState, RunningDeployment
 from llm_management.models import ExoscaleConfig
 from llm_management.local_resources import LocalResource, ResourceRegistry
 
@@ -64,7 +64,9 @@ def test_group_runs_concurrently_and_reports_each_result(monkeypatch, fail):
             await asyncio.wait_for(both_started.wait(), timeout=2)
             if fail and slug == "foi_topic_v2":
                 raise RuntimeError("private provider detail")
-            return None, DeploymentState(slug=slug, exists=True, replicas=1)
+            return RunningDeployment(
+                config=None, state=DeploymentState(slug=slug, exists=True, replicas=1)
+            )
 
         monkeypatch.setattr(server, "ensure_running", ensure)
         return await server.ensure_deployment_group("foi_pipeline")
@@ -115,14 +117,18 @@ def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(monkeypatch):
 
     results = asyncio.run(run())
     assert calls == ["start"]
-    assert all(s.replicas == 1 for _, s in results)
+    assert all(result.state.replicas == 1 for result in results)
     assert state.last_request_time > 0
 
 
 def test_group_endpoint_contract_and_auth(monkeypatch):
     monkeypatch.setattr(server, "load_config", config)
     monkeypatch.setattr(server.settings, "auth_tokens", {"test": "test-token"})
-    ensure = AsyncMock(return_value=(None, DeploymentState(slug="unused", replicas=1)))
+    ensure = AsyncMock(
+        return_value=RunningDeployment(
+            config=None, state=DeploymentState(slug="unused", replicas=1)
+        )
+    )
     monkeypatch.setattr(server, "ensure_running", ensure)
     # No lifespan: these HTTP contract checks must not touch real deployments.
     client = TestClient(server.app)
@@ -155,7 +161,9 @@ def test_mixed_group_resolves_arbitrary_registered_local_resource(
     mixed = ExoscaleConfig.model_validate(data)
     monkeypatch.setattr(server, "load_config", lambda: mixed)
     remote = AsyncMock(
-        return_value=(None, DeploymentState(slug="foi_topic_v2", replicas=1))
+        return_value=RunningDeployment(
+            config=None, state=DeploymentState(slug="foi_topic_v2", replicas=1)
+        )
     )
     monkeypatch.setattr(server, "ensure_running", remote)
     result = asyncio.run(server.ensure_deployment_group("mixed"))
