@@ -203,22 +203,32 @@ def predictions_from_probabilities(
     return predictions
 
 
+class ContinuationPromotion(NamedTuple):
+    """Reconstruction predictions and the index of any promoted continuation."""
+
+    predictions: list[UnitPrediction]
+    promoted_index: int | None
+
+
 def promote_initial_continuation_if_needed(
     predictions: list[UnitPrediction],
-) -> tuple[list[UnitPrediction], int | None]:
+) -> ContinuationPromotion:
     """Change reconstruction inputs only when no question starts exist anywhere."""
     if any(p.label == UnitLabel.QUESTION_START for p in predictions):
-        return predictions, None
+        return ContinuationPromotion(predictions=predictions, promoted_index=None)
     for prediction in predictions:
         if prediction.label == UnitLabel.QUESTION_CONTINUATION:
             promoted_index = prediction.unit.index
-            return [
-                p.model_copy(update={"label": UnitLabel.QUESTION_START})
-                if p.unit.index == promoted_index
-                else p
-                for p in predictions
-            ], promoted_index
-    return predictions, None
+            return ContinuationPromotion(
+                predictions=[
+                    p.model_copy(update={"label": UnitLabel.QUESTION_START})
+                    if p.unit.index == promoted_index
+                    else p
+                    for p in predictions
+                ],
+                promoted_index=promoted_index,
+            )
+    return ContinuationPromotion(predictions=predictions, promoted_index=None)
 
 
 def build_extraction_result(
@@ -232,12 +242,10 @@ def build_extraction_result(
     """Combine raw diagnostics with reconstruction and the explicit promotion policy."""
     predictions = predictions_from_probabilities(units, rows)
     original = reconstruct_questions(predictions)
-    reconstruction_predictions, promoted_index = promote_initial_continuation_if_needed(
-        predictions
-    )
+    promotion = promote_initial_continuation_if_needed(predictions)
     extraction = (
-        reconstruct_questions(reconstruction_predictions)
-        if promoted_index is not None
+        reconstruct_questions(promotion.predictions)
+        if promotion.promoted_index is not None
         else original
     )
     if extraction.orphan_continuation_indices:
@@ -249,7 +257,7 @@ def build_extraction_result(
     return QuestionSliceResult(
         questions=extraction.questions,
         extraction_status=status,
-        promoted_continuation_index=promoted_index,
+        promoted_continuation_index=promotion.promoted_index,
         additional_text=extraction.additional,
         ignored_text=extraction.ignored,
         unit_predictions=predictions,
