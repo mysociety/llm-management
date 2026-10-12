@@ -74,11 +74,15 @@ total context and reserved output budget.
 
 ### Paid integration tests
 
-Run `poetry run pytest -m external -v` to exercise live deployments. Toast tests
-are temporarily disabled with a module-level skip in `tests/test_toast.py`, even
+Run `SERVER_ROLE=test poetry run pytest -m external -v` to exercise live deployments.
+This uses stable names such as `clef_test`, `foi_status_test`, and `olmo3_7b_test`.
+Toast tests are temporarily disabled with a module-level skip in `tests/test_toast.py`, even
 when selected explicitly. Remove that skip only when Toast testing is needed again.
-The Clef Compute test requires a unique `SERVER_ROLE=systemone_live_<run>` and
-a persistent `COMPUTE_STATE_DIR`; it deletes its owned VM and access resources.
+The Clef Compute test accepts `SERVER_ROLE=test` and deletes the test VM and access
+resources. Keep `COMPUTE_STATE_DIR` persistent so interrupted runs can recover their
+resource state. Sequential runs can reuse these names and the same state directory.
+For concurrent isolated runs, use `SERVER_ROLE=test_<run>` and a separate
+`COMPUTE_STATE_DIR` per run across all backends.
 
 ### Managed inference authentication
 

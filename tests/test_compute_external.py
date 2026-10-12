@@ -2,7 +2,8 @@
 
 Run only with pytest -m external tests/test_compute_external.py. Uses the Clef
 recipe, exercises real HTTP/System One calls, and deletes the owned VM in finally.
-Use a distinct SERVER_ROLE and persistent COMPUTE_STATE_DIR for isolated runs.
+Use SERVER_ROLE=test and persistent COMPUTE_STATE_DIR for sequential runs.
+Concurrent isolated runs can use SERVER_ROLE=test_<run> with separate state directories.
 """
 
 import json
@@ -25,10 +26,11 @@ pytestmark = pytest.mark.external
 
 
 def test_compute_lifecycle_and_agents_live():
-    if not server.settings.server_role.startswith("systemone_live_"):
-        pytest.skip(
-            "Set SERVER_ROLE=systemone_live_<unique-run> to isolate paid test resources"
-        )
+    if (
+        server.settings.server_role != "test"
+        and not server.settings.server_role.startswith("test_")
+    ):
+        pytest.skip("Set SERVER_ROLE=test (or test_<run> for concurrent isolated runs)")
     cfg = server.app.state.service.get_config("clef")
     backend = server.app.state.service.get_backend("clef")
     assert isinstance(cfg, ComputeDeploymentConfig)
