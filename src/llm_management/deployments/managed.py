@@ -4,6 +4,7 @@ Managed Exoscale inference deployment operations.
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -23,6 +24,8 @@ from .client import get_client
 from .config import ExoscaleDeploymentConfig
 from .errors import DeploymentNotFoundError, LLMManagementError
 from .types import ConnectionInfo, DeploymentQueryResult
+
+logger = logging.getLogger(__name__)
 
 
 class ManagedDeployment:
@@ -253,7 +256,14 @@ class ManagedDeployment:
             api_key = client.reveal_deployment_api_key(id=deployment["id"]).get(
                 "api-key", ""
             )
-        except Exception:
+        except Exception as exc:
+            response = getattr(exc, "response", None)
+            logger.warning(
+                "Deployment credential revelation failed for %s: %s (HTTP %s)",
+                self.config.slug,
+                type(exc).__name__,
+                getattr(response, "status_code", "unknown"),
+            )
             api_key = ""
         return DeploymentQueryResult(
             exists=True,
