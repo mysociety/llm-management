@@ -17,7 +17,10 @@ DEPLOYMENTS = (
     # Add further compatible deployment slugs here when required.
 )
 
-pytestmark = pytest.mark.external
+pytestmark = [
+    pytest.mark.external,
+    pytest.mark.skip(reason="Toast paid tests are temporarily disabled; do not run"),
+]
 
 
 @pytest.fixture(scope="session", params=DEPLOYMENTS, ids=DEPLOYMENTS)
