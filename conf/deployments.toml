@@ -8,6 +8,14 @@ revision = "eb0436d4be96f113f35b5f891f9cc876a0f0bd6b"
 repo = "mySociety/granite-tiny-foi-topic-grounded-v2-merged"
 revision = "c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79"
 
+[model.sar_logistic_v1]
+repo = "mySociety/logistic-sar-detector-v1"
+revision = "ade6333a06995cbde835648d758d8b092900bc52"
+
+[model.sar_deberta_v1]
+repo = "mySociety/deberta-sar-detecter-v1"
+revision = "199883a0387af896f34f7bf0978472268a9474b9"
+
 [[local.deployment]]
 slug = "question_slice_v2_cpu"
 loader = "modernbert_classifier"
@@ -31,6 +39,18 @@ loader = "presidio"
 spacy_model = "en_core_web_sm"
 score_threshold = 0.5
 
+[[local.deployment]]
+slug = "sar_logistic_v1_cpu"
+loader = "sar_logistic_v1"
+model_ref = "sar_logistic_v1"
+artifact = "model.json"
+
+[[local.deployment]]
+slug = "sar_deberta_v1_cpu"
+loader = "sar_deberta_v1"
+model_ref = "sar_deberta_v1"
+max_tokens = 512
+
 [foi]
 classifier = "question_slice_v2_cpu"
 head = "question_slice_v2_head_cpu"
@@ -46,6 +66,10 @@ output_tokens_per_question = 192
 
 [sanitization]
 deployment = "presidio"
+
+[sar]
+logistic = "sar_logistic_v1_cpu"
+classifier = "sar_deberta_v1_cpu"
 
 [[exoscale.deployment]]
 
@@ -159,3 +183,36 @@ deployments = [
 [[deployment_group]]
 slug = "foi_pipeline_cpu"
 deployments = ["presidio", "question_slice_v2_cpu", "question_extractor_tokenizer", "foi_topic_v2"]
+
+
+[[deployment_group]]
+slug = "sar_pipeline_cpu"
+deployments = ["sar_logistic_v1_cpu", "sar_deberta_v1_cpu"]
+
+# Automatic email detection, pinned from fast-auto-classifier releases.json.
+[model.auto_logistic_v1]
+repo = "mySociety/logistic-auto-detector-v1"
+revision = "9cff7b1018a61bd919fb049e3aca005952a101c7"
+
+[model.auto_deberta_v1]
+repo = "mySociety/deberta-auto-detector-v1"
+revision = "ddf70e25af71b64260e72ac3cdef1353a990d4c8"
+
+[[local.deployment]]
+slug = "auto_logistic_v1_cpu"
+loader = "auto_logistic_v1"
+model_ref = "auto_logistic_v1"
+
+[[local.deployment]]
+slug = "auto_deberta_v1_cpu"
+loader = "auto_deberta_v1"
+model_ref = "auto_deberta_v1"
+max_tokens = 512
+
+[automatic]
+logistic = "auto_logistic_v1_cpu"
+classifier = "auto_deberta_v1_cpu"
+
+[[deployment_group]]
+slug = "automatic_pipeline_cpu"
+deployments = ["auto_logistic_v1_cpu", "auto_deberta_v1_cpu"]

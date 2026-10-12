@@ -1,14 +1,24 @@
-"""Typed deployment catalog; validation never imports or loads inference owners."""
+"""
+Typed deployment catalog; validation never imports or loads inference owners.
+"""
 
 from __future__ import annotations
+
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated, Any, Literal, Self, TypeVar
+
 import tomllib
-from typing import Annotated, Literal, TypeVar
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
-from .config import DeploymentConfig, ExoscaleDeployments, ComputeDeploymentConfig
-from .errors import LLMManagementError
+
 from ..settings import settings
+from .config import (
+    ComputeDeploymentConfig,
+    DeploymentConfig,
+    ExoscaleDeploymentConfig,
+    ExoscaleDeployments,
+)
+from .errors import LLMManagementError
 
 
 class CatalogModel(BaseModel):
@@ -17,7 +27,7 @@ class CatalogModel(BaseModel):
 
 class ModelCheckpoint(CatalogModel):
     repo: str = Field(min_length=1)
-    revision: str = Field(pattern="^[0-9a-f]{40}$")
+    revision: str = Field(pattern=r"^[0-9a-f]{40}$")
 
 
 class LocalDeployment(CatalogModel):
@@ -28,7 +38,9 @@ class LocalModelDeployment(LocalDeployment):
     model_ref: str = Field(min_length=1)
 
 
-class QuestionSliceDeployment(LocalModelDeployment):
+class SequenceClassifierDeployment(LocalModelDeployment):
+    """Sequence-classifier settings; the current loader validates QuestionSlice labels."""
+
     loader: Literal["modernbert_classifier"]
     max_tokens: int = Field(gt=0)
 
@@ -42,6 +54,29 @@ class TopicTokenizerDeployment(LocalModelDeployment):
     max_tokens: int = Field(gt=0)
 
 
+class SARLogisticDeployment(LocalModelDeployment):
+    """Artifact configuration for the SAR-specific logistic loader."""
+
+    loader: Literal["sar_logistic_v1"]
+    artifact: str = Field(min_length=1)
+
+
+class SARClassifierDeployment(LocalModelDeployment):
+    loader: Literal["sar_deberta_v1"]
+    max_tokens: int = Field(gt=0)
+
+
+class AutoLogisticDeployment(LocalModelDeployment):
+    loader: Literal["auto_logistic_v1"]
+    artifact: str = "model.json"
+    standalone_artifact: str = "standalone-model.json"
+
+
+class AutoClassifierDeployment(LocalModelDeployment):
+    loader: Literal["auto_deberta_v1"]
+    max_tokens: Literal[512] = 512
+
+
 class PresidioDeployment(LocalDeployment):
     loader: Literal["presidio"]
     spacy_model: str = Field(min_length=1)
@@ -49,10 +84,14 @@ class PresidioDeployment(LocalDeployment):
 
 
 LocalDeploymentConfig = Annotated[
-    PresidioDeployment
-    | QuestionSliceDeployment
+    SequenceClassifierDeployment
     | QuestionSliceHeadDeployment
-    | TopicTokenizerDeployment,
+    | TopicTokenizerDeployment
+    | SARLogisticDeployment
+    | SARClassifierDeployment
+    | AutoLogisticDeployment
+    | AutoClassifierDeployment
+    | PresidioDeployment,
     Field(discriminator="loader"),
 ]
 L = TypeVar("L", bound=LocalDeployment)
@@ -85,7 +124,7 @@ class TopicBudget(CatalogModel):
         ) // self.output_tokens_per_question
 
     @model_validator(mode="after")
-    def validate_budget(self):
+    def validate_budget(self) -> Self:
         if self.min_output_tokens > self.output_limit:
             raise ValueError("Minimum topic output budget exceeds the output limit")
         if self.max_questions < 1:
@@ -104,6 +143,11 @@ class FOIPipeline(CatalogModel):
     topic: TopicBudget
 
 
+class BinaryCascadePipeline(CatalogModel):
+    logistic: str
+    classifier: str
+
+
 class DeploymentGroupConfig(CatalogModel):
     slug: str = Field(min_length=1)
     deployments: list[str] = Field(min_length=1)
@@ -119,13 +163,16 @@ class DeploymentCatalog(CatalogModel):
     local: LocalDeployments = Field(default_factory=LocalDeployments)
     deployment_group: list[DeploymentGroupConfig] = Field(default_factory=list)
     foi: FOIPipeline | None = None
+    sar: BinaryCascadePipeline | None = None
+    automatic: BinaryCascadePipeline | None = None
     sanitization: SanitizationConfig | None = None
 
     @model_validator(mode="before")
     @classmethod
-    def resolve_checkpoints(cls, value):
+    def resolve_checkpoints(cls, value: Any) -> Any:
         if not isinstance(value, dict):
             return value
+        # Copy the input so validation also works with reused dictionaries.
         value = dict(value)
         value["model"] = TypeAdapter(dict[str, ModelCheckpoint]).validate_python(
             value.get("model", {})
@@ -153,7 +200,7 @@ class DeploymentCatalog(CatalogModel):
         return value
 
     @model_validator(mode="after")
-    def validate_references(self):
+    def validate_references(self) -> Self:
         remote_names = [d.slug for d in self.exoscale.deployment]
         local_names = [d.slug for d in self.local.deployment]
         if len(set(remote_names)) != len(remote_names) or len(set(local_names)) != len(
@@ -169,7 +216,9 @@ class DeploymentCatalog(CatalogModel):
             if ref is not None:
                 if ref not in self.model:
                     raise ValueError(f"Unknown model reference: {ref}")
-                if isinstance(deployment, LocalModelDeployment):
+                if not isinstance(
+                    deployment, (ExoscaleDeploymentConfig, ComputeDeploymentConfig)
+                ):
                     continue
                 if deployment.model != self.model[ref].repo:
                     raise ValueError(
@@ -191,7 +240,7 @@ class DeploymentCatalog(CatalogModel):
         try:
             if self.foi:
                 classifier = self.local.get(
-                    self.foi.classifier, QuestionSliceDeployment
+                    self.foi.classifier, SequenceClassifierDeployment
                 )
                 head = self.local.get(self.foi.head, QuestionSliceHeadDeployment)
                 tokenizer = self.local.get(self.foi.tokenizer, TopicTokenizerDeployment)
@@ -210,6 +259,12 @@ class DeploymentCatalog(CatalogModel):
                     )
             if self.sanitization:
                 self.local.get(self.sanitization.deployment, PresidioDeployment)
+            if self.automatic:
+                self.local.get(self.automatic.logistic, AutoLogisticDeployment)
+                self.local.get(self.automatic.classifier, AutoClassifierDeployment)
+            if self.sar:
+                self.local.get(self.sar.logistic, SARLogisticDeployment)
+                self.local.get(self.sar.classifier, SARClassifierDeployment)
         except LLMManagementError as exc:
             raise ValueError(str(exc)) from exc
         return self
@@ -225,7 +280,7 @@ class DeploymentCatalog(CatalogModel):
             ) from exc
         for deployment in config.exoscale.deployment:
             if isinstance(deployment, ComputeDeploymentConfig):
-                deployment.recipe
+                deployment.recipe  # Check template references without provisioning.
         return config
 
     def get(self, slug: str) -> DeploymentConfig:
@@ -247,8 +302,15 @@ class DeploymentCatalog(CatalogModel):
             raise LLMManagementError("Sanitization is not configured")
         return self.local.get(self.sanitization.deployment, PresidioDeployment)
 
+    def require_sar(self) -> BinaryCascadePipeline:
+        if self.sar is None:
+            raise LLMManagementError("SAR pipeline is not configured")
+        return self.sar
+
 
 @lru_cache(maxsize=1)
 def get_catalog() -> DeploymentCatalog:
-    """Return cached validated configuration without registering resources."""
+    """
+    Return cached validated configuration without registering resources.
+    """
     return DeploymentCatalog.load()

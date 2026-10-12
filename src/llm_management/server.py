@@ -1,25 +1,31 @@
-"""FastAPI entry point: assemble dependencies, install middleware and routers."""
+"""
+FastAPI entry point: assemble dependencies, install middleware and routers.
+"""
+
+from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
 import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from .api import agents, deployments, proxies, foi
+from .api import agents, classifiers, deployments, foi, proxies
 from .api.auth import require_bearer_auth_when_enabled
 from .bootstrap import Application, assemble_application
-from .deployments.errors import DeploymentServiceError
-from .deployments.errors import LLMManagementError
+from .deployments.errors import DeploymentServiceError, LLMManagementError
 from .settings import settings
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Run idle cleanup and release the app's resources on shutdown."""
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """
+    Run idle cleanup and release the app's resources on shutdown.
+    """
     service = app.state.service
     if not settings.auth_tokens:
         logger.warning(
@@ -39,7 +45,7 @@ async def lifespan(app: FastAPI):
         await service.close()
 
 
-async def deployment_error(request: Request, exc: LLMManagementError):
+async def deployment_error(request: Request, exc: Exception) -> JSONResponse:
     logger.error("Deployment lifecycle failed: %s", exc)
     return JSONResponse(
         status_code=503,
@@ -47,12 +53,15 @@ async def deployment_error(request: Request, exc: LLMManagementError):
     )
 
 
-async def service_error(request: Request, exc: DeploymentServiceError):
+async def service_error(request: Request, exc: Exception) -> JSONResponse:
+    assert isinstance(exc, DeploymentServiceError)
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 def create_app(application: Application | None = None) -> FastAPI:
-    """Construct an API around explicit, cold application dependencies."""
+    """
+    Construct an API around explicit, cold application dependencies.
+    """
     application = application if application is not None else assemble_application()
     service = application.deployments
     app = FastAPI(title="LLM Management Proxy", docs_url="/", lifespan=lifespan)
@@ -62,7 +71,9 @@ def create_app(application: Application | None = None) -> FastAPI:
     app.add_exception_handler(DeploymentServiceError, service_error)
 
     @app.middleware("http")
-    async def track_deployment_requests(request: Request, call_next):
+    async def track_deployment_requests(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         with service.track_requests():
             return await call_next(request)
 
@@ -70,12 +81,17 @@ def create_app(application: Application | None = None) -> FastAPI:
 
     @app.get("/health", include_in_schema=False)
     def health() -> dict[str, str]:
-        """Report that the API process is running."""
+        """
+        Report that the API process is running.
+        """
         return {"status": "ok"}
 
     for routes in (deployments, proxies, agents):
         app.include_router(routes.build_router(service))
     app.include_router(foi.build_router(service, application.foi))
+    app.include_router(
+        classifiers.build_router(service, application.sar, application.automatic)
+    )
     return app
 
 
