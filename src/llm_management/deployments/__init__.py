@@ -5,6 +5,7 @@ from .catalog import (
     DeploymentGroupConfig,
     LocalDeploymentConfig,
     ModelCheckpoint,
+    PresidioDeployment,
     get_catalog,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "DeploymentGroupConfig",
     "LocalDeploymentConfig",
     "ModelCheckpoint",
+    "PresidioDeployment",
     "get_catalog",
 ]

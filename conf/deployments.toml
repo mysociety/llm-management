@@ -8,6 +8,15 @@ revision = "eb0436d4be96f113f35b5f891f9cc876a0f0bd6b"
 repo = "mySociety/granite-tiny-foi-topic-grounded-v2-merged"
 revision = "c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79"
 
+[[local.deployment]]
+slug = "presidio"
+loader = "presidio"
+spacy_model = "en_core_web_sm"
+score_threshold = 0.5
+
+[sanitization]
+deployment = "presidio"
+
 [[exoscale.deployment]]
 
 slug = "olmo3_7b"

@@ -4,13 +4,46 @@ Loading a catalog is a pure configuration operation. Assembly establishes runtim
 ownership without loading model weights or creating cloud deployments.
 """
 
-from .deployments.catalog import DeploymentCatalog, get_catalog
+from .deployments.catalog import DeploymentCatalog, LocalDeploymentConfig, get_catalog
 from .deployments.cache import DeploymentCache
 from .deployments.service import DeploymentService
-from .inference.resources import ResourceRegistry
+from .inference.resources import LocalResource, ResourceRegistry
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import TYPE_CHECKING
+from collections.abc import Callable
+
+if TYPE_CHECKING:
+    from .sanitization.presidio import PresidioSanitizer
 from .settings import settings
+
+
+def register_configured_resources(
+    catalog: DeploymentCatalog, registry: ResourceRegistry
+):
+    """Register validated catalog entries as cold factories without owner imports."""
+    from importlib import import_module
+
+    owners = {"presidio": ("sanitization", "configured_presidio")}
+    controllers = {}
+
+    def create(config: "LocalDeploymentConfig"):
+        module_name, factory_name = owners[config.loader]
+        factory = getattr(import_module(f"llm_management.{module_name}"), factory_name)
+        owner = factory(config, catalog=catalog, registry=registry)
+        controllers[config.slug] = owner
+        return owner if isinstance(owner, LocalResource) else owner.resource
+
+    providers = {}
+
+    def provider(slug):
+        registry.get(slug)
+        return controllers[slug]
+
+    for config in catalog.local.deployment:
+        registry.register_factory(config.slug, lambda config=config: create(config))
+        providers[config.slug] = lambda slug=config.slug: provider(slug)
+    return providers
 
 
 @dataclass
@@ -18,6 +51,7 @@ class Application:
     """Explicit runtime dependencies shared by HTTP and direct batch callers."""
 
     deployments: DeploymentService
+    sanitizer: Callable[[], "PresidioSanitizer"]
 
 
 def assemble_application(
@@ -25,13 +59,18 @@ def assemble_application(
 ) -> Application:
     catalog = catalog if catalog is not None else get_catalog()
     registry = registry if registry is not None else ResourceRegistry()
+    providers = register_configured_resources(catalog, registry)
     service = DeploymentService(
         catalog,
         DeploymentCache(),
         registry,
         cpu_idle_seconds=settings.cpu_idle_timeout_minutes * 60,
     )
-    return Application(deployments=service)
+
+    def sanitizer() -> "PresidioSanitizer":
+        return providers[catalog.require_sanitizer().slug]()
+
+    return Application(deployments=service, sanitizer=sanitizer)
 
 
 def assemble_service(catalog=None, registry=None) -> DeploymentService:
