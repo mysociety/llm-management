@@ -6,31 +6,38 @@ https://exoscale.github.io/python-exoscale/index.html
 
 from __future__ import annotations
 
-import json
-from typing import Literal, Optional
+import os
+from collections.abc import Callable
+from typing import Any, Literal, Optional, ParamSpec, TypeVar
 
 import rich
 import typer
-import os
 
-from .models import (
-    DeploymentNotFoundError,
-    ExoscaleConfig,
-    LLMManagementError,
-    get_client,
-)
+from .deployments import DeploymentCatalog
+from .deployments.backends import backend_for
+from .deployments.client import get_client
+from .deployments.errors import DeploymentNotFoundError, LLMManagementError
+from .deployments.listing import print_deployments
+from .templates.cli import app as templates_app
+
+P = ParamSpec("P")
+R = TypeVar("R")
 
 DEFAULT_PORT = os.environ.get("PORT", 5000)
 
 app = typer.Typer(help="Manage Exoscale dedicated inference deployments.")
 
+app.add_typer(templates_app, name="templates")
 
-def handle_errors(func):
-    """Decorator to catch LLMManagementError and exit cleanly."""
+
+def handle_errors(func: Callable[P, R]) -> Callable[P, R]:
+    """
+    Decorator to catch LLMManagementError and exit cleanly.
+    """
     import functools
 
     @functools.wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
             return func(*args, **kwargs)
         except LLMManagementError as e:
@@ -44,100 +51,116 @@ def handle_errors(func):
 @handle_errors
 def create(
     slug: Optional[str] = typer.Argument(
-        None, help="Deployment slug from exoscale.toml"
+        None, help="Deployment slug from deployments.toml"
     ),
     all_: bool = typer.Option(False, "--all", help="Apply to all deployments"),
     refresh_model: bool = typer.Option(
         False, "--refresh-model", help="Delete and re-upload the model before deploying"
     ),
-):
-    """Create deployment(s). Ensures the model exists in the zone first."""
-    config = ExoscaleConfig.load()
-    for cfg in config.resolve(slug, all_):
-        cfg.create_deployment(refresh_model=refresh_model)
+) -> None:
+    """
+    Create deployment(s). Ensures the model exists in the zone first.
+    """
+    config = DeploymentCatalog.load()
+    for cfg in config.exoscale.resolve(slug, all_):
+        backend_for(cfg).create_deployment(refresh_model=refresh_model)
 
 
 @app.command()
 @handle_errors
 def destroy(
     slug: Optional[str] = typer.Argument(
-        None, help="Deployment slug from exoscale.toml"
+        None, help="Deployment slug from deployments.toml"
     ),
     all_: bool = typer.Option(False, "--all", help="Apply to all deployments"),
-):
-    """Delete deployment(s)."""
-    config = ExoscaleConfig.load()
-    for cfg in config.resolve(slug, all_):
+) -> None:
+    """
+    Delete deployment(s).
+    """
+    config = DeploymentCatalog.load()
+    for cfg in config.exoscale.resolve(slug, all_):
         if all_:
             try:
-                cfg.delete_deployment()
+                backend_for(cfg).delete_deployment()
             except DeploymentNotFoundError:
                 rich.print(f"Skipping {cfg.slug} (no deployment found).")
                 continue
         else:
-            cfg.delete_deployment()
+            backend_for(cfg).delete_deployment()
 
 
 @app.command("pause")
 @handle_errors
 def pause(
     slug: Optional[str] = typer.Argument(
-        None, help="Deployment slug from exoscale.toml"
+        None, help="Deployment slug from deployments.toml"
     ),
     all_: bool = typer.Option(False, "--all", help="Apply to all deployments"),
-):
-    """Scale deployment(s) to zero replicas."""
-    config = ExoscaleConfig.load()
-    for cfg in config.resolve(slug, all_):
-        cfg.scale_to_zero()
+) -> None:
+    """
+    Scale deployment(s) to zero replicas.
+    """
+    config = DeploymentCatalog.load()
+    for cfg in config.exoscale.resolve(slug, all_):
+        backend_for(cfg).scale_to_zero()
 
 
 @app.command()
 @handle_errors
 def resume(
-    slug: str = typer.Argument(..., help="Deployment slug from exoscale.toml"),
-):
-    """Resume a deployment from zero replicas."""
-    config = ExoscaleConfig.load()
-    config.get(slug).resume_from_zero()
+    slug: str = typer.Argument(..., help="Deployment slug from deployments.toml"),
+) -> None:
+    """
+    Resume a deployment from zero replicas.
+    """
+    config = DeploymentCatalog.load()
+    backend_for(config.get(slug)).resume_from_zero()
 
 
 @app.command("create-or-resume")
 @handle_errors
 def create_or_resume(
-    slug: str = typer.Argument(..., help="Deployment slug from exoscale.toml"),
-):
-    """Create or resume a deployment."""
-    config = ExoscaleConfig.load()
-    config.get(slug).create_or_resume()
+    slug: str = typer.Argument(..., help="Deployment slug from deployments.toml"),
+) -> None:
+    """
+    Create or resume a deployment.
+    """
+    config = DeploymentCatalog.load()
+    backend_for(config.get(slug)).create_or_resume()
 
 
 @app.command()
 @handle_errors
 def connect(
-    slug: str = typer.Argument(..., help="Deployment slug from exoscale.toml"),
-):
-    """Show connection URL and API key for a deployment."""
-    config = ExoscaleConfig.load()
-    info = config.get(slug).connection_info()
-    json_info = json.dumps(info, indent=2)
+    slug: str = typer.Argument(..., help="Deployment slug from deployments.toml"),
+) -> None:
+    """
+    Show connection URL and API key for a deployment.
+    """
+    config = DeploymentCatalog.load()
+    info = backend_for(config.get(slug)).connection_info()
+    json_info = info.model_dump_json(indent=2, exclude_unset=True)
     rich.print(f"{json_info}")
 
 
 @app.command("list")
 @handle_errors
-def list_deployments():
-    """List all currently deployed Exoscale models across configured zones."""
-    config = ExoscaleConfig.load()
-    config.list_deployments()
+def list_deployments() -> None:
+    """
+    List all currently deployed Exoscale models across configured zones.
+    """
+    config = DeploymentCatalog.load()
+    print_deployments(config.exoscale)
 
 
 @app.command("list-models")
 @handle_errors
 def list_models(
     zone: str = typer.Argument(..., help="Exoscale zone (e.g. at-vie-2)"),
-):
-    """List all models in a zone."""
+) -> None:
+    """
+    List all models in a zone.
+    """
     client = get_client(zone)
     models = client.list_models().get("models", [])
     if not models:
@@ -153,8 +176,10 @@ def clear_models(
     zone: str = typer.Argument(..., help="Exoscale zone (e.g. at-vie-2)"),
     identifier: Optional[str] = typer.Argument(None, help="Model ID or name to delete"),
     all_: bool = typer.Option(False, "--all", help="Delete all models in the zone"),
-):
-    """Remove one model by ID or name, or all models from a zone."""
+) -> None:
+    """
+    Remove one model by ID or name, or all models from a zone.
+    """
     if not identifier and not all_:
         rich.print("Error: Provide a model ID/name or use --all.")
         raise typer.Exit(1)
@@ -162,7 +187,9 @@ def clear_models(
     deployments = client.list_deployments().get("deployments", [])
 
     def model_in_use(model_id: str, model_name: str) -> list[str]:
-        """Return names of deployments using this model."""
+        """
+        Return names of deployments using this model.
+        """
         using = []
         for d in deployments:
             dep_model = d.get("model", {})
@@ -170,7 +197,7 @@ def clear_models(
                 using.append(d.get("name", "unnamed"))
         return using
 
-    def find_model_by_name(name: str) -> dict | None:
+    def find_model_by_name(name: str) -> dict[str, Any] | None:
         models = client.list_models().get("models", [])
         for m in models:
             if m.get("name") == name:
@@ -226,29 +253,24 @@ def clear_models(
 @app.command()
 @handle_errors
 def logs(
-    slug: str = typer.Argument(..., help="Deployment slug from exoscale.toml"),
+    slug: str = typer.Argument(..., help="Deployment slug from deployments.toml"),
     tail: int = typer.Option(100, "--tail", "-n", help="Number of log lines to show"),
-):
-    """Show log tail for a deployment."""
-    config = ExoscaleConfig.load()
+) -> None:
+    """
+    Show log tail for a deployment.
+    """
+    config = DeploymentCatalog.load()
     cfg = config.get(slug)
-    client = cfg._client()
-    deployment = cfg._find_deployment(client)
-    if deployment is None:
+    backend = backend_for(cfg)
+    try:
+        output = backend.logs(tail)
+    except DeploymentNotFoundError:
         rich.print(f"Deployment {slug} not found.")
         raise typer.Exit(1)
-    deploy_id = deployment["id"]
-    state = deployment.get("state", "unknown")
-    state_details = deployment.get("state-details", "")
-    rich.print(f"Deployment {slug} (state: {state})")
-    if state_details:
-        rich.print(f"Details: {state_details}")
-    rich.print("")
-    log_data = client.get_deployment_logs(id=deploy_id, tail=tail)
-    for entry in log_data.get("logs", []):
-        time = entry.get("time", "")
-        message = entry.get("message", "")
-        rich.print(f"{time}  {message}")
+    if cfg.backend == "exoscale_compute":
+        typer.echo(output)
+    else:
+        rich.print(output)
 
 
 @app.command("llm-test")
@@ -257,19 +279,21 @@ def llm_test(
     mode: Literal["basic", "instruct"] = typer.Argument(
         ..., help="Test mode: 'basic' or 'instruct'"
     ),
-    slug: str = typer.Argument(..., help="Deployment slug from exoscale.toml"),
-):
-    """Test a deployment by asking the LLM for the capital of France."""
+    slug: str = typer.Argument(..., help="Deployment slug from deployments.toml"),
+) -> None:
+    """
+    Test a deployment by asking the LLM for the capital of France.
+    """
     if mode not in ("basic", "instruct"):
         rich.print(f"Error: mode must be 'basic' or 'instruct', got '{mode}'.")
         raise typer.Exit(1)
-    config = ExoscaleConfig.load()
+    config = DeploymentCatalog.load()
     cfg = config.get(slug)
     rich.print(f"Testing deployment {slug} ({mode})...")
     if mode == "basic":
-        cfg.test_basic_deployment()
+        backend_for(cfg).test_basic_deployment()
     else:
-        cfg.test_instruct_deployment()
+        backend_for(cfg).test_instruct_deployment()
     rich.print(f"[green]Test passed:[/green] deployment {slug} is working correctly.")
 
 
@@ -280,8 +304,10 @@ def serve(
     reload: bool = typer.Option(
         False, "--reload", help="Enable auto-reload for development"
     ),
-):
-    """Start the FastAPI proxy server."""
+) -> None:
+    """
+    Start the FastAPI proxy server.
+    """
     import uvicorn
 
     uvicorn.run(
