@@ -71,3 +71,11 @@ The `foi_response_pipeline` warm-up group includes `presidio`,
 `foi_status_tokenizer`, and `foi_status`. Its tokenizer uses the same pinned
 checkpoint reference as the remote deployment; `[foi.response]` configures the
 total context and reserved output budget.
+
+### Paid integration tests
+
+Run `poetry run pytest -m external -v` to exercise live deployments. Toast tests
+are temporarily disabled with a module-level skip in `tests/test_toast.py`, even
+when selected explicitly. Remove that skip only when Toast testing is needed again.
+The Clef Compute test requires a unique `SERVER_ROLE=systemone_live_<run>` and
+a persistent `COMPUTE_STATE_DIR`; it deletes its owned VM and access resources.
