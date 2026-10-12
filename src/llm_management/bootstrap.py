@@ -15,6 +15,7 @@ from collections.abc import Callable
 
 if TYPE_CHECKING:
     from .sanitization.presidio import PresidioSanitizer
+    from .foi.backends import FOIResources
 from .settings import settings
 
 
@@ -24,7 +25,12 @@ def register_configured_resources(
     """Register validated catalog entries as cold factories without owner imports."""
     from importlib import import_module
 
-    owners = {"presidio": ("sanitization", "configured_presidio")}
+    owners = {
+        "modernbert_classifier": ("foi.backends", "question_classifier"),
+        "modernbert_head": ("foi.backends", "question_classification_head"),
+        "topic_tokenizer": ("foi.topic_classification", "tokenizer_resource"),
+        "presidio": ("sanitization", "configured_presidio"),
+    }
     controllers = {}
 
     def create(config: "LocalDeploymentConfig"):
@@ -52,11 +58,14 @@ class Application:
 
     deployments: DeploymentService
     sanitizer: Callable[[], "PresidioSanitizer"]
+    foi: "FOIResources"
 
 
 def assemble_application(
     catalog: DeploymentCatalog | None = None, registry: ResourceRegistry | None = None
 ) -> Application:
+    from .foi.backends import FOIResources
+
     catalog = catalog if catalog is not None else get_catalog()
     registry = registry if registry is not None else ResourceRegistry()
     providers = register_configured_resources(catalog, registry)
@@ -70,7 +79,14 @@ def assemble_application(
     def sanitizer() -> "PresidioSanitizer":
         return providers[catalog.require_sanitizer().slug]()
 
-    return Application(deployments=service, sanitizer=sanitizer)
+    foi = FOIResources(
+        catalog=catalog,
+        sanitizer=sanitizer,
+        classifier=lambda: providers[catalog.require_foi().classifier](),
+        head=lambda: providers[catalog.require_foi().head](),
+        tokenizer=lambda: providers[catalog.require_foi().tokenizer](),
+    )
+    return Application(deployments=service, sanitizer=sanitizer, foi=foi)
 
 
 def assemble_service(catalog=None, registry=None) -> DeploymentService:

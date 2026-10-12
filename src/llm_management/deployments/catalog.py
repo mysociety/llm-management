@@ -28,13 +28,33 @@ class LocalModelDeployment(LocalDeployment):
     model_ref: str = Field(min_length=1)
 
 
+class QuestionSliceDeployment(LocalModelDeployment):
+    loader: Literal["modernbert_classifier"]
+    max_tokens: int = Field(gt=0)
+
+
+class QuestionSliceHeadDeployment(LocalModelDeployment):
+    loader: Literal["modernbert_head"]
+
+
+class TopicTokenizerDeployment(LocalModelDeployment):
+    loader: Literal["topic_tokenizer"]
+    max_tokens: int = Field(gt=0)
+
+
 class PresidioDeployment(LocalDeployment):
     loader: Literal["presidio"]
     spacy_model: str = Field(min_length=1)
     score_threshold: float = Field(ge=0, le=1, allow_inf_nan=False)
 
 
-LocalDeploymentConfig = Annotated[PresidioDeployment, Field(discriminator="loader")]
+LocalDeploymentConfig = Annotated[
+    PresidioDeployment
+    | QuestionSliceDeployment
+    | QuestionSliceHeadDeployment
+    | TopicTokenizerDeployment,
+    Field(discriminator="loader"),
+]
 L = TypeVar("L", bound=LocalDeployment)
 
 
@@ -52,6 +72,38 @@ class LocalDeployments(CatalogModel):
         raise LLMManagementError(f"No local deployment found with slug {slug!r}")
 
 
+class TopicBudget(CatalogModel):
+    output_limit: int = Field(gt=0)
+    min_output_tokens: int = Field(gt=0)
+    output_overhead: int = Field(ge=0)
+    output_tokens_per_question: int = Field(gt=0)
+
+    @property
+    def max_questions(self) -> int:
+        return (
+            self.output_limit - self.output_overhead
+        ) // self.output_tokens_per_question
+
+    @model_validator(mode="after")
+    def validate_budget(self):
+        if self.min_output_tokens > self.output_limit:
+            raise ValueError("Minimum topic output budget exceeds the output limit")
+        if self.max_questions < 1:
+            raise ValueError(
+                "Topic output budget must accommodate at least one question"
+            )
+        return self
+
+
+class FOIPipeline(CatalogModel):
+    classifier: str
+    head: str
+    tokenizer: str
+    extraction_deployment: str
+    topic_deployment: str
+    topic: TopicBudget
+
+
 class DeploymentGroupConfig(CatalogModel):
     slug: str = Field(min_length=1)
     deployments: list[str] = Field(min_length=1)
@@ -66,6 +118,7 @@ class DeploymentCatalog(CatalogModel):
     exoscale: ExoscaleDeployments = Field(default_factory=ExoscaleDeployments)
     local: LocalDeployments = Field(default_factory=LocalDeployments)
     deployment_group: list[DeploymentGroupConfig] = Field(default_factory=list)
+    foi: FOIPipeline | None = None
     sanitization: SanitizationConfig | None = None
 
     @model_validator(mode="before")
@@ -136,6 +189,25 @@ class DeploymentCatalog(CatalogModel):
                     f"Unknown resources in group {group.slug}: {sorted(unknown)}"
                 )
         try:
+            if self.foi:
+                classifier = self.local.get(
+                    self.foi.classifier, QuestionSliceDeployment
+                )
+                head = self.local.get(self.foi.head, QuestionSliceHeadDeployment)
+                tokenizer = self.local.get(self.foi.tokenizer, TopicTokenizerDeployment)
+                extraction = self.get(self.foi.extraction_deployment)
+                topic = self.get(self.foi.topic_deployment)
+                if (
+                    classifier.model_ref != head.model_ref
+                    or getattr(extraction, "model_ref", None) != classifier.model_ref
+                ):
+                    raise ValueError(
+                        "QuestionSlice classifier, head and remote deployment must share a checkpoint"
+                    )
+                if getattr(topic, "model_ref", None) != tokenizer.model_ref:
+                    raise ValueError(
+                        "Topic deployment and tokenizer must share a checkpoint"
+                    )
             if self.sanitization:
                 self.local.get(self.sanitization.deployment, PresidioDeployment)
         except LLMManagementError as exc:
@@ -164,6 +236,11 @@ class DeploymentCatalog(CatalogModel):
             if group.slug == slug:
                 return group
         raise LLMManagementError(f"No deployment group found with slug {slug!r}")
+
+    def require_foi(self) -> FOIPipeline:
+        if self.foi is None:
+            raise LLMManagementError("FOI pipeline is not configured")
+        return self.foi
 
     def require_sanitizer(self) -> PresidioDeployment:
         if self.sanitization is None:

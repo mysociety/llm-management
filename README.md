@@ -30,3 +30,7 @@ Run `poetry run pytest -m 'not external' -q`, `poetry run ruff check .` and
 
 Local CPU inference and Presidio sanitization use leased, lazy resources. See
 [sanitization and resources](docs/sanitization.md).
+
+FOI processing uses sanitized QuestionSlice extraction and Granite topics.
+Response-analysis contracts are implemented while model inference remains pending.
+See [the FOI guide](docs/foi.md) for contracts, provenance and batch examples.
