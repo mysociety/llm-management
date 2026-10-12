@@ -16,8 +16,8 @@ from typing import Any, NamedTuple
 from pydantic import BaseModel, ConfigDict
 
 from ..deployments import (
-    QuestionSliceDeployment,
     QuestionSliceHeadDeployment,
+    SequenceClassifierDeployment,
     get_catalog,
 )
 from ..deployments.catalog import DeploymentCatalog
@@ -204,7 +204,7 @@ def create_question_classification_head(
 
 
 def create_question_classifier(
-    config: QuestionSliceDeployment,
+    config: SequenceClassifierDeployment,
     *,
     catalog: DeploymentCatalog,
     registry: ResourceRegistry,
@@ -263,7 +263,7 @@ def question_classification_head(
 
 
 def question_classifier(
-    config: QuestionSliceDeployment | None = None,
+    config: SequenceClassifierDeployment | None = None,
     *,
     catalog: DeploymentCatalog | None = None,
     registry: ResourceRegistry | None = None,
