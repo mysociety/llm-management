@@ -14,3 +14,11 @@ local.properties
 __pycache__
 dist
 .env
+.state/
+
+# Local commit planning notes
+/COMMIT_PLAN.md
+/commit_plan.md
+
+# Local refactoring execution notes
+/refactoring_plan.md

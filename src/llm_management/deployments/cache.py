@@ -12,25 +12,10 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from .types import DeploymentState
 
 if TYPE_CHECKING:
-    from .models import ExoscaleDeploymentConfig
-
-
-class DeploymentState(BaseModel):
-    """
-    Cached state for a single deployment, including connection details
-    and the timestamp of the last forwarded request.
-    """
-
-    slug: str
-    exists: bool = False
-    replicas: int = 0
-    deployment_url: str = ""
-    api_key: str = ""
-    last_request_time: float = 0.0
-    last_refreshed: float = 0.0
+    from .backends import DeploymentBackend
 
 
 class DeploymentCache:
@@ -40,7 +25,7 @@ class DeploymentCache:
     on the next access.
     """
 
-    def __init__(self, cache_ttl_seconds: float = 60.0):
+    def __init__(self, cache_ttl_seconds: float = 60.0) -> None:
         self._lock = threading.Lock()
         self._deployments: dict[str, DeploymentState] = {}
         self._ensure_locks: dict[str, asyncio.Lock] = {}
@@ -80,6 +65,21 @@ class DeploymentCache:
             if slug in self._deployments:
                 self._deployments[slug].last_request_time = time.time()
 
+    def cooldown(self, slug: str, timeout_seconds: float) -> float:
+        """
+        Backdate activity to leave at most 60 seconds on the idle timer.
+        """
+        with self._lock:
+            state = self._deployments[slug]
+            now = time.time()
+            latest = now - timeout_seconds + 60
+            state.last_request_time = (
+                min(state.last_request_time, latest)
+                if state.last_request_time > 0
+                else latest
+            )
+            return max(0.0, timeout_seconds - (now - state.last_request_time))
+
     def is_stale(self, slug: str) -> bool:
         """
         Return True if the entry is missing or older than the cache TTL.
@@ -90,6 +90,18 @@ class DeploymentCache:
                 return True
             return (time.time() - entry.last_refreshed) > self.cache_ttl_seconds
 
+    def begin_request(self, slug: str) -> None:
+        with self._lock:
+            self._deployments[slug].requests_in_flight += 1
+            self._deployments[slug].last_request_time = time.time()
+
+    def end_request(self, slug: str) -> None:
+        with self._lock:
+            state = self._deployments.get(slug)
+            if state:
+                state.requests_in_flight = max(0, state.requests_in_flight - 1)
+                state.last_request_time = time.time()
+
     def all_active(self) -> list[DeploymentState]:
         """
         Return all deployments that have received at least one request
@@ -99,7 +111,8 @@ class DeploymentCache:
             return [
                 ds
                 for ds in self._deployments.values()
-                if ds.last_request_time > 0 and ds.replicas > 0
+                if ds.last_request_time > 0
+                and (ds.replicas > 0 or ds.backend == "exoscale_compute" and ds.exists)
             ]
 
     def remove(self, slug: str) -> None:
@@ -109,37 +122,37 @@ class DeploymentCache:
         with self._lock:
             self._deployments.pop(slug, None)
 
-    def refresh(self, cfg: ExoscaleDeploymentConfig) -> DeploymentState:
+    def refresh(self, backend: DeploymentBackend) -> DeploymentState:
         """
         Query the Exoscale API for the current state of a deployment and
         update the cache entry. Preserves the existing last_request_time
         so the idle-scaler timer is not reset.
         """
-        status = cfg.query_status()
+        cfg = backend.config
+        status = backend.query_status()
         with self._lock:
             existing = self._deployments.get(cfg.slug)
             last_request_time = existing.last_request_time if existing else 0.0
-        state = DeploymentState(
-            slug=cfg.slug,
-            exists=status.exists,
-            replicas=status.replicas,
-            deployment_url=status.deployment_url,
-            api_key=status.api_key,
-            last_request_time=last_request_time,
-            last_refreshed=time.time(),
-        )
-        self.set(state)
-        return state
+            requests_in_flight = existing.requests_in_flight if existing else 0
+            state = DeploymentState(
+                slug=cfg.slug,
+                backend=getattr(cfg, "backend", "exoscale_managed"),
+                exists=status.exists,
+                replicas=status.replicas,
+                deployment_url=status.deployment_url,
+                api_key=status.api_key,
+                last_request_time=last_request_time,
+                last_refreshed=time.time(),
+                requests_in_flight=requests_in_flight,
+            )
+            self._deployments[cfg.slug] = state
+            return state
 
-    def ensure(self, cfg: ExoscaleDeploymentConfig) -> DeploymentState:
+    def ensure(self, backend: DeploymentBackend) -> DeploymentState:
         """
         Return the cached deployment state, refreshing from the Exoscale
         API if the entry is missing or has exceeded its TTL.
         """
-        if self.is_stale(cfg.slug):
-            return self.refresh(cfg)
-        return self.get(cfg.slug)  # type: ignore[return-value]
-
-
-# Singleton instance
-cache = DeploymentCache()
+        if self.is_stale(backend.config.slug):
+            return self.refresh(backend)
+        return self.get(backend.config.slug)  # type: ignore[return-value]

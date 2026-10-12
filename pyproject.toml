@@ -8,7 +8,8 @@ license = "MIT"
 homepage = "https://github.com/mysociety/llm-management"
 repository = "https://github.com/mysociety/llm-management"
 include = [
-    "LICENSE.md",
+    { path = "LICENSE.md", format = ["sdist"] },
+    { path = "src/llm_management/templates/bootstrap.sh", format = ["sdist", "wheel"] },
 ]
 
 [tool.poetry_bumpversion.file."src/llm_management/__init__.py"]
@@ -17,15 +18,32 @@ include = [
 llm-management = "llm_management.__main__:app"
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.15"
-pydantic-ai = "^1.77.0"
+python = ">=3.11,<3.15"
+pydantic-ai-slim = { version = "^2.54.0", extras = ["openai"] }
 typer = "^0.24.1"
 pydantic-store = "^0.1.0"
 exoscale = "^0.16.3"
 pydantic-settings = "^2.13.1"
 fastapi = "^0.135.3"
 uvicorn = "^0.44.0"
+# Starlette's TestClient still uses httpx internally.
 httpx = "^0.28.1"
+# Application transports and the native Pydantic AI providers.
+httpx2 = "^2.13.1"
+pysbd = "^0.3.4"
+presidio-analyzer = "2.2.364"
+# Ship the pinned local NLP model; request handling never downloads it.
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+# Both backends use these: full CPU inference or the local head for Exoscale.
+transformers = "4.57.6"
+torch = { version = "2.14.0", source = "pytorch-cpu" }
+huggingface-hub = ">=0.34,<1"
+safetensors = ">=0.4.3,<1"
+
+[[tool.poetry.source]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.1.2"
@@ -47,3 +65,12 @@ markers = [
 
 [tool.pyright]
 reportAttributeAccessIssue = "none"
+
+
+[tool.ruff.lint]
+extend-select = ["I", "ANN", "UP037", "FA102"]
+# Cloud SDK payloads and heterogeneous resource guards need dynamic value types.
+ignore = ["ANN401"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ANN"]

@@ -7,14 +7,15 @@ via pydantic-ai, using the olmo3_7b deployment.
 
 from collections.abc import Iterator
 
-import httpx
+import httpx2
 import pytest
-from llm_management.server import app
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from starlette.testclient import TestClient
+
+from llm_management.server import app
 
 DEPLOYMENT = "olmo3_7b"
 BASE_URL = "http://test"
@@ -40,7 +41,7 @@ def test_capital_city_agent(client: TestClient):
     assert data["city"].lower() == "paris", f"Expected 'Paris', got '{data['city']}'"
 
 
-def test_proxy_with_pydantic_ai():
+def test_proxy_with_pydantic_ai(client: TestClient):
     """
     Use pydantic-ai pointed at the proxy's forwarding endpoint to run a
     structured capital-city query, the same way a real client would.
@@ -52,8 +53,8 @@ def test_proxy_with_pydantic_ai():
         country: str
         city: str
 
-    transport = httpx.ASGITransport(app=app)
-    async_client = httpx.AsyncClient(transport=transport, base_url=BASE_URL)
+    transport = httpx2.ASGITransport(app=app)
+    async_client = httpx2.AsyncClient(transport=transport, base_url=BASE_URL)
 
     model = OpenAIChatModel(
         "allenai/Olmo-3-7B-Instruct",
