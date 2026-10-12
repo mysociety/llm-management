@@ -66,3 +66,8 @@ Call `POST /deployment-groups/foi_pipeline/ensure` with the usual authentication
 A known group returns HTTP 200 with `slug`, overall `success`, and an ordered `deployments` list. Each member has `slug`, `success`, `replicas` (null for local resources or on failure) and `error` (null on success). Inspect the success flags: a partial or complete startup failure is reported in the body. Unknown groups return 404. Successful members are not rolled back when another fails; retrying the group reuses loaded local resources and running deployments. Idle scaling and shutdown cleanup follow each resource's lifecycle, and warm-up does not keep a group running indefinitely.
 
 Groups must be nonempty, have unique names, and reference local or Exoscale deployment slugs declared in the catalog without repeated members. Local and remote names must not collide. Catalog validation checks these references before registering cold factories, without importing resource owners or loading models. Adding a local deployment with a supported loader makes it available to individual and group warm-up without changing the HTTP handlers.
+
+The `foi_response_pipeline` warm-up group includes `presidio`,
+`foi_status_tokenizer`, and `foi_status`. Its tokenizer uses the same pinned
+checkpoint reference as the remote deployment; `[foi.response]` configures the
+total context and reserved output budget.

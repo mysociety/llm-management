@@ -1,0 +1,9 @@
+{
+  "repo": "mySociety/foi-status-3b-2026-10-12-1",
+  "revision": "fde4ea32e68755ef6c08d2bd73cb804c3890b2df",
+  "files": {
+    "SYSTEM-PROMPT.txt": "9ddffc18c8fe3d5d88fb3d3b5a07387d7bdfe363cb3e7fd01f0a40263e86a7f5",
+    "TASK-INSTRUCTION.txt": "540ed4f08e7320284396f4982cac2beb22df4bc5b1d1a1f4918961a5c17422c0",
+    "OUTPUT-SCHEMA.json": "0b73b20340cface4bc00fb0ac697a72e7cd30c75efcb9da8867cfb9eab9806dc"
+  }
+}

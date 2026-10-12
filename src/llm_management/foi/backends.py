@@ -302,6 +302,7 @@ class FOIResources(BaseModel):
     classifier: Callable[[], LocalSequenceClassifier]
     head: Callable[[], ModernBertClassificationHead]
     tokenizer: Callable[[], LocalResource[Any]]
+    response_tokenizer: Callable[[], LocalResource[Any]] | None = None
 
 
 class ClassificationRows(NamedTuple):

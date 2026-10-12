@@ -38,3 +38,46 @@ def test_invalid_model_limits_rejected(overrides):
     data["foi"]["topic"].update(overrides)
     with pytest.raises(ValidationError):
         DeploymentCatalog.model_validate(data)
+
+
+def test_response_deployment_reference_must_resolve():
+    data = DeploymentCatalog.load().model_dump()
+    data["foi"]["response_deployment"] = "missing-status-model"
+
+    with pytest.raises(ValidationError):
+        DeploymentCatalog.model_validate(data)
+
+
+def test_response_deployment_requires_openai_protocol():
+    data = DeploymentCatalog.load().model_dump()
+    data["foi"]["response_deployment"] = "clef"
+
+    with pytest.raises(ValidationError, match="requires an OpenAI deployment"):
+        DeploymentCatalog.model_validate(data)
+
+
+def test_existing_catalogs_can_omit_response_deployment():
+    data = DeploymentCatalog.load().model_dump()
+    data["foi"].pop("response_deployment")
+    data["foi"].pop("response_tokenizer")
+
+    configured = DeploymentCatalog.model_validate(data)
+
+    assert configured.require_foi().response_deployment is None
+
+
+@pytest.mark.parametrize("change", ["missing_tokenizer", "checkpoint", "budget"])
+def test_status_configuration_rejects_incompatible_resources(change):
+    data = DeploymentCatalog.load().model_dump()
+    if change == "missing_tokenizer":
+        data["foi"]["response_tokenizer"] = None
+    elif change == "checkpoint":
+        for resource in data["local"]["deployment"]:
+            if resource["slug"] == "foi_status_tokenizer":
+                resource["model_ref"] = "foi_topic"
+    else:
+        data["foi"]["response"]["output_tokens"] = data["foi"]["response"][
+            "context_tokens"
+        ]
+    with pytest.raises(ValidationError):
+        DeploymentCatalog.model_validate(data)

@@ -54,6 +54,14 @@ class TopicTokenizerDeployment(LocalModelDeployment):
     max_tokens: int = Field(gt=0)
 
 
+class ResponseTokenizerDeployment(LocalModelDeployment):
+    """
+    Pinned tokenizer for the trained FOI status chat template.
+    """
+
+    loader: Literal["response_tokenizer"]
+
+
 class SARLogisticDeployment(LocalModelDeployment):
     """Artifact configuration for the SAR-specific logistic loader."""
 
@@ -87,6 +95,7 @@ LocalDeploymentConfig = Annotated[
     SequenceClassifierDeployment
     | QuestionSliceHeadDeployment
     | TopicTokenizerDeployment
+    | ResponseTokenizerDeployment
     | SARLogisticDeployment
     | SARClassifierDeployment
     | AutoLogisticDeployment
@@ -134,12 +143,36 @@ class TopicBudget(CatalogModel):
         return self
 
 
+class ResponseBudget(CatalogModel):
+    """
+    Total context and reserved generation budget for FOI status inference.
+    """
+
+    context_tokens: int = Field(default=8192, gt=0)
+    output_tokens: int = Field(default=2048, gt=0)
+
+    @model_validator(mode="after")
+    def validate_budget(self) -> Self:
+        """
+        Leave space for a prompt while reserving the complete output allowance.
+        """
+        if self.output_tokens >= self.context_tokens:
+            raise ValueError("Response output budget must leave room for the prompt")
+        return self
+
+
 class FOIPipeline(CatalogModel):
     classifier: str
     head: str
     tokenizer: str
     extraction_deployment: str
     topic_deployment: str
+    response_deployment: str | None = Field(
+        default=None,
+        description="Remote FOI response/status checkpoint paired with its local tokenizer.",
+    )
+    response_tokenizer: str | None = None
+    response: ResponseBudget = Field(default_factory=ResponseBudget)
     topic: TopicBudget
 
 
@@ -246,6 +279,29 @@ class DeploymentCatalog(CatalogModel):
                 tokenizer = self.local.get(self.foi.tokenizer, TopicTokenizerDeployment)
                 extraction = self.get(self.foi.extraction_deployment)
                 topic = self.get(self.foi.topic_deployment)
+                if (self.foi.response_deployment is None) != (
+                    self.foi.response_tokenizer is None
+                ):
+                    raise ValueError(
+                        "FOI response deployment and tokenizer must be configured together"
+                    )
+                if self.foi.response_deployment is not None:
+                    response = self.get(self.foi.response_deployment)
+                    if getattr(response, "protocol", "openai") != "openai":
+                        raise ValueError(
+                            "FOI response analysis requires an OpenAI deployment"
+                        )
+                    assert self.foi.response_tokenizer is not None
+                    response_tokenizer = self.local.get(
+                        self.foi.response_tokenizer, ResponseTokenizerDeployment
+                    )
+                    if (
+                        getattr(response, "model_ref", None)
+                        != response_tokenizer.model_ref
+                    ):
+                        raise ValueError(
+                            "Response deployment and tokenizer must share a checkpoint"
+                        )
                 if (
                     classifier.model_ref != head.model_ref
                     or getattr(extraction, "model_ref", None) != classifier.model_ref
