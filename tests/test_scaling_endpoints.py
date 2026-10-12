@@ -1,8 +1,11 @@
 """Deployment scaling contracts without contacting Exoscale."""
 
+from __future__ import annotations
+
 import asyncio
 import time
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -27,24 +30,35 @@ def deployment(monkeypatch):
         replicas=2,
         zone="test-zone",
     )
-    cloud = {"deployment": None}
+    cloud: dict[str, dict[str, Any] | None] = {"deployment": None}
     client = Mock()
     client.list_deployments.side_effect = lambda: {
         "deployments": [cloud["deployment"]] if cloud["deployment"] else []
     }
 
-    def create(**kwargs):
+    def create(**kwargs: Any) -> dict[str, str]:
+        """
+        Retain the heterogeneous SDK creation payload as simulated cloud state.
+        """
         cloud["deployment"] = {"id": "test-id", **kwargs}
         return {"id": "operation"}
 
-    def scale(**kwargs):
-        cloud["deployment"]["replicas"] = kwargs["replicas"]
+    def scale(**kwargs: Any) -> dict[str, str]:
+        """
+        Update the simulated existing deployment's replica count.
+        """
+        deployed = cloud["deployment"]
+        assert deployed is not None
+        deployed["replicas"] = kwargs["replicas"]
         return {"id": "operation"}
 
     client.create_deployment.side_effect = create
     client.scale_deployment.side_effect = scale
     client.wait.return_value = {}
-    client.reveal_deployment_api_key.return_value = {"api-key": ""}
+    client.reveal_deployment_api_key.side_effect = AssertionError(
+        "Deployment credentials must not be queried"
+    )
+    monkeypatch.setattr(server.settings, "exoscale_inference_api_key", "test-secret")
     monkeypatch.setattr(ManagedDeployment, "client", lambda self: client)
     monkeypatch.setattr(ManagedDeployment, "ensure_model", lambda *a, **kw: None)
     monkeypatch.setattr(server.settings, "server_role", "")
@@ -201,9 +215,9 @@ def test_idle_scaler_observes_cooldown(deployment, monkeypatch, elapsed, stopped
     assert cache.get("test").replicas == (0 if stopped else 2)
 
 
-def test_managed_connection_uses_documented_sdk_response_keys(deployment):
+def test_managed_connection_uses_configured_inference_key(deployment):
     """
-    Preserve the endpoint and credentials returned by Exoscale's managed API.
+    Preserve the cloud endpoint and attach the configured key without revelation.
     """
     _, cfg, cloud, client, _ = deployment
     cloud["deployment"] = {
@@ -212,7 +226,6 @@ def test_managed_connection_uses_documented_sdk_response_keys(deployment):
         "replicas": 1,
         "deployment-url": "https://inference.example/v1/",
     }
-    client.reveal_deployment_api_key.return_value = {"api-key": "test-secret"}
     backend = ManagedDeployment(cfg)
 
     connection = backend.connection_info()
@@ -221,38 +234,23 @@ def test_managed_connection_uses_documented_sdk_response_keys(deployment):
     assert connection.url == status.deployment_url == "https://inference.example/v1/"
     assert connection.api_key == status.api_key == "test-secret"
     assert status.exists and status.replicas == 1
+    client.reveal_deployment_api_key.assert_not_called()
 
 
-def test_managed_credential_failure_logs_safe_diagnostics(deployment, caplog):
+def test_missing_inference_key_keeps_status_readable(deployment, monkeypatch):
     """
-    Keep status readable while recording a failed credential operation safely.
+    Report cloud status without a key and reject inference connection construction.
     """
+    from llm_management.deployments.errors import LLMManagementError
+
     _, cfg, cloud, client, _ = deployment
     cloud["deployment"] = {"id": "test-id", "name": cfg.deployment_name, "replicas": 1}
-    client.reveal_deployment_api_key.side_effect = RuntimeError("private details")
-
-    status = ManagedDeployment(cfg).query_status()
-
-    assert status.exists and status.api_key == ""
-    assert "credential revelation failed" in caplog.text
-    assert "RuntimeError" in caplog.text
-    assert "private details" not in caplog.text
-
-
-def test_configured_inference_key_bypasses_legacy_revelation(deployment, monkeypatch):
-    """
-    Use the zone-scoped AI credential without calling the legacy reveal endpoint.
-    """
-    _, cfg, cloud, client, _ = deployment
-    cloud["deployment"] = {
-        "id": "test-id",
-        "name": cfg.deployment_name,
-        "replicas": 1,
-        "deployment-url": "https://inference.example/v1/",
-    }
-    monkeypatch.setattr(server.settings, "exoscale_inference_api_key", "ai-secret")
+    monkeypatch.setattr(server.settings, "exoscale_inference_api_key", "")
     backend = ManagedDeployment(cfg)
 
-    assert backend.connection_info().api_key == "ai-secret"
-    assert backend.query_status().api_key == "ai-secret"
+    status = backend.query_status()
+
+    assert status.exists and status.api_key == ""
+    with pytest.raises(LLMManagementError, match="EXOSCALE_INFERENCE_API_KEY"):
+        backend.connection_info()
     client.reveal_deployment_api_key.assert_not_called()

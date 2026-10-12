@@ -4,7 +4,6 @@ Managed Exoscale inference deployment operations.
 
 from __future__ import annotations
 
-import logging
 import time
 from typing import Any
 
@@ -24,8 +23,6 @@ from .client import get_client
 from .config import ExoscaleDeploymentConfig
 from .errors import DeploymentNotFoundError, LLMManagementError
 from .types import ConnectionInfo, DeploymentQueryResult
-
-logger = logging.getLogger(__name__)
 
 
 class ManagedDeployment:
@@ -225,29 +222,30 @@ class ManagedDeployment:
 
     def connection_info(self) -> ConnectionInfo:
         """
-        Read the endpoint and reveal credentials for an existing deployment.
+        Read the endpoint and attach the configured inference credential.
 
         This does not start or scale it. Returned credentials are for callers to use in
         transport configuration and must not appear in diagnostic logs.
         """
+        if not settings.exoscale_inference_api_key:
+            raise LLMManagementError(
+                "EXOSCALE_INFERENCE_API_KEY must be set for managed inference"
+            )
         client = self.client()
         deployment = self.find_deployment(client)
         if deployment is None:
             raise DeploymentNotFoundError(self.config.slug)
         deployment_url = deployment.get("deployment-url", "")
-        api_key = (
-            settings.exoscale_inference_api_key
-            or client.reveal_deployment_api_key(id=deployment["id"]).get("api-key", "")
-        )
+        api_key = settings.exoscale_inference_api_key
         return ConnectionInfo(url=deployment_url, api_key=api_key)
 
     def query_status(self) -> DeploymentQueryResult:
         """
         Read existence, replicas and connection details without starting inference.
 
-        Return an empty absent state when identity is missing. If credential revelation
-        fails, retain deployment status with an empty API key rather than failing the
-        whole query. Replica status is provider metadata, not an HTTP health probe.
+        Return an empty absent state when identity is missing. Attach the configured
+        inference key, or an empty key when it is not configured, without querying cloud
+        credentials. Replica status is provider metadata, not an HTTP health probe.
         """
         client = self.client()
         deployment = self.find_deployment(client)
@@ -255,27 +253,11 @@ class ManagedDeployment:
             return DeploymentQueryResult(
                 exists=False, replicas=0, deployment_url="", api_key=""
             )
-        try:
-            api_key = (
-                settings.exoscale_inference_api_key
-                or client.reveal_deployment_api_key(id=deployment["id"]).get(
-                    "api-key", ""
-                )
-            )
-        except Exception as exc:
-            response = getattr(exc, "response", None)
-            logger.warning(
-                "Deployment credential revelation failed for %s: %s (HTTP %s)",
-                self.config.slug,
-                type(exc).__name__,
-                getattr(response, "status_code", "unknown"),
-            )
-            api_key = ""
         return DeploymentQueryResult(
             exists=True,
             replicas=deployment.get("replicas", 0),
             deployment_url=deployment.get("deployment-url", ""),
-            api_key=api_key,
+            api_key=settings.exoscale_inference_api_key,
         )
 
     def delete_deployment(self) -> None:
