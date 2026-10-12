@@ -517,7 +517,30 @@ These tests may provision the configured Exoscale GPU deployment. They check
 supplied, not-held, withheld, pending and acknowledgement examples, and may fail
 on this candidate even when transport and schema validation succeed.
 
-## Dataset validation
+## Mock endpoints for integration testing
+
+These routes accept the same request bodies, backend query parameter (where
+applicable), and bearer authentication as the real routes:
+
+- `POST /mock/agents/foi_structure/extract?backend=cpu`
+- `POST /mock/agents/foi_structure?backend=cpu`
+- `POST /mock/agents/foi_response_analysis`
+
+Each call selects a random bundled validation example. The mocks do not inspect
+request meaning, load model weights, or start GPU deployments; `backend=exoscale`
+is accepted without contacting Exoscale. Request extraction and classification
+use the gold results from the same selected R1–R5 example. The full result's
+`request_text` is that example's text, rather than the submitted text.
+
+Mock extraction diagnostics (`ignored_text`, `unit_predictions`) are empty and
+`extraction_revision` is null. Model fields contain `mock:validation-examples`
+to distinguish these responses from inference. These diagnostics are mock
+placeholders, not dataset gold labels or observed model predictions.
+
+Response analysis returns an unchanged S1–S5 gold output, including its original
+question and source IDs. Those IDs may not exist in the submitted input. Use these
+routes to exercise response handling and UI integration; use the real endpoints
+when checking whether results correspond to the submitted correspondence.
 
 The [validation examples](foi-live-validation-examples.md) document all payloads,
 expected results, dataset revisions and source checksums. The same typed bundled

@@ -781,4 +781,4 @@ equivalent in this repository:
 
 The tests continue to report exact gold fidelity separately. Other topic wording,
 missing content, changed regimes, IDs or extra questions are not automatically
-accepted.
+accepted. Mocks continue to return original dataset outputs.

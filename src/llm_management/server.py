@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from .api import agents, classifiers, deployments, foi, proxies
+from .api import agents, classifiers, deployments, foi, mocks, proxies
 from .api.auth import require_bearer_auth_when_enabled
 from .bootstrap import Application, assemble_application
 from .deployments.errors import DeploymentServiceError, LLMManagementError
@@ -89,6 +89,7 @@ def create_app(application: Application | None = None) -> FastAPI:
     for routes in (deployments, proxies, agents):
         app.include_router(routes.build_router(service))
     app.include_router(foi.build_router(service, application.foi))
+    app.include_router(mocks.build_router())
     app.include_router(
         classifiers.build_router(service, application.sar, application.automatic)
     )
