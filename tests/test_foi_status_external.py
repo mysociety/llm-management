@@ -1,73 +1,46 @@
 """
-Paid status-model integration checks; run explicitly against Exoscale.
+Paid status-model validation using the copied S1–S5 dataset pairs.
 
-These semantic examples expose candidate quality and can fail even when transport
-and schema checks pass. Startup may provision the configured GPU deployment.
+Each input retains its own gold request context. Candidate semantic failures are
+reported separately from transport/schema failures; no model output is repaired.
 """
+
+from __future__ import annotations
 
 import pytest
 from starlette.testclient import TestClient
 
+from llm_management.foi.examples import validation_examples
 from llm_management.foi.response_schemas import ExtractionOutput
 from llm_management.server import app
+from tests.foi_validation import assert_response_matches, post_example
 
 pytestmark = pytest.mark.external
 
 
 @pytest.fixture(scope="module")
 def client():
+    """
+    Own the API lifecycle and scale touched deployments down after the batch.
+    """
     with TestClient(app) as connection:
         yield connection
 
 
 @pytest.mark.parametrize(
-    "text,act,event",
-    [
-        (
-            "The requested total number of requests received last year was 42.",
-            "supplied",
-            None,
-        ),
-        ("We do not hold the requested records.", "not_held", None),
-        (
-            "We refuse to disclose the requested records under section 40(2) of the Freedom of Information Act.",
-            "withheld",
-            None,
-        ),
-        ("We will send our substantive response next week.", "pending", None),
-        ("We explicitly acknowledge receipt of your request.", None, "acknowledgement"),
-    ],
-    ids=["supplied", "not_held", "withheld", "pending", "acknowledgement"],
+    "example", validation_examples().responses, ids=lambda case: case.id
 )
-def test_status_model_semantics(client, text, act, event):
-    body = {
-        "request": {
-            "questions": [
-                {
-                    "question_id": "q1",
-                    "text": "Please provide the total number of requests received last year.",
-                }
-            ],
-            "extraction_status": "questions_found",
-            "additional_text": [],
-        },
-        "sources": [
-            {
-                "id": "reply",
-                "kind": "email",
-                "role": "current",
-                "sender": "authority",
-                "filename": None,
-                "availability": "visible",
-                "text": text,
-            }
-        ],
-    }
-    response = client.post("/agents/foi_response_analysis", json=body)
-    assert response.status_code == 200, response.text
+def test_status_model_validation(client, example, record_property):
+    """
+    Require the complete gold output, including references, scopes and visibility.
+    """
+    response = post_example(
+        client,
+        "/agents/foi_response_analysis",
+        example.id,
+        example.input,
+        record_property,
+    )
     output = ExtractionOutput.model_validate(response.json())
-    assert output.process_states is None
-    if act:
-        assert any(outcome.act == act for outcome in output.outcomes), output
-    if event:
-        assert any(item.kind == event for item in output.events), output
+    output.validate_against(example.input.model_input())
+    assert_response_matches(output, example.expected)

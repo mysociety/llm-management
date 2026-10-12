@@ -16,6 +16,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 ExtractionBackend = Literal["cpu", "exoscale"]
 
 
+class QuestionSliceRequest(BaseModel):
+    """
+    Raw correspondence accepted by request extraction and classification routes.
+    """
+
+    request: str = Field(min_length=1, max_length=100_000)
+
+
 class UnitLabel(StrEnum):
     """
     String labels in model-output order.

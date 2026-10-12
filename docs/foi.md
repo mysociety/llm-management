@@ -516,3 +516,32 @@ poetry run pytest -m external tests/test_foi_status_external.py -q
 These tests may provision the configured Exoscale GPU deployment. They check
 supplied, not-held, withheld, pending and acknowledgement examples, and may fail
 on this candidate even when transport and schema validation succeed.
+
+## Dataset validation
+
+The [validation examples](foi-live-validation-examples.md) document all payloads,
+expected results, dataset revisions and source checksums. The same typed bundled
+examples drive the mocks and live tests. For paid validation using stable test
+names, run:
+
+```sh
+SERVER_ROLE=test poetry run pytest -m external -v \
+  tests/test_question_slice_external.py \
+  tests/test_foi_pipeline_external.py \
+  tests/test_foi_status_external.py \
+  --junitxml=foi-validation-results.xml -o junit_family=xunit1
+```
+
+The live tests accept original gold extraction/classification outputs or explicit
+reviewed alternatives in `accepted_extractions` and `accepted_classifications`.
+Each alternative includes a review reason and observation provenance; the original
+dataset fields remain unchanged. Response-analysis items must match completely.
+Outcome/event order does not matter, but missing, extra or duplicate items fail.
+Pipeline tests check extraction before topic classification, require exact question
+IDs/order and regimes, and accept topic wording only when the complete output
+matches gold or a reviewed alternative. Unrecognised wording still fails for review.
+JUnit properties record exact gold matches and reviewed matches for extraction and
+topics, plus case, endpoint/backend, status, latency and complete actual output (including model
+provenance where the API returns it). Test failures distinguish transport errors,
+schema validation errors, whitespace-only extraction differences and other
+semantic mismatches. These are dataset expectations, not claims of live accuracy.
