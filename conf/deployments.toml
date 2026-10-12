@@ -1,36 +1,36 @@
 # Shared checkpoint identities; local resources pin these revisions.
 # Exoscale managed imports by repository name and cannot attest the served SHA.
-[model.question_slice_v2]
-repo = "mySociety/modernbert-question-slice-v2"
+[model.question_slice]
+repo = "mySociety/question-slice-modernbert-2026-09-08-1"
 revision = "eb0436d4be96f113f35b5f891f9cc876a0f0bd6b"
 
-[model.foi_topic_v2]
-repo = "mySociety/granite-tiny-foi-topic-grounded-v2-merged"
+[model.foi_topic]
+repo = "mySociety/foi-topic-1b-2026-09-16-1"
 revision = "c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79"
 
-[model.sar_logistic_v1]
-repo = "mySociety/logistic-sar-detector-v1"
+[model.sar_logistic]
+repo = "mySociety/sar-detect-logistic-2026-10-09-1"
 revision = "ade6333a06995cbde835648d758d8b092900bc52"
 
-[model.sar_deberta_v1]
-repo = "mySociety/deberta-sar-detecter-v1"
+[model.sar_deberta]
+repo = "mySociety/sar-detect-deberta-2026-10-09-1"
 revision = "199883a0387af896f34f7bf0978472268a9474b9"
 
 [[local.deployment]]
-slug = "question_slice_v2_cpu"
+slug = "question_slice_cpu"
 loader = "modernbert_classifier"
-model_ref = "question_slice_v2"
+model_ref = "question_slice"
 max_tokens = 768
 
 [[local.deployment]]
-slug = "question_slice_v2_head_cpu"
+slug = "question_slice_head_cpu"
 loader = "modernbert_head"
-model_ref = "question_slice_v2"
+model_ref = "question_slice"
 
 [[local.deployment]]
 slug = "question_extractor_tokenizer"
 loader = "topic_tokenizer"
-model_ref = "foi_topic_v2"
+model_ref = "foi_topic"
 max_tokens = 2048
 
 [[local.deployment]]
@@ -40,23 +40,23 @@ spacy_model = "en_core_web_sm"
 score_threshold = 0.5
 
 [[local.deployment]]
-slug = "sar_logistic_v1_cpu"
-loader = "sar_logistic_v1"
-model_ref = "sar_logistic_v1"
+slug = "sar_logistic_cpu"
+loader = "sar_logistic"
+model_ref = "sar_logistic"
 artifact = "model.json"
 
 [[local.deployment]]
-slug = "sar_deberta_v1_cpu"
-loader = "sar_deberta_v1"
-model_ref = "sar_deberta_v1"
+slug = "sar_deberta_cpu"
+loader = "sar_deberta"
+model_ref = "sar_deberta"
 max_tokens = 512
 
 [foi]
-classifier = "question_slice_v2_cpu"
-head = "question_slice_v2_head_cpu"
+classifier = "question_slice_cpu"
+head = "question_slice_head_cpu"
 tokenizer = "question_extractor_tokenizer"
-extraction_deployment = "question_slice_v2"
-topic_deployment = "foi_topic_v2"
+extraction_deployment = "question_slice"
+topic_deployment = "foi_topic"
 
 [foi.topic]
 output_limit = 2048
@@ -68,8 +68,8 @@ output_tokens_per_question = 192
 deployment = "presidio"
 
 [sar]
-logistic = "sar_logistic_v1_cpu"
-classifier = "sar_deberta_v1_cpu"
+logistic = "sar_logistic_cpu"
+classifier = "sar_deberta_cpu"
 
 [[exoscale.deployment]]
 
@@ -124,8 +124,8 @@ inference_engine_params = [
 [[exoscale.deployment]]
 # Fine-tuned encoder on GPU; its original classification head runs in the API.
 # Native /classify is not exposed by the managed gateway, so use /v1/embeddings.
-slug = "question_slice_v2"
-model_ref = "question_slice_v2"
+slug = "question_slice"
+model_ref = "question_slice"
 gpu_type = "gpua5000"
 gpu_count = 1
 replicas = 1
@@ -145,8 +145,8 @@ inference_engine_params = [
 [[exoscale.deployment]]
 # Full checkpoint: Granite 4.0 1B with the grounded-v2 adapter merged in.
 # Merged artifact validated at c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79.
-slug = "foi_topic_v2"
-model_ref = "foi_topic_v2"
+slug = "foi_topic"
+model_ref = "foi_topic"
 gpu_type = "gpua5000"
 gpu_count = 1
 replicas = 1
@@ -173,46 +173,46 @@ slug = "foi_pipeline"
 # Remote deployments and registered local CPU resources share the warm-up path.
 deployments = [
     "presidio",
-    "question_slice_v2_head_cpu",
+    "question_slice_head_cpu",
     "question_extractor_tokenizer",
-    "question_slice_v2",
-    "foi_topic_v2",
+    "question_slice",
+    "foi_topic",
 ]
 
 
 [[deployment_group]]
 slug = "foi_pipeline_cpu"
-deployments = ["presidio", "question_slice_v2_cpu", "question_extractor_tokenizer", "foi_topic_v2"]
+deployments = ["presidio", "question_slice_cpu", "question_extractor_tokenizer", "foi_topic"]
 
 
 [[deployment_group]]
 slug = "sar_pipeline_cpu"
-deployments = ["sar_logistic_v1_cpu", "sar_deberta_v1_cpu"]
+deployments = ["sar_logistic_cpu", "sar_deberta_cpu"]
 
 # Automatic email detection, pinned from fast-auto-classifier releases.json.
-[model.auto_logistic_v1]
-repo = "mySociety/logistic-auto-detector-v1"
+[model.auto_logistic]
+repo = "mySociety/autoreply-logistic-2026-10-09-1"
 revision = "9cff7b1018a61bd919fb049e3aca005952a101c7"
 
-[model.auto_deberta_v1]
-repo = "mySociety/deberta-auto-detector-v1"
+[model.auto_deberta]
+repo = "mySociety/autoreply-deberta-2026-10-09-1"
 revision = "ddf70e25af71b64260e72ac3cdef1353a990d4c8"
 
 [[local.deployment]]
-slug = "auto_logistic_v1_cpu"
-loader = "auto_logistic_v1"
-model_ref = "auto_logistic_v1"
+slug = "auto_logistic_cpu"
+loader = "auto_logistic"
+model_ref = "auto_logistic"
 
 [[local.deployment]]
-slug = "auto_deberta_v1_cpu"
-loader = "auto_deberta_v1"
-model_ref = "auto_deberta_v1"
+slug = "auto_deberta_cpu"
+loader = "auto_deberta"
+model_ref = "auto_deberta"
 max_tokens = 512
 
 [automatic]
-logistic = "auto_logistic_v1_cpu"
-classifier = "auto_deberta_v1_cpu"
+logistic = "auto_logistic_cpu"
+classifier = "auto_deberta_cpu"
 
 [[deployment_group]]
 slug = "automatic_pipeline_cpu"
-deployments = ["auto_logistic_v1_cpu", "auto_deberta_v1_cpu"]
+deployments = ["auto_logistic_cpu", "auto_deberta_cpu"]

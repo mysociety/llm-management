@@ -21,13 +21,13 @@ that installed model explicitly on CPU and never downloads a model during a requ
 An alternative `spacy_model` in the local Presidio deployment must be installed before starting the service.
 
 Model resources share the same model-family/version name across runtimes:
-`question_slice_v2` identifies the remote GPU deployment, `question_slice_v2_cpu`
-the full local CPU model, and `question_slice_v2_head_cpu` its local classification
+`question_slice` identifies the remote GPU deployment, `question_slice_cpu`
+the full local CPU model, and `question_slice_head_cpu` its local classification
 head used with GPU embeddings. Use these names in warm-up calls and groups.
 
 Local resources load on demand. Use `POST /local-models/presidio/ensure`,
-`POST /local-models/question_slice_v2_cpu/ensure`,
-`POST /local-models/question_slice_v2_head_cpu/ensure`, or
+`POST /local-models/question_slice_cpu/ensure`,
+`POST /local-models/question_slice_head_cpu/ensure`, or
 `POST /local-models/question_extractor_tokenizer/ensure` to warm them explicitly. These endpoints
 use the same authentication as the rest of the API. The shared
 `POST /deployments/{slug}/ensure` endpoint also accepts registered local resource

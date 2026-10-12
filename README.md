@@ -54,20 +54,20 @@ Local resources use `[[local.deployment]]` with a `slug` and a typed `loader`.
 Checkpoint identities live once in `[model.<name>]`, referenced by `model_ref`:
 
 ```toml
-[model.sar_logistic_v1]
-repo = "mySociety/logistic-sar-detector-v1"
+[model.sar_logistic]
+repo = "mySociety/sar-detect-logistic-2026-10-09-1"
 revision = "ade6333a06995cbde835648d758d8b092900bc52"
 
 [[local.deployment]]
-slug = "sar_logistic_v1_cpu"
-loader = "sar_logistic_v1"
-model_ref = "sar_logistic_v1"
+slug = "sar_logistic_cpu"
+loader = "sar_logistic"
+model_ref = "sar_logistic"
 artifact = "model.json"
 ```
 
 Supported loaders are `modernbert_classifier`, `modernbert_head`,
-`topic_tokenizer`, `sar_logistic_v1`, `sar_deberta_v1`, `auto_logistic_v1`,
-`auto_deberta_v1`, and `presidio`.
+`topic_tokenizer`, `sar_logistic`, `sar_deberta`, `auto_logistic`,
+`auto_deberta`, and `presidio`.
 Each has a validated schema: classifiers and the topic tokenizer require
 `max_tokens`; Presidio requires `spacy_model` and `score_threshold`.
 Resource names come from their configured slugs. `[foi]`, `[sar]`, `[automatic]`, and

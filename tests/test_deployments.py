@@ -45,9 +45,9 @@ def test_invalid_catalog_rejected(case):
     elif case == "unknown_model":
         local[0]["model_ref"] = "missing"
     elif case == "invalid_revision":
-        data["model"]["sar_logistic_v1"]["revision"] = "main"
+        data["model"]["sar_logistic"]["revision"] = "main"
     elif case == "missing_repo":
-        data["model"]["question_slice_v2"].pop("repo")
+        data["model"]["question_slice"].pop("repo")
     elif case == "duplicate_local":
         local.append(local[0])
     elif case == "duplicate_remote":
@@ -57,7 +57,7 @@ def test_invalid_catalog_rejected(case):
     elif case == "wrong_pipeline_loader":
         data["foi"]["classifier"] = "presidio"
     elif case == "wrong_checkpoint":
-        local[1]["model_ref"] = "sar_deberta_v1"
+        local[1]["model_ref"] = "sar_deberta"
     elif case == "unknown_pipeline_resource":
         data["sar"]["classifier"] = "missing"
     elif case == "unknown_remote_model":
@@ -99,11 +99,11 @@ def test_catalog_controls_sar_checkpoint_resource_name_and_limit(monkeypatch):
     data["deployment_group"] = []
     data["sar"]["classifier"] = "custom_sar"
     for entry in data["local"]["deployment"]:
-        if entry["loader"] == "sar_deberta_v1":
+        if entry["loader"] == "sar_deberta":
             entry["slug"] = "custom_sar"
             entry["max_tokens"] = 256
-    data["model"]["sar_deberta_v1"]["repo"] = "example/custom-sar"
-    data["model"]["sar_deberta_v1"]["revision"] = "a" * 40
+    data["model"]["sar_deberta"]["repo"] = "example/custom-sar"
+    data["model"]["sar_deberta"]["revision"] = "a" * 40
     catalog = DeploymentCatalog.model_validate(data)
     classifier = sar.create_deberta_detector(
         catalog.local.get(
@@ -120,7 +120,7 @@ def test_catalog_controls_sar_checkpoint_resource_name_and_limit(monkeypatch):
 
 def test_checkpoint_changes_cannot_disagree_with_remote_model():
     data = DeploymentCatalog.load().model_dump()
-    data["model"]["question_slice_v2"]["repo"] = "example/new-checkpoint"
+    data["model"]["question_slice"]["repo"] = "example/new-checkpoint"
     with pytest.raises(ValidationError, match="disagrees"):
         DeploymentCatalog.model_validate(data)
 

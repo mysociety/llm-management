@@ -65,10 +65,10 @@ def register_configured_resources(
         "topic_tokenizer": FactoryLocation(
             "foi.topic_classification", "tokenizer_resource"
         ),
-        "sar_logistic_v1": FactoryLocation("sar.resources", "logistic_detector"),
-        "sar_deberta_v1": FactoryLocation("sar.resources", "deberta_detector"),
-        "auto_logistic_v1": FactoryLocation("automatic.resources", "logistic_detector"),
-        "auto_deberta_v1": FactoryLocation("automatic.resources", "encoder_detector"),
+        "sar_logistic": FactoryLocation("sar.resources", "logistic_detector"),
+        "sar_deberta": FactoryLocation("sar.resources", "deberta_detector"),
+        "auto_logistic": FactoryLocation("automatic.resources", "logistic_detector"),
+        "auto_deberta": FactoryLocation("automatic.resources", "encoder_detector"),
         "presidio": FactoryLocation("sanitization", "configured_presidio"),
     }
 

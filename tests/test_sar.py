@@ -166,7 +166,7 @@ def test_logistic_load_once_and_idle_reload(monkeypatch):
     assert detector.resource.status().ready
     assert (
         download.call_args.kwargs["revision"]
-        == get_catalog().model["sar_logistic_v1"].revision
+        == get_catalog().model["sar_logistic"].revision
     )
     assert detector.resource.release()
     assert not detector.resource.status().ready
@@ -211,8 +211,8 @@ def test_tokenizer_loads_authenticated_snapshot_locally(monkeypatch):
     import transformers
 
     model = sar_resources.SARSequenceClassifier(
-        model=get_catalog().model["sar_deberta_v1"].repo,
-        revision=get_catalog().model["sar_deberta_v1"].revision,
+        model=get_catalog().model["sar_deberta"].repo,
+        revision=get_catalog().model["sar_deberta"].revision,
         labels=("not-sar", "sar"),
         token="private-test-token",
     )
@@ -225,7 +225,7 @@ def test_tokenizer_loads_authenticated_snapshot_locally(monkeypatch):
     assert download.call_args.kwargs["token"] == "private-test-token"
     assert (
         download.call_args.kwargs["revision"]
-        == get_catalog().model["sar_deberta_v1"].revision
+        == get_catalog().model["sar_deberta"].revision
     )
     loader.assert_called_once_with(
         "/local/pinned/snapshot",
