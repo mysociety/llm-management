@@ -9,13 +9,13 @@ from llm_management.foi import topic_classification
 
 def test_catalog_drives_topic_budget_and_checkpoint(monkeypatch):
     data = DeploymentCatalog.load().model_dump()
-    data["model"]["foi_topic_v2"]["repo"] = "example/question-topics"
+    data["model"]["foi_topic"]["repo"] = "example/question-topics"
     for deployment in data["exoscale"]["deployment"]:
-        if deployment.get("model_ref") == "foi_topic_v2":
+        if deployment.get("model_ref") == "foi_topic":
             deployment.pop("model")
     data["foi"]["topic"]["output_limit"] = 1024
     configured = DeploymentCatalog.model_validate(data)
-    assert configured.get("foi_topic_v2").model == "example/question-topics"
+    assert configured.get("foi_topic").model == "example/question-topics"
     assert configured.require_foi().topic.max_questions == 5
     monkeypatch.setattr(topic_classification, "get_catalog", lambda: configured)
     assert topic_classification.completion_budget(5) == 1024

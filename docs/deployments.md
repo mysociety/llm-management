@@ -1,5 +1,13 @@
 # Deployment management and warm-up
 
+Internal model keys and resource slugs describe their role (`question_slice`,
+`foi_topic`, `sar_deberta`) rather than a checkpoint version. Dated Hugging Face
+repository names and pinned revisions identify the actual releases.
+
+Managed cloud names are derived from the deployment slug and server role. Changing
+a slug changes the cloud name addressed by the application; it does not rename an
+existing Exoscale deployment.
+
 ### Prepared GPU VM templates
 
 The `llm-management templates` CLI uses recipes from
@@ -44,13 +52,13 @@ Named groups in `conf/deployments.toml` let batch clients warm remote deployment
 [[deployment_group]]
 slug = "foi_pipeline"
 deployments = [
-    "presidio", "question_slice_v2_head_cpu", "question_extractor_tokenizer",
-    "question_slice_v2", "foi_topic_v2",
+    "presidio", "question_slice_head_cpu", "question_extractor_tokenizer",
+    "question_slice", "foi_topic",
 ]
 
 [[deployment_group]]
 slug = "foi_pipeline_cpu"
-deployments = ["presidio", "question_slice_v2_cpu", "question_extractor_tokenizer", "foi_topic_v2"]
+deployments = ["presidio", "question_slice_cpu", "question_extractor_tokenizer", "foi_topic"]
 ```
 
 Call `POST /deployment-groups/foi_pipeline/ensure` with the usual authentication before a batch using GPU extraction. This warms Presidio, the local classification head and Granite tokenizer while creating or resuming both GPU deployments, even when automatic startup on inference requests is disabled. For CPU extraction, use `POST /deployment-groups/foi_pipeline_cpu/ensure`, which warms the full CPU classifier and the remote topic model. Existing per-deployment locks prevent overlapping group and inference requests from starting the same deployment twice within one API process.

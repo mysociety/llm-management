@@ -52,3 +52,8 @@ Ruff checks import order, function annotations in application source, and quoted
 forward references. Tests are exempt from annotation linting. Multiline docstrings
 remain a review convention: Ruff's one-line docstring rule requires the opposite
 layout.
+
+Use stable role names for internal model keys, loaders and resource slugs. Keep
+release dates and revisions in checkpoint identities. Version suffixes remain
+appropriate when they identify a real data format or protocol, such as the V1
+logistic artifact contract or the OpenAI-compatible `/v1` API.

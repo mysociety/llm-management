@@ -22,7 +22,7 @@ def config(groups=None):
         else [
             {
                 "slug": "foi_pipeline",
-                "deployments": ["question_slice_v2", "foi_topic_v2"],
+                "deployments": ["question_slice", "foi_topic"],
             }
         ]
     )
@@ -34,8 +34,8 @@ def config(groups=None):
     [
         [{"slug": "bad", "deployments": ["missing"]}],
         [{"slug": "bad", "deployments": []}],
-        [{"slug": "bad", "deployments": ["foi_topic_v2", "foi_topic_v2"]}],
-        [{"slug": "same", "deployments": ["foi_topic_v2"]}] * 2,
+        [{"slug": "bad", "deployments": ["foi_topic", "foi_topic"]}],
+        [{"slug": "same", "deployments": ["foi_topic"]}] * 2,
     ],
 )
 def test_invalid_groups_rejected(groups):
@@ -63,7 +63,7 @@ def test_group_runs_concurrently_and_reports_each_result(monkeypatch, fail):
             if len(entered) == 2:
                 both_started.set()
             await asyncio.wait_for(both_started.wait(), timeout=2)
-            if fail and slug == "foi_topic_v2":
+            if fail and slug == "foi_topic":
                 raise RuntimeError("private provider detail")
             return RunningDeployment(
                 config=None, state=DeploymentState(slug=slug, exists=True, replicas=1)
@@ -74,7 +74,7 @@ def test_group_runs_concurrently_and_reports_each_result(monkeypatch, fail):
 
     result = asyncio.run(run())
     assert result.success is (not fail)
-    assert [r.slug for r in result.deployments] == ["question_slice_v2", "foi_topic_v2"]
+    assert [r.slug for r in result.deployments] == ["question_slice", "foi_topic"]
     assert result.deployments[0].success
     assert result.deployments[0].replicas == 1
     assert result.deployments[1].success is (not fail)
@@ -93,7 +93,7 @@ def test_unknown_group_starts_nothing(monkeypatch):
 
 def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(monkeypatch):
     cache = DeploymentCache()
-    state = DeploymentState(slug="foi_topic_v2")
+    state = DeploymentState(slug="foi_topic")
     calls = []
     cfg = SimpleNamespace(create_or_resume=lambda: calls.append("start"))
     monkeypatch.setattr(server.app.state.service, "cache", cache)
@@ -154,7 +154,7 @@ def test_mixed_group_resolves_arbitrary_registered_local_resource(
 ):
     data = DeploymentCatalog.load().model_dump()
     data["deployment_group"] = [
-        {"slug": "mixed", "deployments": ["custom_cpu", "foi_topic_v2"]}
+        {"slug": "mixed", "deployments": ["custom_cpu", "foi_topic"]}
     ]
     registry = ResourceRegistry()
     load = Mock(
@@ -176,21 +176,21 @@ def test_mixed_group_resolves_arbitrary_registered_local_resource(
     monkeypatch.setattr(server.app.state.service, "catalog", mixed)
     remote = AsyncMock(
         return_value=RunningDeployment(
-            config=None, state=DeploymentState(slug="foi_topic_v2", replicas=1)
+            config=None, state=DeploymentState(slug="foi_topic", replicas=1)
         )
     )
     monkeypatch.setattr(server.app.state.service, "ensure_running", remote)
     result = asyncio.run(server.app.state.service.ensure_group("mixed"))
     assert [member.slug for member in result.deployments] == [
         "custom_cpu",
-        "foi_topic_v2",
+        "foi_topic",
     ]
     assert result.success is (not fail_local)
     assert result.deployments[0].success is (not fail_local)
     assert result.deployments[0].replicas is None
     assert result.deployments[1].success
     load.assert_called_once()
-    remote.assert_awaited_once_with("foi_topic_v2", allow_start=True)
+    remote.assert_awaited_once_with("foi_topic", allow_start=True)
     assert "private local detail" not in str(result.model_dump())
 
 
@@ -217,16 +217,16 @@ def test_shipped_foi_group_includes_registered_local_resources():
     members = DeploymentCatalog.load().get_group("foi_pipeline").deployments
     assert members == [
         "presidio",
-        "question_slice_v2_head_cpu",
+        "question_slice_head_cpu",
         "question_extractor_tokenizer",
-        "question_slice_v2",
-        "foi_topic_v2",
+        "question_slice",
+        "foi_topic",
     ]
 
 
 def test_ambiguous_local_and_remote_names_rejected():
     data = DeploymentCatalog.load().model_dump()
-    data["local"]["deployment"][0]["slug"] = "foi_topic_v2"
+    data["local"]["deployment"][0]["slug"] = "foi_topic"
     with pytest.raises(ValidationError, match="distinct names"):
         DeploymentCatalog.model_validate(data)
 

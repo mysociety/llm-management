@@ -28,8 +28,8 @@ Both modes share the loaded logistic model. Logistic-only results use
 `stage: "deberta"`. On failures, `stage` identifies the stage attempted, and both
 modes retain the existing `is_sar: true`, `status: "unclear"` failure policy.
 
-Models are lazy local resources named `sar_logistic_v1_cpu` and
-`sar_deberta_v1_cpu`. Before a batch, call
+Models are lazy local resources named `sar_logistic_cpu` and
+`sar_deberta_cpu`. Before a batch, call
 `POST /deployment-groups/sar_pipeline_cpu/ensure`, or use individual
 `POST /local-models/{name}/ensure` calls. Inspect the group's member success flags.
 Warm-up and loading are per API worker, and resources follow the normal CPU idle
@@ -47,8 +47,8 @@ weights are not included in the repository. Artifact identities are pinned in
 
 | Model | Commit | Inclusive positive cutoff |
 |---|---|---|
-| `mySociety/logistic-sar-detector-v1` | `ade6333a06995cbde835648d758d8b092900bc52` | JSON cutoff `0.0018603434604847564` |
-| `mySociety/deberta-sar-detecter-v1` | `199883a0387af896f34f7bf0978472268a9474b9` | Softmax index 1, `0.5` |
+| `mySociety/sar-detect-logistic-2026-10-09-1` | `ade6333a06995cbde835648d758d8b092900bc52` | JSON cutoff `0.0018603434604847564` |
+| `mySociety/sar-detect-deberta-2026-10-09-1` | `199883a0387af896f34f7bf0978472268a9474b9` | Softmax index 1, `0.5` |
 
 DeBERTa rejects inputs above 512 tokens including special tokens without truncation.
 The upstream artifacts record Unicode database **16.0.0**. This service intentionally
@@ -104,7 +104,7 @@ Malformed HTTP request bodies receive normal validation errors.
 
 Models are lazy local resources, loaded on demand and shared per API worker.
 Before a batch, call `POST /deployment-groups/automatic_pipeline_cpu/ensure`, or
-warm `auto_logistic_v1_cpu` and `auto_deberta_v1_cpu` individually with
+warm `auto_logistic_cpu` and `auto_deberta_cpu` individually with
 `POST /local-models/{name}/ensure`, just as for SAR. Inspect the warm-up group's
 member success flags. Missing models or credentials fail warm-up; inference-time
 loading failures return unresolved classification results. API startup does not
@@ -119,8 +119,8 @@ supplied release manifest. Revisions are pinned in `conf/deployments.toml`:
 
 | Model | Commit |
 |---|---|
-| `mySociety/logistic-auto-detector-v1` | `9cff7b1018a61bd919fb049e3aca005952a101c7` |
-| `mySociety/deberta-auto-detector-v1` | `ddf70e25af71b64260e72ac3cdef1353a990d4c8` |
+| `mySociety/autoreply-logistic-2026-10-09-1` | `9cff7b1018a61bd919fb049e3aca005952a101c7` |
+| `mySociety/autoreply-deberta-2026-10-09-1` | `ddf70e25af71b64260e72ac3cdef1353a990d4c8` |
 
 Blocking inference runs off the async event loop. `AUTOMATIC_MAX_CONCURRENCY`
 (default 4) bounds admitted work per worker, including fast requests; further

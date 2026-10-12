@@ -57,23 +57,23 @@ class TopicTokenizerDeployment(LocalModelDeployment):
 class SARLogisticDeployment(LocalModelDeployment):
     """Artifact configuration for the SAR-specific logistic loader."""
 
-    loader: Literal["sar_logistic_v1"]
+    loader: Literal["sar_logistic"]
     artifact: str = Field(min_length=1)
 
 
 class SARClassifierDeployment(LocalModelDeployment):
-    loader: Literal["sar_deberta_v1"]
+    loader: Literal["sar_deberta"]
     max_tokens: int = Field(gt=0)
 
 
 class AutoLogisticDeployment(LocalModelDeployment):
-    loader: Literal["auto_logistic_v1"]
+    loader: Literal["auto_logistic"]
     artifact: str = "model.json"
     standalone_artifact: str = "standalone-model.json"
 
 
 class AutoClassifierDeployment(LocalModelDeployment):
-    loader: Literal["auto_deberta_v1"]
+    loader: Literal["auto_deberta"]
     max_tokens: Literal[512] = 512
 
 

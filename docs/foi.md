@@ -4,7 +4,7 @@ This package turns a piece of correspondence into a list of requests for informa
 
 All FOI model inputs first pass through local CPU Presidio sanitization. Extraction results retain original text; see the [sanitization policy and CPU lifecycle](sanitization.md).
 
-Two fine-tuned models do different jobs: **QuestionSlice finds the questions** and **foi-topic-v2 classifies them**. QuestionSlice is built on ModernBERT; foi-topic-v2 is built on Granite. We use these task-specific names throughout this guide; `foi_topic_v2` is the corresponding deployment name in configuration. A “question” can be an instruction such as “Please provide the report”; it does not need a question mark.
+Two fine-tuned models do different jobs: **QuestionSlice finds the questions** and **FOI topic model classifies them**. QuestionSlice is built on ModernBERT; FOI topic model is built on Granite. We use these task-specific names throughout this guide; `foi_topic` is the corresponding deployment name in configuration. A “question” can be an instruction such as “Please provide the report”; it does not need a question mark.
 
 ```mermaid
 flowchart TD
@@ -14,7 +14,7 @@ flowchart TD
     C --> D[Reconstruct original and sanitized questions from the same labels]
     D --> E{Any questions found?}
     E -->|No| F[Return extraction details without classification]
-    E -->|Yes| G[foi-topic-v2 classifies sanitized questions and final chat payload]
+    E -->|Yes| G[FOI topic model classifies sanitized questions and final chat payload]
     G --> H[Check the output and return the combined result]
 ```
 
@@ -24,12 +24,12 @@ The model names below are Hugging Face repository IDs. They identify the trained
 
 | Job | Model repository | Exoscale deployment |
 |---|---|---|
-| Find and group requests for information | `mySociety/modernbert-question-slice-v2` | `question_slice_v2` (when using GPU extraction) |
-| Assign access regimes and topics | `mySociety/granite-tiny-foi-topic-grounded-v2-merged` | `foi_topic_v2` |
+| Find and group requests for information | `mySociety/question-slice-modernbert-2026-09-08-1` | `question_slice` (when using GPU extraction) |
+| Assign access regimes and topics | `mySociety/foi-topic-1b-2026-09-16-1` | `foi_topic` |
 
 **QuestionSlice** is the fine-tuned ModernBERT classifier trained to assign the four labels described below. CPU and Exoscale extraction use this same checkpoint: CPU runs the whole model, while Exoscale runs its encoder and the API runs its original classification layer. The default local model/tokenizer revision is `eb0436d4be96f113f35b5f891f9cc876a0f0bd6b`. These long revision IDs identify specific versions of the model files.
 
-**foi-topic-v2**, the merged fine-tuned Granite model, contains both the original model and the changes learned during fine-tuning. It was created from the base model `ibm-granite/granite-4.0-1b` (revision `6a7381ba1f54d684ff508d991aeb7dc580157103`) and the LoRA adapter `mySociety/granite-tiny-foi-topic-grounded-v2` (revision `200b756850c137c255f2e6c5c24474edd894d010`). The `-merged` repository is the model used for inference.
+**FOI topic model**, the merged fine-tuned Granite model, contains both the original model and the changes learned during fine-tuning. It was created from the base model `ibm-granite/granite-4.0-1b` (revision `6a7381ba1f54d684ff508d991aeb7dc580157103`) and the LoRA adapter `mySociety/granite-tiny-foi-topic-grounded-v2` (revision `200b756850c137c255f2e6c5c24474edd894d010`). The `-merged` repository is the model used for inference.
 
 Keep the remote import and local model/tokenizer versions aligned when updating either model. For that reason, Exoscale extraction returns `extraction_revision: null` rather than claiming a verified remote revision.
 
@@ -61,7 +61,7 @@ We keep the model's probabilities and chosen label. The returned `confidence` is
 - **CPU**, the default: the whole QuestionSlice model runs in the API process.
 - **Exoscale**: the main part of QuestionSlice runs on a remote GPU. It returns numeric representations of the text, and the model's small final classification layer runs locally to produce the labels. This split is needed because the managed gateway exposes embeddings rather than a classification endpoint.
 
-The `backend` choice affects extraction only. foi-topic-v2 runs on Exoscale in both cases.
+The `backend` choice affects extraction only. FOI topic model runs on Exoscale in both cases.
 
 The label decisions are represented as a `list[UnitPrediction]`. Each `UnitPrediction` contains the original `SemanticUnit`, the chosen `UnitLabel`, its `confidence`, and the probabilities for all four labels. The backend initially returns numeric probability rows; the extraction code validates these and builds the Pydantic objects.
 
@@ -71,24 +71,24 @@ Each start opens a new question; continuations join the most recent question. We
 
 There is one recovery rule for this dataset: **if there are no question starts anywhere, but there is a continuation, treat the first continuation as a start**. This can recover a request that the model recognised but labelled incorrectly. It can also combine separate asks, so it is a heuristic rather than a certainty.
 
-If a start exists elsewhere, a continuation before it remains unresolved. The result is marked `uncertain`. If neither starts nor continuations exist, the result is `no_questions_found` and foi-topic-v2 is skipped. Otherwise the result is `questions_found`.
+If a start exists elsewhere, a continuation before it remains unresolved. The result is marked `uncertain`. If neither starts nor continuations exist, the result is `no_questions_found` and FOI topic model is skipped. Otherwise the result is `questions_found`.
 
 The original labels remain in the response, even after recovery. `promoted_continuation_index` records which part was promoted. Orphan-continuation positions are used internally to determine the extraction status, but are not returned.
 
 The extraction stage returns a `QuestionSliceResult`, which is also the response from `/agents/foi_structure/extract`. Its `questions` field is a list of `ReconstructedQuestion` objects (`ExtractedQuestion` in the established wire schema): each has a `question_id` and reconstructed `text`. The result also includes the extraction status, raw `UnitPrediction` objects, additional/ignored text, recovery details and extraction model information.
 
-## 4. Classify the extracted questions with foi-topic-v2
+## 4. Classify the extracted questions with FOI topic model
 
-[topic_classification.py](../src/llm_management/foi/topic_classification.py) sends the sanitized request and reconstructed sanitized questions to the merged, fine-tuned foi-topic-v2 checkpoint. Its training adapter is already incorporated into the model; no separate adapter is loaded during a request.
+[topic_classification.py](../src/llm_management/foi/topic_classification.py) sends the sanitized request and reconstructed sanitized questions to the merged, fine-tuned FOI topic model checkpoint. Its training adapter is already incorporated into the model; no separate adapter is loaded during a request.
 
-For each question, foi-topic-v2 returns:
+For each question, FOI topic model returns:
 
 - An access regime: `FOI` (Freedom of Information), `EIR` (Environmental Information Regulations), or `SAR` (subject access to personal data).
 - A short topic describing the subject of the question.
 
 It also returns a list of topics for the request as a whole. For example, “Please provide the latest air pollution monitoring report” might receive `EIR` and a topic such as “Air pollution monitoring”. These are model predictions.
 
-foi-topic-v2 is constrained to return the expected JSON structure. We then check that question IDs match the extracted questions in order, regimes are allowed, topics are nonblank, and request-level topics are unique. Incomplete or invalid output is an error. Classification does not erase an `uncertain` extraction status.
+FOI topic model is constrained to return the expected JSON structure. We then check that question IDs match the extracted questions in order, regimes are allowed, topics are nonblank, and request-level topics are unique. Incomplete or invalid output is an error. Classification does not erase an `uncertain` extraction status.
 
 The classification stage returns a `TopicOutput`. Its `questions` field contains `TopicQuestion` objects with a `question_id`, `regime` and `topic`; its `request_topics` field is a list of topic strings for the whole request. `TopicQuestion` does not repeat the source text: use its ID to find the corresponding `ReconstructedQuestion`.
 
@@ -96,13 +96,13 @@ The full pipeline returns an `InformationRequestResult`. This extends `QuestionS
 
 ## Limits and waiting
 
-Inputs that exceed model limits are rejected rather than silently shortened. QuestionSlice allows 768 tokens per context window. foi-topic-v2 allows a 2,048-token prompt and up to ten questions under the current output-budget rule. Tokens are pieces of text used by models, not necessarily whole words. These limits live in [deployments.toml](../conf/deployments.toml).
+Inputs that exceed model limits are rejected rather than silently shortened. QuestionSlice allows 768 tokens per context window. FOI topic model allows a 2,048-token prompt and up to ten questions under the current output-budget rule. Tokens are pieces of text used by models, not necessarily whole words. These limits live in [deployments.toml](../conf/deployments.toml).
 
-Local model work runs outside the async event loop, and remote calls are awaited, so one request waiting for foi-topic-v2 does not block all other requests. CPU classification accepts one in-flight request per model instance; additional calls receive a busy response and should retry. This is not a background batch queue. Remote deployments are created or resumed when needed and use the application's existing idle-scaling lifecycle.
+Local model work runs outside the async event loop, and remote calls are awaited, so one request waiting for FOI topic model does not block all other requests. CPU classification accepts one in-flight request per model instance; additional calls receive a busy response and should retry. This is not a background batch queue. Remote deployments are created or resumed when needed and use the application's existing idle-scaling lifecycle.
 
 ## Prepare both deployments before a batch
 
-For batches using Exoscale extraction, call `POST /deployment-groups/foi_pipeline/ensure` before submitting requests. The `foi_pipeline` group in [deployments.toml](../conf/deployments.toml) contains `question_slice_v2` and `foi_topic_v2`, plus local `presidio`, `question_slice_v2_head_cpu`, and `question_extractor_tokenizer` resources. The endpoint warms local resources and starts or resumes remote deployments concurrently, so their startup waits overlap. It does not run inference or change the order of extraction and classification within a request.
+For batches using Exoscale extraction, call `POST /deployment-groups/foi_pipeline/ensure` before submitting requests. The `foi_pipeline` group in [deployments.toml](../conf/deployments.toml) contains `question_slice` and `foi_topic`, plus local `presidio`, `question_slice_head_cpu`, and `question_extractor_tokenizer` resources. The endpoint warms local resources and starts or resumes remote deployments concurrently, so their startup waits overlap. It does not run inference or change the order of extraction and classification within a request.
 
 A known group returns HTTP 200 with an overall `success` flag and a `deployments` list containing each member's `slug`, `success`, `replicas` and `error`. Check the flags before starting the batch: one member can fail while another succeeds. Failed members have null `replicas`; successful members have null `error`. Unknown groups return 404. The usual API authentication applies.
 
@@ -122,7 +122,7 @@ Both are async functions that can also be called from batch code. They receive a
 
 Both accept `{"request": "Your correspondence here"}`. Use `backend=exoscale` for remote extraction.
 
-[schemas.py](../src/llm_management/foi/schemas.py) defines the results. The full result contains the original request, reconstructed questions, extraction diagnostics and foi-topic-v2 classification. `extraction_model`, `extraction_revision` and `extraction_backend` describe the extraction stage. `classification_model` identifies the merged model used for classification. When no questions are found, `classification` and `classification_model` are both null.
+[schemas.py](../src/llm_management/foi/schemas.py) defines the results. The full result contains the original request, reconstructed questions, extraction diagnostics and FOI topic model classification. `extraction_model`, `extraction_revision` and `extraction_backend` describe the extraction stage. `classification_model` identifies the merged model used for classification. When no questions are found, `classification` and `classification_model` are both null.
 
 ## Response analysis: contracts ready, inference pending
 
@@ -186,7 +186,7 @@ Contract differences from the request step:
 
 ## Serving and runtime configuration
 
-Granite serves `mySociety/granite-tiny-foi-topic-grounded-v2-merged`, containing the
+Granite serves `mySociety/foi-topic-1b-2026-09-16-1`, containing the
 `grounded-v2` adapter merged into Granite 4.0 1B. The merged artifact was inspected
 at revision `c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79`; its tokenizer/chat template
 is pinned locally to that revision. Exoscale imports weights by repository name,
@@ -243,7 +243,7 @@ curl -X POST 'http://localhost:8080/agents/foi_structure/extract?backend=exoscal
   -d '{"request":"Please provide the annual expenditure report."}'
 ```
 
-This uses the `question_slice_v2` deployment in `conf/deployments.toml`, with the
+This uses the `question_slice` deployment in `conf/deployments.toml`, with the
 existing ensure/resume/idle-scaling lifecycle. Exoscale's gateway does not expose
 vLLM's native `/classify`, so this backend serves the **fine-tuned encoder** through
 `/v1/embeddings` with mean pooling and normalisation disabled, then applies the
