@@ -7,6 +7,8 @@ container and model into a VM template and configuring deployments to use it.
 
 This acts as an intermediary between services/analysis processes and Exoscale, providing consistent endpoints, scale-to-zero, and specific functions with post-validation to centralise more complex LLM calls (e.g. extracting structure from FOI requests.)
 
+Development conventions are documented in [Coding style](docs/coding-style.md).
+
 ## Configuration
 
 ### Environment variables
@@ -281,12 +283,14 @@ these extraction tests. These smoke tests do not establish production accuracy.
 
 | Guide | Contents |
 | --- | --- |
+| [Architecture](docs/architecture.md) | Ownership, dependency direction, reading paths and adding features |
 | [Deployment management](docs/deployments.md) | Lifecycle, replica overrides, cooldown and group warm-up |
 | [FOI processing](docs/foi.md) | Extraction, topics, pending response analysis, provenance and batch examples |
 | [Sanitization and resources](docs/sanitization.md) | PII policy, attestations, leases and idle unloading |
 | [Correspondence classifiers](docs/classifiers.md) | SAR and automatic-response decisions, fast modes and failure policies |
 | [Clef and System One](docs/systemone.md) | Proxy and typed immigration classification |
 | [VM template preparation](EXOSCALE_TEMPLATES.md) | Preparing and verifying reusable model-server templates |
+| [Shared GPU serving proposal](docs/proposals/shared-gpu-serving.md) | Proposed Compute extraction and LoRA serving; not implemented |
 
 Start reading application code at `bootstrap.py` and `server.py`. HTTP contracts
 live under `api/`; deployment lifecycle and cloud operations live under
