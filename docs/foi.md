@@ -501,3 +501,18 @@ end
 ```
 
 As in the Python example, results retain input order and individual failures do not discard successful results. Warm-up failure stops the batch before inference is submitted. Successful responses are parsed Ruby hashes with string keys, rather than Pydantic objects; this example relies on the API's response validation and does not perform equivalent client-side schema validation. The queue is in memory, there are no automatic retries, and normal deployment idle scaling still applies.
+
+### Status validation
+
+Local tests in `tests/test_foi_status.py` exercise the exact prompt, sanitization,
+context admission, real SDK transport with mocked responses, completion checks,
+reference validation and lifecycle activity. Live semantic examples are in
+`tests/test_foi_status_external.py`; run them explicitly:
+
+```sh
+poetry run pytest -m external tests/test_foi_status_external.py -q
+```
+
+These tests may provision the configured Exoscale GPU deployment. They check
+supplied, not-held, withheld, pending and acknowledgement examples, and may fail
+on this candidate even when transport and schema validation succeed.
