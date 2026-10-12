@@ -89,3 +89,13 @@ See [Exoscale’s current authentication guide](https://community.exoscale.com/p
 The application uses that configured key for managed inference and never queries
 Exoscale for deployment-specific credentials. Deployment status remains readable
 without a key, but inference requires it.
+
+Managed deployments can set `inference_engine_version` to select a provider runtime
+explicitly. Omitting it keeps the provider default. OLMo selects `0.29.0`:
+the provider default `0.31.0` crashes in Anthropic endpoint initialization when it
+probes OLMo's template without defining `tools`. The 0.29.0 code path avoids that
+probe when no explicit template override is supplied. See the upstream
+[0.29.0 initialization](https://github.com/vllm-project/vllm/blob/v0.29.0/vllm/entrypoints/anthropic/serving.py)
+and [0.31.0 probe](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/entrypoints/anthropic/serving.py).
+Changing this pin requires a fresh deployment
+and live inference checks.

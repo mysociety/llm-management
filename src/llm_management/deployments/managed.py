@@ -131,14 +131,19 @@ class ManagedDeployment:
         _t0 = time.monotonic()
         rich.print(f"Creating deployment {self.config.deployment_name}...")
         try:
-            op = client.create_deployment(
-                name=self.config.deployment_name,
-                model={"name": self.config.model},
-                gpu_type=self.config.gpu_type,
-                gpu_count=self.config.gpu_count,
-                replicas=self.config.replicas if replicas is None else replicas,
-                inference_engine_parameters=self.config.inference_engine_params,
-            )
+            parameters: dict[str, Any] = {
+                "name": self.config.deployment_name,
+                "model": {"name": self.config.model},
+                "gpu_type": self.config.gpu_type,
+                "gpu_count": self.config.gpu_count,
+                "replicas": self.config.replicas if replicas is None else replicas,
+                "inference_engine_parameters": self.config.inference_engine_params,
+            }
+            if self.config.inference_engine_version is not None:
+                parameters["inference_engine_version"] = (
+                    self.config.inference_engine_version
+                )
+            op = client.create_deployment(**parameters)
         except ExoscaleAPIClientException as e:
             raise LLMManagementError(
                 f"Failed to create deployment {self.config.deployment_name}: {e}"

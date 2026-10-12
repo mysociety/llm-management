@@ -254,3 +254,18 @@ def test_missing_inference_key_keeps_status_readable(deployment, monkeypatch):
     with pytest.raises(LLMManagementError, match="EXOSCALE_INFERENCE_API_KEY"):
         backend.connection_info()
     client.reveal_deployment_api_key.assert_not_called()
+
+
+@pytest.mark.parametrize("version", [None, "0.29.0"])
+def test_managed_creation_preserves_engine_selection(deployment, version):
+    """
+    Forward an explicit runtime pin while retaining provider defaults when omitted.
+    """
+    _, cfg, _, client, _ = deployment
+    cfg.inference_engine_version = version
+    ManagedDeployment(cfg).create_deployment()
+    parameters = client.create_deployment.call_args.kwargs
+    if version is None:
+        assert "inference_engine_version" not in parameters
+    else:
+        assert parameters["inference_engine_version"] == version
