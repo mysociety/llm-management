@@ -27,3 +27,6 @@ HTTP returns 200. One application service owns locks, backend controllers and ac
 
 Run `poetry run pytest -m 'not external' -q`, `poetry run ruff check .` and
 `poetry run ruff format --check .`. External tests contact or create cloud resources.
+
+Local CPU inference and Presidio sanitization use leased, lazy resources. See
+[sanitization and resources](docs/sanitization.md).

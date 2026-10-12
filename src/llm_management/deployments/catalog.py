@@ -4,7 +4,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 import tomllib
-from typing import TypeVar
+from typing import Annotated, Literal, TypeVar
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from .config import DeploymentConfig, ExoscaleDeployments, ComputeDeploymentConfig
 from .errors import LLMManagementError
@@ -28,12 +28,18 @@ class LocalModelDeployment(LocalDeployment):
     model_ref: str = Field(min_length=1)
 
 
-LocalDeploymentConfig = LocalDeployment
+class PresidioDeployment(LocalDeployment):
+    loader: Literal["presidio"]
+    spacy_model: str = Field(min_length=1)
+    score_threshold: float = Field(ge=0, le=1, allow_inf_nan=False)
+
+
+LocalDeploymentConfig = Annotated[PresidioDeployment, Field(discriminator="loader")]
 L = TypeVar("L", bound=LocalDeployment)
 
 
 class LocalDeployments(CatalogModel):
-    deployment: list[LocalDeploymentConfig] = Field(default_factory=list, max_length=0)
+    deployment: list[LocalDeploymentConfig] = Field(default_factory=list)
 
     def get(self, slug: str, kind: type[L]) -> L:
         for deployment in self.deployment:
@@ -51,11 +57,16 @@ class DeploymentGroupConfig(CatalogModel):
     deployments: list[str] = Field(min_length=1)
 
 
+class SanitizationConfig(CatalogModel):
+    deployment: str
+
+
 class DeploymentCatalog(CatalogModel):
     model: dict[str, ModelCheckpoint] = Field(default_factory=dict)
     exoscale: ExoscaleDeployments = Field(default_factory=ExoscaleDeployments)
     local: LocalDeployments = Field(default_factory=LocalDeployments)
     deployment_group: list[DeploymentGroupConfig] = Field(default_factory=list)
+    sanitization: SanitizationConfig | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -124,6 +135,11 @@ class DeploymentCatalog(CatalogModel):
                 raise ValueError(
                     f"Unknown resources in group {group.slug}: {sorted(unknown)}"
                 )
+        try:
+            if self.sanitization:
+                self.local.get(self.sanitization.deployment, PresidioDeployment)
+        except LLMManagementError as exc:
+            raise ValueError(str(exc)) from exc
         return self
 
     @classmethod
@@ -148,6 +164,11 @@ class DeploymentCatalog(CatalogModel):
             if group.slug == slug:
                 return group
         raise LLMManagementError(f"No deployment group found with slug {slug!r}")
+
+    def require_sanitizer(self) -> PresidioDeployment:
+        if self.sanitization is None:
+            raise LLMManagementError("Sanitization is not configured")
+        return self.local.get(self.sanitization.deployment, PresidioDeployment)
 
 
 @lru_cache(maxsize=1)
