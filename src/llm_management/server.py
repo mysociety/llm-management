@@ -7,7 +7,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from .api import agents, deployments, proxies
+from .api import agents, deployments, proxies, foi
 from .api.auth import require_bearer_auth_when_enabled
 from .bootstrap import Application, assemble_application
 from .deployments.errors import DeploymentServiceError
@@ -75,6 +75,7 @@ def create_app(application: Application | None = None) -> FastAPI:
 
     for routes in (deployments, proxies, agents):
         app.include_router(routes.build_router(service))
+    app.include_router(foi.build_router(service, application.foi))
     return app
 
 
