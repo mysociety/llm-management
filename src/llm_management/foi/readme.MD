@@ -1,4 +1,5 @@
 # FOI pipeline guide
 
 See [the FOI guide](../../../docs/foi.md) for pipeline behaviour, API contracts,
-model provenance and batch examples.
+model provenance and batch examples. See [the architecture guide](../../../docs/architecture.md)
+for application assembly and source navigation.
