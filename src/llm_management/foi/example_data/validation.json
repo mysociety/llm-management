@@ -1,0 +1,673 @@
+{
+  "requests": [
+    {
+      "id": "R1",
+      "title": "Multiple prose questions: transport budgets and policing",
+      "provenance": "- `case_id` / `group_id`: `e39048d3-3c1a-5d89-9690-13205d79aa4f`\n- Raw-text source: companion topic split line 1, `prompt[1].content.request_text`.\n- Gold-label source: QuestionSlice split lines 1–6.\n\nThree separate questions; budget qualifications remain attached to the first two questions.",
+      "input": {
+        "request": "I am writing to request some information about how public funds are allocated and managed in our region, particularly regarding transport and policing. Could you provide a breakdown of how the regional transport budget is allocated to different public transport modes, such as bus, rail, and trams? I am interested in the most recent summary of budget allocations and any available figures for the current financial year. Additionally, I would like to know the annual budgets and expenditure for highway maintenance for each local authority district within the region. Please include winter gritting expenditure figures if available. Finally, I would appreciate details about the legal requirements and process that guide police stop and search procedures in this region."
+      },
+      "expected": {
+        "questions": [
+          {
+            "question_id": "q1",
+            "text": "Could you provide a breakdown of how the regional transport budget is allocated to different public transport modes, such as bus, rail, and trams? I am interested in the most recent summary of budget allocations and any available figures for the current financial year."
+          },
+          {
+            "question_id": "q2",
+            "text": "Additionally, I would like to know the annual budgets and expenditure for highway maintenance for each local authority district within the region. Please include winter gritting expenditure figures if available."
+          },
+          {
+            "question_id": "q3",
+            "text": "Finally, I would appreciate details about the legal requirements and process that guide police stop and search procedures in this region."
+          }
+        ],
+        "extraction_status": "questions_found",
+        "additional_text": [
+          "I am writing to request some information about how public funds are allocated and managed in our region, particularly regarding transport and policing."
+        ]
+      },
+      "classification": {
+        "questions": [
+          {
+            "question_id": "q1",
+            "regime": "FOI",
+            "topic": "regional transport budget allocation by public transport mode"
+          },
+          {
+            "question_id": "q2",
+            "regime": "FOI",
+            "topic": "highway maintenance budgets and expenditure by local authority district"
+          },
+          {
+            "question_id": "q3",
+            "regime": "FOI",
+            "topic": "police stop and search legal requirements"
+          }
+        ],
+        "request_topics": [
+          "regional transport budget allocation by public transport mode",
+          "highway maintenance budgets and expenditure by local authority district",
+          "police stop and search legal requirements"
+        ]
+      },
+      "accepted_classifications": [
+        {
+          "output": {
+            "questions": [
+              {
+                "question_id": "q1",
+                "regime": "FOI",
+                "topic": "regional transport budget allocations by mode"
+              },
+              {
+                "question_id": "q2",
+                "regime": "FOI",
+                "topic": "highway maintenance budgets and expenditure by local authority district"
+              },
+              {
+                "question_id": "q3",
+                "regime": "FOI",
+                "topic": "police stop and search legal requirements and process"
+              }
+            ],
+            "request_topics": [
+              "regional transport budget allocations by mode",
+              "highway maintenance budgets and expenditure by local authority district",
+              "police stop and search legal requirements and process"
+            ]
+          },
+          "reason": "Alternate topic wording describes the same requested subjects; question IDs, order and access regimes are unchanged.",
+          "provenance": "Observed on both CPU and Exoscale extraction in paid validation 2026-10-12 (run 20261012_202716); reviewed as equivalent by the user. Topic model: mySociety/foi-topic-1b-2026-09-16-1."
+        }
+      ]
+    },
+    {
+      "id": "R2",
+      "title": "Wrapped lines and a list item: planning statistics",
+      "provenance": "- `case_id` / `group_id`: `e565022d-c595-5bc2-8026-734024b8ab62`\n- Raw-text source: companion topic split line 3, `prompt[1].content.request_text`.\n- Gold-label source: QuestionSlice split lines 12–17.\n\nJoin wrapped lines and keep the requested monthly breakdown within q1. Existing redaction placeholders are literal dataset text.",
+      "input": {
+        "request": "I am writing to request a statistical overview of planning\napplications handled by your authority. This request is made\nunder the relevant provisions for access to recorded\ninformation held by public authorities.\nRequester: <PERSON>. Email: <EMAIL_ADDRESS>.\n- Please provide the number of planning applications received and the number determined each month for the period from January 2023 to December 2023.\nThe figures should be broken down by calendar month and\nindicate the number of applications received, the number\napproved, refused, withdrawn, and those still under\nconsideration at year end."
+      },
+      "expected": {
+        "questions": [
+          {
+            "question_id": "q1",
+            "text": "- Please provide the number of planning applications received and the number determined each month for the period from January 2023 to December 2023. The figures should be broken down by calendar month and indicate the number of applications received, the number approved, refused, withdrawn, and those still under consideration at year end."
+          }
+        ],
+        "extraction_status": "questions_found",
+        "additional_text": [
+          "I am writing to request a statistical overview of planning applications handled by your authority.",
+          "This request is made under the relevant provisions for access to recorded information held by public authorities.",
+          "Requester: <PERSON>.",
+          "Email: <EMAIL_ADDRESS>."
+        ]
+      },
+      "classification": {
+        "questions": [
+          {
+            "question_id": "q1",
+            "regime": "FOI",
+            "topic": "planning application statistics"
+          }
+        ],
+        "request_topics": [
+          "planning application statistics"
+        ]
+      },
+      "accepted_classifications": [
+        {
+          "output": {
+            "questions": [
+              {
+                "question_id": "q1",
+                "regime": "FOI",
+                "topic": "planning applications statistics"
+              }
+            ],
+            "request_topics": [
+              "planning applications statistics"
+            ]
+          },
+          "reason": "Alternate topic wording describes the same requested subjects; question IDs, order and access regimes are unchanged.",
+          "provenance": "Observed on both CPU and Exoscale extraction in paid validation 2026-10-12 (run 20261012_202716); reviewed as equivalent by the user. Topic model: mySociety/foi-topic-1b-2026-09-16-1."
+        }
+      ]
+    },
+    {
+      "id": "R3",
+      "title": "Environmental request with separately labelled context: air monitoring",
+      "provenance": "- `case_id` / `group_id`: `bada42e1-214b-53c7-8f4d-a43a618b83e6`\n- Raw-text source: companion topic split line 6, `prompt[1].content.request_text`.\n- Gold-label source: QuestionSlice split lines 27–29.\n\nThe dataset labels the two sentences beginning “Focus on” and “Specify” as ADDITIONAL. Preserve them in additional_text; this is the recorded gold expectation, even though they could plausibly be interpreted as question qualifications.",
+      "input": {
+        "request": "• List the geographic locations and operational status of all active sites in the national air quality monitoring network.\nFocus on sites that currently measure PM2.5, NO2, O3, SO2, and CO in line with UK-adopted EU directives. Specify whether each site is urban, rural, or roadside."
+      },
+      "expected": {
+        "questions": [
+          {
+            "question_id": "q1",
+            "text": "• List the geographic locations and operational status of all active sites in the national air quality monitoring network."
+          }
+        ],
+        "extraction_status": "questions_found",
+        "additional_text": [
+          "Focus on sites that currently measure PM2.5, NO2, O3, SO2, and CO in line with UK-adopted EU directives.",
+          "Specify whether each site is urban, rural, or roadside."
+        ]
+      },
+      "classification": {
+        "questions": [
+          {
+            "question_id": "q1",
+            "regime": "EIR",
+            "topic": "national air quality monitoring network sites"
+          }
+        ],
+        "request_topics": [
+          "national air quality monitoring network sites"
+        ]
+      },
+      "accepted_classifications": [
+        {
+          "output": {
+            "questions": [
+              {
+                "question_id": "q1",
+                "regime": "EIR",
+                "topic": "active air quality monitoring sites"
+              }
+            ],
+            "request_topics": [
+              "active air quality monitoring sites"
+            ]
+          },
+          "reason": "Alternate topic wording describes the same requested subjects; question IDs, order and access regimes are unchanged.",
+          "provenance": "Observed on both CPU and Exoscale extraction in paid validation 2026-10-12 (run 20261012_202716); reviewed as equivalent by the user. Topic model: mySociety/foi-topic-1b-2026-09-16-1."
+        }
+      ],
+      "accepted_extractions": [
+        {
+          "output": {
+            "questions": [
+              {
+                "question_id": "q1",
+                "text": "• List the geographic locations and operational status of all active sites in the national air quality monitoring network. Focus on sites that currently measure PM2.5, NO2, O3, SO2, and CO in line with UK-adopted EU directives. Specify whether each site is urban, rural, or roadside."
+              }
+            ],
+            "extraction_status": "questions_found",
+            "additional_text": []
+          },
+          "reason": "The Focus on and Specify sentences qualify q1 rather than appearing in additional_text. All original content is preserved with the same single question.",
+          "provenance": "Observed on both CPU and Exoscale in paid validation 2026-10-12 (run 20261012_202716); reviewed as an acceptable interpretation by the user. Extraction model: mySociety/question-slice-modernbert-2026-09-08-1, revision eb0436d4be96f113f35b5f891f9cc876a0f0bd6b."
+        }
+      ]
+    },
+    {
+      "id": "R4",
+      "title": "Personal records: social care correspondence",
+      "provenance": "- `case_id` / `group_id`: `ea48f5fc-fa19-595d-bfdd-978cd3e2fe0e`\n- Raw-text source: companion topic split line 14, `prompt[1].content.request_text`.\n- Gold-label source: QuestionSlice split lines 63–67.\n\nThe repeated introductory request is ADDITIONAL. Extract the explicit request and its date qualification as one question.",
+      "input": {
+        "request": "I am writing to request copies of all correspondence between\nmyself and my allocated social care support worker.\nThis request is from <PERSON>. Replies can be sent to\n<EMAIL_ADDRESS>.\nPlease provide copies of all emails or letters exchanged\nbetween me and my allocated social care support worker.\nThese records should cover the period from January 2023 to\nthe present."
+      },
+      "expected": {
+        "questions": [
+          {
+            "question_id": "q1",
+            "text": "Please provide copies of all emails or letters exchanged between me and my allocated social care support worker. These records should cover the period from January 2023 to the present."
+          }
+        ],
+        "extraction_status": "questions_found",
+        "additional_text": [
+          "I am writing to request copies of all correspondence between myself and my allocated social care support worker.",
+          "This request is from <PERSON>.",
+          "Replies can be sent to <EMAIL_ADDRESS>."
+        ]
+      },
+      "classification": {
+        "questions": [
+          {
+            "question_id": "q1",
+            "regime": "SAR",
+            "topic": "communications with allocated social care support worker"
+          }
+        ],
+        "request_topics": [
+          "communications with allocated social care support worker"
+        ]
+      },
+      "accepted_classifications": [
+        {
+          "output": {
+            "questions": [
+              {
+                "question_id": "q1",
+                "regime": "SAR",
+                "topic": "correspondence with social care support worker"
+              }
+            ],
+            "request_topics": [
+              "correspondence with social care support worker"
+            ]
+          },
+          "reason": "Alternate topic wording describes the same requested subjects; question IDs, order and access regimes are unchanged.",
+          "provenance": "Observed on both CPU and Exoscale extraction in paid validation 2026-10-12 (run 20261012_202716); reviewed as equivalent by the user. Topic model: mySociety/foi-topic-1b-2026-09-16-1."
+        }
+      ]
+    },
+    {
+      "id": "R5",
+      "title": "Mixed personal and environmental requests with two bullet styles",
+      "provenance": "- `case_id` / `group_id`: `4c1f73bf-a4df-57df-81ee-9883956f5b1f`\n- Raw-text source: companion topic split line 17, `prompt[1].content.request_text`.\n- Gold-label source: QuestionSlice split lines 75–85.\n\nKeep care records and land contamination reports as separate questions, with their respective continuations. Contact placeholders and the closing thanks are ADDITIONAL in the gold labels.",
+      "input": {
+        "request": "I need some information from Northbridge Borough Council. Please treat this as two separate requests below. I am <PERSON>. Email: <EMAIL_ADDRESS>. My postal address is <ADDRESS>. Telephone: <PHONE_NUMBER>.\n• Can you send me the minutes and notes from my most recent annual care plan review meeting and any earlier review records you hold?\nPlease include any amendments or updates made to my care or support plan in the last three years.\n* Also, could you provide me with preliminary land contamination reports you have for any sites currently under consideration for development by Northbridge Borough Council?\nI am particularly interested in reports that include details on chemicals detected during site surveys and any initial recommendations for further investigation. Thanks for your help."
+      },
+      "expected": {
+        "questions": [
+          {
+            "question_id": "q1",
+            "text": "• Can you send me the minutes and notes from my most recent annual care plan review meeting and any earlier review records you hold? Please include any amendments or updates made to my care or support plan in the last three years."
+          },
+          {
+            "question_id": "q2",
+            "text": "* Also, could you provide me with preliminary land contamination reports you have for any sites currently under consideration for development by Northbridge Borough Council? I am particularly interested in reports that include details on chemicals detected during site surveys and any initial recommendations for further investigation."
+          }
+        ],
+        "extraction_status": "questions_found",
+        "additional_text": [
+          "I need some information from Northbridge Borough Council.",
+          "Please treat this as two separate requests below.",
+          "I am <PERSON>.",
+          "Email: <EMAIL_ADDRESS>.",
+          "My postal address is <ADDRESS>.",
+          "Telephone: <PHONE_NUMBER>.",
+          "Thanks for your help."
+        ]
+      },
+      "classification": {
+        "questions": [
+          {
+            "question_id": "q1",
+            "regime": "SAR",
+            "topic": "care plan review records"
+          },
+          {
+            "question_id": "q2",
+            "regime": "EIR",
+            "topic": "preliminary land contamination reports for development sites"
+          }
+        ],
+        "request_topics": [
+          "care plan review records",
+          "preliminary land contamination reports for development sites"
+        ]
+      },
+      "accepted_classifications": [
+        {
+          "output": {
+            "questions": [
+              {
+                "question_id": "q1",
+                "regime": "SAR",
+                "topic": "annual care plan review minutes and notes"
+              },
+              {
+                "question_id": "q2",
+                "regime": "EIR",
+                "topic": "preliminary land contamination reports for development sites"
+              }
+            ],
+            "request_topics": [
+              "annual care plan review minutes and notes",
+              "preliminary land contamination reports for development sites"
+            ]
+          },
+          "reason": "Alternate topic wording describes the same requested subjects; question IDs, order and access regimes are unchanged.",
+          "provenance": "Observed on both CPU and Exoscale extraction in paid validation 2026-10-12 (run 20261012_202716); reviewed as equivalent by the user. Topic model: mySociety/foi-topic-1b-2026-09-16-1."
+        }
+      ]
+    }
+  ],
+  "responses": [
+    {
+      "id": "S1",
+      "title": "Information supplied in an unavailable attachment",
+      "provenance": "- Validation split line: 1.\n- `family_id`: `fbacb537-5907-5b78-8950-fc683095f380`.\n- Recipe: `attachment_supplied_unobservable`; form: `expansion_v4`.\n- Original `input_sha256`: `b7853cc3d59ab63552dd5fe147a61241616a70a9a84c996af7f8375b03a05a1f`.\n- Original `pair_sha256`: `00bfd0857598b9cb9b4801b2e079dd801abd289b4fdd710f499f91cb9f5cea3a`.\n\nAn explicit supply claim is present, but the attachment text is unavailable: supplied / unobservable, with attachment as the content source.",
+      "input": {
+        "request": {
+          "additional_text": [],
+          "extraction_status": "questions_found",
+          "questions": [
+            {
+              "question_id": "q1",
+              "text": "1) Please provide a log or summary of amendments made to the force’s policing policies and guidance over the past five years.\nI am interested in records such as revision logs, change registers, or dated summaries that document the nature and timing of these amendments."
+            }
+          ]
+        },
+        "request_text": "I am writing to request information regarding changes that have been made to the Northbridge Constabulary’s policing procedures and guidance documents at the force level. I am particularly interested in understanding the amendments that have taken place over recent years.\n1) Please provide a log or summary of amendments made to the force’s policing policies and guidance over the past five years.\nI am interested in records such as revision logs, change registers, or dated summaries that document the nature and timing of these amendments.",
+        "sources": [
+          {
+            "availability": "visible",
+            "filename": null,
+            "id": "email",
+            "kind": "email",
+            "role": "current",
+            "sender": "authority",
+            "text": "Dear Sir or Madam,\n\nYour request asked: 1) Please provide a log or summary of amendments made to the force’s policing policies and guidance over the past five years. I am interested in records such as revision logs, change registers, or dated summaries that document the nature and timing of these amendments.\n\nWe are supplying the information requested in this question in the attached response.pdf.\n\nYours sincerely,\nInformation Rights Team"
+          },
+          {
+            "availability": "unavailable",
+            "filename": "response.pdf",
+            "id": "attachment",
+            "kind": "attachment",
+            "role": "current",
+            "sender": "authority",
+            "text": null
+          }
+        ]
+      },
+      "expected": {
+        "events": [],
+        "outcomes": [
+          {
+            "act": "supplied",
+            "answer_content_visibility": "unobservable",
+            "content_source_ids": [
+              "attachment"
+            ],
+            "references": [],
+            "scope": {
+              "kind": "question",
+              "question_id": "q1"
+            }
+          }
+        ],
+        "process_references": [],
+        "process_states": null
+      }
+    },
+    {
+      "id": "S2",
+      "title": "Delayed response with a promise to answer one question",
+      "provenance": "- Validation split line: 14.\n- `family_id`: `f801d6d8-7c0f-58c7-8510-c6030dde00da`.\n- Recipe: `delay_with_pending`; form: `expansion_v4`.\n- Original `input_sha256`: `26bc707980ae76eef8b01598026c29ac37b2a12578abc00689e50672b076c7d9`.\n- Original `pair_sha256`: `08d70e1ed18bf34bf30958b44c32ada7455a118942b1df2a6b4dac95561d0798`.\n\nRecord pending and delay_notice for q1 only. The reply does not establish an outcome for q2; do not invent one or add a processing event.",
+      "input": {
+        "request": {
+          "additional_text": [],
+          "extraction_status": "questions_found",
+          "questions": [
+            {
+              "question_id": "q1",
+              "text": "Could you provide a summary of the quarterly performance reports detailing how public services have met their targets over the past two years?\nSpecifically, I am interested in reports for education services, but information on other service areas is also welcome."
+            },
+            {
+              "question_id": "q2",
+              "text": "Additionally, please describe the key performance indicators that are used to monitor the delivery of public services across your administration.\nI would appreciate details on how these indicators are defined, how often they are reviewed, and any recent changes to the framework."
+            }
+          ]
+        },
+        "request_text": "I am writing to request information regarding the systems and processes used by Northbridge Public Administration to monitor and report on the performance of public services. Could you provide a summary of the quarterly performance reports detailing how public services have met their targets over the past two years? Specifically, I am interested in reports for education services, but information on other service areas is also welcome. Additionally, please describe the key performance indicators that are used to monitor the delivery of public services across your administration. I would appreciate details on how these indicators are defined, how often they are reviewed, and any recent changes to the framework.",
+        "sources": [
+          {
+            "availability": "visible",
+            "filename": null,
+            "id": "email",
+            "kind": "email",
+            "role": "current",
+            "sender": "authority",
+            "text": "Dear Sir or Madam,\n\nRegarding your question: Could you provide a summary of the quarterly performance reports detailing how public services have met their targets over the past two years?\nSpecifically, I am interested in reports for education services, but information on other service areas is also welcome.\n\nOur substantive response to this question is delayed. We will send that response separately.\n\nYours sincerely,\nInformation Rights Team"
+          }
+        ]
+      },
+      "expected": {
+        "events": [
+          {
+            "kind": "delay_notice",
+            "references": [],
+            "scope": {
+              "kind": "question",
+              "question_id": "q1"
+            }
+          }
+        ],
+        "outcomes": [
+          {
+            "act": "pending",
+            "answer_content_visibility": "not_applicable",
+            "content_source_ids": [],
+            "references": [],
+            "scope": {
+              "kind": "question",
+              "question_id": "q1"
+            }
+          }
+        ],
+        "process_references": [],
+        "process_states": null
+      }
+    },
+    {
+      "id": "S3",
+      "title": "Internal review acknowledgement with an earlier refusal",
+      "provenance": "- Validation split line: 9.\n- `family_id`: `bb725965-bf51-5d63-9015-d616b3d7863f`.\n- Recipe: `review_acknowledgement`; form: `expansion_v4`.\n- Original `input_sha256`: `63643d953e0ce8f82e12fda8d7d2e101103fe350cf809cad95664676189c3862`.\n- Original `pair_sha256`: `05fe1eacb7d71bb6c7df1e67c20e46e581320157c04f74fc354b3d870419a284`.\n\nThe current message acknowledges a review. The earlier refusal is context, not a new current withholding outcome.",
+      "input": {
+        "request": {
+          "additional_text": [],
+          "extraction_status": "questions_found",
+          "questions": [
+            {
+              "question_id": "q1",
+              "text": "Could you provide the annual figures for the number of complaints received and the outcomes of those complaints for each year from 2020 to 2023?\nI am interested in data broken down by year, including the number of complaints received, the number acknowledged within target times, the number resolved in favour of the complainant, the number not upheld, and any other standard outcome categories you record."
+            }
+          ]
+        },
+        "request_text": "I am writing to ask about the annual statistics relating to complaints made to and handled by Northbridge Public Administration in recent years. Could you provide the annual figures for the number of complaints received and the outcomes of those complaints for each year from 2020 to 2023? I am interested in data broken down by year, including the number of complaints received, the number acknowledged within target times, the number resolved in favour of the complainant, the number not upheld, and any other standard outcome categories you record.",
+        "sources": [
+          {
+            "availability": "visible",
+            "filename": null,
+            "id": "prior_decision",
+            "kind": "email",
+            "role": "prior",
+            "sender": "authority",
+            "text": "Dear Sir or Madam,\n\nIn our earlier response, we refused the information requested.\n\nYours sincerely,\nInformation Rights Team"
+          },
+          {
+            "availability": "visible",
+            "filename": null,
+            "id": "email",
+            "kind": "email",
+            "role": "current",
+            "sender": "authority",
+            "text": "Dear Sir or Madam,\n\nYour request asked: Could you provide the annual figures for the number of complaints received and the outcomes of those complaints for each year from 2020 to 2023? I am interested in data broken down by year, including the number of complaints received, the number acknowledged within target times, the number resolved in favour of the complainant, the number not upheld, and any other standard outcome categories you record.\n\nWe acknowledge your request for an internal review. The review has not yet been decided.\n\nYours sincerely,\nInformation Rights Team"
+          }
+        ]
+      },
+      "expected": {
+        "events": [
+          {
+            "kind": "internal_review_acknowledgement",
+            "references": [],
+            "scope": {
+              "kind": "question",
+              "question_id": "q1"
+            }
+          }
+        ],
+        "outcomes": [],
+        "process_references": [],
+        "process_states": null
+      }
+    },
+    {
+      "id": "S4",
+      "title": "Partly revised internal review: supplied and withheld",
+      "provenance": "- Validation split line: 3.\n- `family_id`: `f53158ee-95c8-582d-911e-b2d5406e8223`.\n- Recipe: `review_partly_revised`; form: `expansion_v4`.\n- Original `input_sha256`: `d44f3b8e740c96c29d74eab42a5f1bba286a7d4e6297a46d20b9fa6aa15f342e`.\n- Original `pair_sha256`: `01a7b0f8c54591b699f449d755703a3cc5d43ffe13df7eb3c7b346df16de2f37`.\n\nThe current review releases q1 and maintains withholding for q2 under FOIA section 36. Record the whole-request partly_revised review decision and both question outcomes.",
+      "input": {
+        "request": {
+          "additional_text": [],
+          "extraction_status": "questions_found",
+          "questions": [
+            {
+              "question_id": "q1",
+              "text": "(a) Please provide the population growth rates and demographic projections currently used by the Council when assessing the need for new school places over the next five years."
+            },
+            {
+              "question_id": "q2",
+              "text": "1. Please detail the assumptions regarding sibling priority and any other priority admission categories that are factored into school place planning and related resource allocation decisions."
+            }
+          ]
+        },
+        "request_text": "Northbridge Borough Council is responsible for planning and\nallocating school places across the borough. This planning\ntypically relies on a set of underlying demographic and\nenrolment assumptions that inform decisions about when and\nwhere to create new school capacity.\n(a) Please provide the population growth rates and demographic projections currently used by the Council when assessing the need for new school places over the next five years.\nIn addition to overall population trends, planning documents\nmay also incorporate assumptions about enrolment patterns,\nincluding priority admissions and sibling policies.\n1. Please detail the assumptions regarding sibling priority and any other priority admission categories that are factored into school place planning and related resource allocation decisions.",
+        "sources": [
+          {
+            "availability": "visible",
+            "filename": null,
+            "id": "prior_decision",
+            "kind": "email",
+            "role": "prior",
+            "sender": "authority",
+            "text": "Dear Sir or Madam,\n\nIn our earlier response, we refused the information requested.\n\nYours sincerely,\nInformation Rights Team"
+          },
+          {
+            "availability": "visible",
+            "filename": null,
+            "id": "email",
+            "kind": "email",
+            "role": "current",
+            "sender": "authority",
+            "text": "Dear Sir or Madam,\n\nOur internal review is complete. We have partly revised our earlier decision: we now release the information for the first question, but maintain the refusal for the second question.\n\nRegarding your question: (a) Please provide the population growth rates and demographic projections currently used by the Council when assessing the need for new school places over the next five years.\n\nWe are supplying the information for the first question below:\n\nThe Council currently uses annual population growth rates of approximately 1.2% for the local authority area, based on ONS mid-year estimates and local authority projections. For demographic projections over the next five years, the Council employs a cohort-component model that factors in birth rates, migration patterns, and household formation. Recent projections suggest a steady increase in the 0-15 age cohort, with an anticipated rise of 8.5% by 2029. These figures inform the annual review of primary and secondary school capacity needs, which includes rolling five-year forecasts updated quarterly. The methodology aligns with the Department for Education’s guidance on school place planning.\n\nRegarding your question: 1. Please detail the assumptions regarding sibling priority and any other priority admission categories that are factored into school place planning and related resource allocation decisions.\n\nFor the second question, we continue to withhold the information requested under section 36 of the Freedom of Information Act 2000.\n\nYours sincerely,\nInformation Rights Team"
+          }
+        ]
+      },
+      "expected": {
+        "events": [
+          {
+            "kind": "internal_review_decision",
+            "references": [],
+            "review_result": "partly_revised",
+            "scope": {
+              "kind": "whole_request"
+            }
+          }
+        ],
+        "outcomes": [
+          {
+            "act": "supplied",
+            "answer_content_visibility": "visible",
+            "content_source_ids": [
+              "email"
+            ],
+            "references": [],
+            "scope": {
+              "kind": "question",
+              "question_id": "q1"
+            }
+          },
+          {
+            "act": "withheld",
+            "answer_content_visibility": "not_applicable",
+            "content_source_ids": [],
+            "references": [
+              {
+                "instrument": "foia_2000",
+                "provision": "36",
+                "role": "basis_for_withholding",
+                "subsection": null
+              }
+            ],
+            "scope": {
+              "kind": "question",
+              "question_id": "q2"
+            }
+          }
+        ],
+        "process_references": [],
+        "process_states": null
+      }
+    },
+    {
+      "id": "S5",
+      "title": "Visible attachment with supplied, not-held and pending outcomes",
+      "provenance": "- Validation split line: 431.\n- `family_id`: `1c91cf1d-b6dc-5cb7-bbee-c8239c16317d`.\n- Recipe: `attachment_three_numbered_supplied_not_held_pending`; form: `targeted_v4`.\n- Original `input_sha256`: `1955632d3dcd5e8f14613bf5724fe8fa63c0e77c1ebd5c8b827f773b166247dd`.\n- Original `pair_sha256`: `0bd7220907974cc657ae4a429ed311fb97e1921f93655a304d7d7d9a6a2923c7`.\n\nResolve the attachment’s out-of-order decisions to q3, q1 and q2. The answer content is in attachment, not the covering email.",
+      "input": {
+        "request": {
+          "additional_text": [],
+          "extraction_status": "questions_found",
+          "questions": [
+            {
+              "question_id": "q1",
+              "text": "Provide a summary of the mandatory training completed by\nofficers within the last three years.\nThis request covers all ranks of sworn officers and includes\nboth classroom-based and online modules."
+            },
+            {
+              "question_id": "q2",
+              "text": "Disclose details of advanced training courses attended by\nofficers in the last five years, including the dates,\nproviders, and accreditation levels."
+            },
+            {
+              "question_id": "q3",
+              "text": "Supply an overview of the current approach to mandatory\ntraining delivery within the force, including frequency and\nevaluation methods."
+            }
+          ]
+        },
+        "request_text": "I am writing to request information regarding officer\ntraining records held by your authority. I am seeking\nfactual summaries of the training undertaken by officers,\nspecifically as recorded in your official files.\nProvide a summary of the mandatory training completed by\nofficers within the last three years.\nThis request covers all ranks of sworn officers and includes\nboth classroom-based and online modules.\nDisclose details of advanced training courses attended by\nofficers in the last five years, including the dates,\nproviders, and accreditation levels.\nSupply an overview of the current approach to mandatory\ntraining delivery within the force, including frequency and\nevaluation methods.",
+        "sources": [
+          {
+            "availability": "visible",
+            "filename": null,
+            "id": "email",
+            "kind": "email",
+            "role": "current",
+            "sender": "authority",
+            "text": "Dear Sir or Madam,\n\nOur reply is attached.\n\nYours sincerely,\nInformation Rights Team"
+          },
+          {
+            "availability": "visible",
+            "filename": "response.pdf",
+            "id": "attachment",
+            "kind": "attachment",
+            "role": "current",
+            "sender": "authority",
+            "text": "Decision 1: 3rd question.\n\nWe will send a substantive response concerning the 3rd question separately.\n\nDecision 2: 1st question.\n\nWe are supplying the information for the 1st question below:\n\nBetween 2021 and 2024, all sworn officers completed a series of mandatory training modules. Core topics included public order management, use of force, mental health awareness, safeguarding, and equality and diversity. Classroom-based sessions were primarily delivered annually, while online refresher courses were available quarterly. Training was provided by the Force Training Academy and accredited external providers such as the National Police College and the College of Policing. Evaluation was conducted through post-course assessments and periodic practical scenario exercises, with attendance and performance records maintained centrally.\n\nDecision 3: 2nd question.\n\nFollowing a search, we do not hold the information for the 2nd question."
+          }
+        ]
+      },
+      "expected": {
+        "events": [],
+        "outcomes": [
+          {
+            "act": "pending",
+            "answer_content_visibility": "not_applicable",
+            "content_source_ids": [],
+            "references": [],
+            "scope": {
+              "kind": "question",
+              "question_id": "q3"
+            }
+          },
+          {
+            "act": "supplied",
+            "answer_content_visibility": "visible",
+            "content_source_ids": [
+              "attachment"
+            ],
+            "references": [],
+            "scope": {
+              "kind": "question",
+              "question_id": "q1"
+            }
+          },
+          {
+            "act": "not_held",
+            "answer_content_visibility": "not_applicable",
+            "content_source_ids": [],
+            "references": [],
+            "scope": {
+              "kind": "question",
+              "question_id": "q2"
+            }
+          }
+        ],
+        "process_references": [],
+        "process_states": null
+      }
+    }
+  ]
+}

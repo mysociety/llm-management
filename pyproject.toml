@@ -10,6 +10,7 @@ repository = "https://github.com/mysociety/llm-management"
 include = [
     { path = "LICENSE.md", format = ["sdist"] },
     { path = "src/llm_management/foi/status_contract", format = ["sdist", "wheel"] },
+    { path = "src/llm_management/foi/example_data", format = ["sdist", "wheel"] },
     { path = "src/llm_management/templates/bootstrap.sh", format = ["sdist", "wheel"] },
 ]
 

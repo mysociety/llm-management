@@ -8,7 +8,6 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
 
 from ..deployments.service import DeploymentService
 from ..foi import backends, pipeline, response_analysis
@@ -16,13 +15,10 @@ from ..foi.response_schemas import ExtractionOutput, ResponseAnalysisInput
 from ..foi.schemas import (
     ExtractionBackend,
     InformationRequestResult,
+    QuestionSliceRequest,
     QuestionSliceResult,
 )
 from ..inference.errors import ClassifierBusy
-
-
-class QuestionSliceRequest(BaseModel):
-    request: str = Field(min_length=1, max_length=100_000)
 
 
 def build_router(

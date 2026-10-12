@@ -1,78 +1,85 @@
-"""Paid end-to-end smoke tests for the fine-tuned extraction/classification flow."""
+"""
+Paid extraction and topic-classification validation using the R1–R5 gold examples.
+"""
+
+from __future__ import annotations
 
 import pytest
 from starlette.testclient import TestClient
 
 from llm_management.deployments import get_catalog
+from llm_management.foi.examples import ExtractionExpectation, validation_examples
 from llm_management.foi.schemas import InformationRequestResult
 from llm_management.server import app
+from tests.foi_validation import (
+    assert_extraction_matches,
+    assert_topics_match,
+    post_example,
+)
 
 pytestmark = pytest.mark.external
 
 
 @pytest.fixture(scope="module")
 def client():
-    with TestClient(app) as c:
-        yield c
+    """
+    Release model resources and scale touched deployments down after the batch.
+    """
+    with TestClient(app) as connection:
+        yield connection
 
 
 @pytest.mark.parametrize("backend", ["cpu", "exoscale"])
 @pytest.mark.parametrize(
-    "text,regime",
-    [
-        (
-            "Dear Council,\n\nPlease provide the total number of FOI requests received last year.\n\nYours faithfully,\nA resident",
-            "FOI",
-        ),
-        ("Please provide the latest air pollution monitoring report.", "EIR"),
-        (
-            "Please provide a copy of all personal data you hold about me under my right of subject access.",
-            "SAR",
-        ),
-        (
-            "Dear Council,\n\nThank you for your response.\n\nKind regards,\nA resident",
-            None,
-        ),
-    ],
-    ids=["promoted_foi", "eir", "sar", "no_questions"],
+    "example", validation_examples().requests, ids=lambda case: case.id
 )
-def test_full_pipeline(client, backend, text, regime):
-    response = client.post(
-        "/agents/foi_structure", params={"backend": backend}, json={"request": text}
+def test_full_pipeline_validation(client, backend, example, record_property):
+    """
+    Check reviewed extraction and topics while keeping IDs and regimes strict.
+    """
+    response = post_example(
+        client,
+        "/agents/foi_structure",
+        example.id,
+        example.input,
+        record_property,
+        backend=backend,
     )
-    assert response.status_code == 200, response.text
     result = InformationRequestResult.model_validate(response.json())
-    if regime is None:
-        assert result.extraction_status == "no_questions_found"
-        assert result.classification is None
-        return
-    assert result.extraction_status == "questions_found"
+    assert_extraction_matches(
+        ExtractionExpectation.from_result(result),
+        example.expected,
+        accepted=example.accepted_extractions,
+        record_property=record_property,
+    )
     assert (
         result.classification_model
         == get_catalog().get(get_catalog().require_foi().topic_deployment).model
     )
     assert result.classification is not None
-    assert [q.question_id for q in result.classification.questions] == [
-        q.question_id for q in result.questions
-    ]
-    assert all(q.regime == regime for q in result.classification.questions)
-    if regime == "FOI":
-        assert result.promoted_continuation_index == 1
-        assert (
-            result.questions[0].text
-            == "Please provide the total number of FOI requests received last year."
-        )
+    assert_topics_match(
+        result.classification,
+        example.classification,
+        record_property,
+        accepted=example.accepted_classifications,
+    )
 
 
-def test_multiple_questions(client):
-    text = "Dear Council,\n\nPlease provide the following information:\n\n1. The latest report on air pollution monitoring.\n2. Minutes of meetings discussing that report.\n3. Internal guidance on publication of council minutes.\n\nThank you."
-    response = client.post("/agents/foi_structure", json={"request": text})
+@pytest.mark.parametrize("backend", ["cpu", "exoscale"])
+def test_no_questions_skips_classification(client, backend):
+    """
+    Retain the empty-question behaviour absent from the supplied gold examples.
+    """
+    response = client.post(
+        "/agents/foi_structure",
+        params={"backend": backend},
+        json={
+            "request": "Dear Council,\n\nThank you for your response.\n\nKind regards,\nA resident"
+        },
+    )
     assert response.status_code == 200, response.text
     result = InformationRequestResult.model_validate(response.json())
-    assert len(result.questions) == 3
-    assert [q.question_id for q in result.classification.questions] == [
-        "q1",
-        "q2",
-        "q3",
-    ]
-    assert result.classification.questions[0].regime == "EIR"
+    assert result.extraction_status == "no_questions_found"
+    assert result.questions == []
+    assert result.classification is None
+    assert result.classification_model is None
