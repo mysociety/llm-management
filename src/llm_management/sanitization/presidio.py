@@ -77,6 +77,10 @@ def add_recognizers(analyzer: AnalyzerEngine) -> None:
     from presidio_analyzer import Pattern, PatternRecognizer
     from presidio_analyzer.predefined_recognizers import PhoneRecognizer
 
+    from .recognizers import OfflineEmailRecognizer
+
+    analyzer.registry.remove_recognizer("EmailRecognizer")
+    analyzer.registry.add_recognizer(OfflineEmailRecognizer())
     analyzer.registry.add_recognizer(PhoneRecognizer(supported_regions=["GB"]))
     # libphonenumber excludes reserved/test ranges. Mask obvious UK
     # phone-shaped markers too, including numbers used in sample FOI text.

@@ -48,3 +48,6 @@ Only sanitizers construct these wrappers; they store immutable JSON snapshots an
 return fresh typed views. Chat payloads are sanitized after construction as well.
 Future GPU adapters should require this contract and unwrap only at the transport
 boundary. Raw proxy and other agent endpoints retain their existing contracts.
+
+Email validation uses the public-suffix snapshot bundled with `tldextract`. It does
+not download suffix lists or write a suffix cache during sanitization.
