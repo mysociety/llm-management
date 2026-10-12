@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .response_schemas import ExtractionOutput, ResponseAnalysisInput
 from .schemas import (
+    ExtractionBackend,
+    InformationRequestResult,
     QuestionSliceRequest,
     QuestionSliceResult,
     ReconstructedQuestion,
@@ -111,6 +113,43 @@ class RequestExample(BaseModel):
                     "Accepted classification changes question IDs or regimes"
                 )
         return self
+
+    def extraction_result(self, backend: ExtractionBackend) -> QuestionSliceResult:
+        """
+        Wrap gold extraction fields with explicit, inference-free mock diagnostics.
+        """
+        return QuestionSliceResult(
+            questions=[q.model_copy(deep=True) for q in self.expected.questions],
+            extraction_status=self.expected.extraction_status,
+            additional_text=list(self.expected.additional_text),
+            ignored_text=[],
+            unit_predictions=[],
+            extraction_backend=backend,
+            extraction_model="mock:validation-examples",
+            extraction_revision=None,
+        )
+
+    def information_result(
+        self, backend: ExtractionBackend
+    ) -> InformationRequestResult:
+        """
+        Return the complete example, including gold topics and example request text.
+        """
+        extraction = self.extraction_result(backend)
+        return InformationRequestResult(
+            questions=extraction.questions,
+            extraction_status=extraction.extraction_status,
+            additional_text=extraction.additional_text,
+            ignored_text=extraction.ignored_text,
+            unit_predictions=extraction.unit_predictions,
+            extraction_backend=extraction.extraction_backend,
+            extraction_model=extraction.extraction_model,
+            extraction_revision=extraction.extraction_revision,
+            promoted_continuation_index=extraction.promoted_continuation_index,
+            request_text=self.input.request,
+            classification=self.classification.model_copy(deep=True),
+            classification_model="mock:validation-examples",
+        )
 
 
 class ResponseExample(BaseModel):
