@@ -89,22 +89,6 @@ inference_engine_params = [
 ]
 
 [[exoscale.deployment]]
-
-slug = "dunno_llama_3b"
-model = "mySociety/Dunno_Llama_3B_safetensors"
-gpu_type = "gpua5000"
-gpu_count = 1
-replicas = 1
-zone = "at-vie-2"
-inference_engine_params = [
-    "--max-model-len=122000",
-    "--enable-prefix-caching",
-    "--enable-auto-tool-choice",
-    "--tool-call-parser=pythonic"
-]
-
-
-[[exoscale.deployment]]
 # doesn't actually support tool calls
 slug = "toast_llama"
 model = "mySociety/Toast_Llama_safetensors"
