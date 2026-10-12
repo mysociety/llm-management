@@ -85,6 +85,8 @@ classifier = "sar_deberta_cpu"
 [[exoscale.deployment]]
 
 slug = "olmo3_7b"
+# 0.31.0's Anthropic template probe crashes on OLMo's undefined tools variable.
+inference_engine_version = "0.29.0"
 model = "allenai/Olmo-3-7B-Instruct"
 gpu_type = "gpua5000"
 gpu_count = 1

@@ -28,6 +28,9 @@ class ExoscaleDeploymentConfig(BaseModel):
     replicas: int
     zone: str
     inference_engine_params: list[str] = []
+    inference_engine_version: str | None = Field(
+        default=None, pattern=r"^\d+\.\d+\.\d+$"
+    )
 
     @property
     def deployment_name(self) -> str:
