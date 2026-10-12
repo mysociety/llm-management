@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     deployment_config: Path = Path("conf/deployments.toml")
     exoscale_api_key: str = ""
     exoscale_api_secret: str = ""
+    exoscale_inference_api_key: str = ""
     compute_state_dir: Path = Path(".state/compute")
     huggingface_token: str = Field(
         default="",

@@ -310,3 +310,17 @@ def test_startup_failure_records_activity(serving, body):
     assert "private provider details" not in response.text
     assert serving.touch == ["foi_status"]
     assert not serving.calls
+
+
+def test_missing_inference_credentials_are_503(serving, body):
+    """
+    Reject an unavailable connection before constructing a transport client.
+    """
+    from starlette.testclient import TestClient
+
+    serving.ensure.return_value.state.api_key = ""
+    with TestClient(server.app) as client:
+        response = client.post("/agents/foi_response_analysis", json=body)
+    assert response.status_code == 503
+    assert serving.calls == []
+    assert serving.touch == ["foi_status"]

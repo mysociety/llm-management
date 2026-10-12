@@ -70,6 +70,8 @@ async def predict(
         )
     try:
         running = await deployments.ensure_running(slug)
+        if not running.state.api_key or not running.state.deployment_url:
+            raise PipelineUnavailable("FOI status inference connection is unavailable")
         output = await response_model.classify_status(
             messages,
             model=running.config.model,
