@@ -57,12 +57,13 @@ def output():
     }
 
 
-def test_placeholder_does_not_provision(client, body, monkeypatch):
+def test_unconfigured_response_does_not_provision(client, body, monkeypatch):
     ensure = AsyncMock(side_effect=AssertionError("must not provision"))
     monkeypatch.setattr(server.app.state.service, "ensure_running", ensure)
+    foi = server.app.state.application.foi.catalog.require_foi()
+    monkeypatch.setattr(foi, "response_deployment", None)
     response = client.post("/agents/foi_response_analysis", json=body)
-    assert response.status_code == 501
-    assert response_analysis.RESPONSE_ANALYSIS_MODEL in response.json()["detail"]
+    assert response.status_code == 503
     ensure.assert_not_called()
 
 
@@ -99,7 +100,8 @@ def test_request_output_is_projected_for_model(
     assert observed.request.model_dump() == expected_request
     assert observed.request_text == ("Original request" if upstream == "full" else None)
     assert (
-        predict.call_args.kwargs["model"] == response_analysis.RESPONSE_ANALYSIS_MODEL
+        predict.call_args.kwargs["model"]
+        == server.app.state.service.catalog.get("foi_status").model
     )
 
 

@@ -67,7 +67,7 @@ artifact = "model.json"
 
 Supported loaders are `modernbert_classifier`, `modernbert_head`,
 `topic_tokenizer`, `sar_logistic`, `sar_deberta`, `auto_logistic`,
-`auto_deberta`, and `presidio`.
+`auto_deberta`, `response_tokenizer`, and `presidio`.
 Each has a validated schema: classifiers and the topic tokenizer require
 `max_tokens`; Presidio requires `spacy_model` and `score_threshold`.
 Resource names come from their configured slugs. `[foi]`, `[sar]`, `[automatic]`, and
@@ -168,7 +168,7 @@ available without authentication.
 | `/agents/foi_structure/extract` | POST | QuestionSlice extraction only |
 | `/local-models` | GET | Local CPU resource readiness and idle timers in this worker |
 | `/local-models/{name}/ensure` | POST | Warm a local CPU resource and reset its idle timer |
-| `/agents/foi_response_analysis` | POST | Response extraction v4 against upstream request questions; returns 501 until the response model is connected |
+| `/agents/foi_response_analysis` | POST | Granite status analysis against upstream request questions and response sources |
 | `/agents/immigration_detection` | POST | Validated plain-text example — classifies a request as immigration-related (`IMM`) or FOI (`FOI`) |
 
 ## Common operations
@@ -186,8 +186,9 @@ resources are deleted. Local model weights unload independently when idle.
 
 The Clef routes use prepared VM templates and System One transport. FOI routes use
 QuestionSlice extraction and remote Granite topic classification. SAR and automatic
-response detection run locally. FOI response-analysis contracts are implemented;
-model inference is pending and currently returns 501.
+response detection run locally. FOI response analysis uses the configured Granite
+status checkpoint with the exact published v4 prompt and schema. It is an integration
+test candidate; validate results before using them for operational decisions.
 
 ## Run with Docker
 

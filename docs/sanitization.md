@@ -5,7 +5,8 @@ pipeline uses sanitized text for both CPU and Exoscale QuestionSlice and for Gra
 classification, while API extraction results retain the original request text.
 The response pipeline sanitizes request context, question text, additional text,
 source bodies, and filenames together; question/source IDs and structural metadata
-are preserved. Response inference remains a placeholder until its model is connected.
+are preserved. The attested canonical input is passed to the configured remote
+status model after the trained prompt has passed its token-budget check.
 
 The initial policy replaces person names, email addresses, phone numbers, credit
 card/IBAN identifiers, UK NHS/National Insurance numbers, and obvious numbered UK

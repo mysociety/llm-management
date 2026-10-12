@@ -98,11 +98,8 @@ def build_router(
         Analyze response sources against the questions extracted from a request.
         """
         with foi_http_errors():
-            try:
-                return await response_analysis.analyze_response(
-                    body, sanitizer=resources.sanitizer()
-                )
-            except response_analysis.ResponseModelNotReady as exc:
-                raise HTTPException(status_code=501, detail=str(exc)) from exc
+            return await response_analysis.analyze_response(
+                body, deployments=foi_deployments(), resources=resources
+            )
 
     return router

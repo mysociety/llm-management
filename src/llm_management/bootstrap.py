@@ -62,6 +62,9 @@ def register_configured_resources(
         "modernbert_head": FactoryLocation(
             "foi.backends", "question_classification_head"
         ),
+        "response_tokenizer": FactoryLocation(
+            "foi.response_model", "tokenizer_resource"
+        ),
         "topic_tokenizer": FactoryLocation(
             "foi.topic_classification", "tokenizer_resource"
         ),
@@ -130,6 +133,16 @@ class Application(BaseModel):
     automatic: AutomaticClassifier
 
 
+def response_tokenizer_slug(catalog: DeploymentCatalog) -> str:
+    """
+    Resolve optional response configuration only when its cold provider is used.
+    """
+    slug = catalog.require_foi().response_tokenizer
+    if slug is None:
+        raise ValueError("FOI response tokenizer is not configured")
+    return slug
+
+
 def assemble_application(
     catalog: DeploymentCatalog | None = None,
     registry: ResourceRegistry | None = None,
@@ -182,6 +195,9 @@ def assemble_application(
         ),
         tokenizer=typed_provider(
             providers, lambda: catalog.require_foi().tokenizer, LocalResource
+        ),
+        response_tokenizer=typed_provider(
+            providers, lambda: response_tokenizer_slug(catalog), LocalResource
         ),
     )
     sar = SARClassifier(

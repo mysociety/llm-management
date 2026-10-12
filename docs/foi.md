@@ -26,10 +26,11 @@ The model names below are Hugging Face repository IDs. They identify the trained
 |---|---|---|
 | Find and group requests for information | `mySociety/question-slice-modernbert-2026-09-08-1` | `question_slice` (when using GPU extraction) |
 | Assign access regimes and topics | `mySociety/foi-topic-1b-2026-09-16-1` | `foi_topic` |
+| Analyze response status | `mySociety/foi-status-3b-2026-10-12-1` | `foi_status` |
 
 **QuestionSlice** is the fine-tuned ModernBERT classifier trained to assign the four labels described below. CPU and Exoscale extraction use this same checkpoint: CPU runs the whole model, while Exoscale runs its encoder and the API runs its original classification layer. The default local model/tokenizer revision is `eb0436d4be96f113f35b5f891f9cc876a0f0bd6b`. These long revision IDs identify specific versions of the model files.
 
-**FOI topic model**, the merged fine-tuned Granite model, contains both the original model and the changes learned during fine-tuning. It was created from the base model `ibm-granite/granite-4.0-1b` (revision `6a7381ba1f54d684ff508d991aeb7dc580157103`) and the LoRA adapter `mySociety/granite-tiny-foi-topic-grounded-v2` (revision `200b756850c137c255f2e6c5c24474edd894d010`). The `-merged` repository is the model used for inference.
+**FOI topic model**, the merged fine-tuned Granite model, contains both the original model and the changes learned during fine-tuning. It was created from the base model `ibm-granite/granite-4.0-1b` (revision `6a7381ba1f54d684ff508d991aeb7dc580157103`) and the LoRA adapter `mySociety/granite-tiny-foi-topic-grounded-v2` (revision `200b756850c137c255f2e6c5c24474edd894d010`). The merged checkpoint is now published as `mySociety/foi-topic-1b-2026-09-16-1`, the repository used for inference.
 
 Keep the remote import and local model/tokenizer versions aligned when updating either model. For that reason, Exoscale extraction returns `extraction_revision: null` rather than claiming a verified remote revision.
 
@@ -124,7 +125,7 @@ Both accept `{"request": "Your correspondence here"}`. Use `backend=exoscale` fo
 
 [schemas.py](../src/llm_management/foi/schemas.py) defines the results. The full result contains the original request, reconstructed questions, extraction diagnostics and FOI topic model classification. `extraction_model`, `extraction_revision` and `extraction_backend` describe the extraction stage. `classification_model` identifies the merged model used for classification. When no questions are found, `classification` and `classification_model` are both null.
 
-## Response analysis: contracts ready, inference pending
+## Response status analysis
 
 `POST /agents/foi_response_analysis` accepts a `request` containing the complete
 output of either request endpoint, or just its `questions`, `extraction_status`
@@ -161,10 +162,31 @@ The output contract follows the supplied response extraction v4 example:
 Question/narrower scopes must reference upstream question IDs; supplied content
 must reference provided source IDs with compatible visibility. Whole-request and
 unresolved scopes remain available even when no questions were found.
-Invalid inputs return 422; invalid model output returns 502. The response model
-is still in training: the placeholder `foi-response-analysis-placeholder` returns
-501 without provisioning a deployment or generating analysis. Replace `predict`
-in `foi/response_analysis.py` when the checkpoint and serving contract are ready.
+Invalid inputs or prompts exceeding the token budget return 422. Invalid JSON,
+truncated completions, unknown question/source references and upstream transport
+failures return 502; unavailable configuration or local resources return 503.
+
+The status checkpoint is `mySociety/foi-status-3b-2026-10-12-1`, registered as
+`foi_status` and pinned locally at `fde4ea32e68755ef6c08d2bd73cb804c3890b2df`.
+The exact published system prompt and output schema are packaged under
+[status_contract](../src/llm_management/foi/status_contract/README.md). The model receives a
+canonical v4 input serialized with sorted keys and default nulls after sanitization.
+Use the trained Granite chat template with thinking disabled and deterministic
+JSON generation. The total context is 8,192 tokens, reserving 2,048 for output;
+reject prompts over 6,144 tokens without truncating or starting a deployment.
+
+Warm `POST /deployment-groups/foi_response_pipeline/ensure` before a response batch.
+It warms `presidio` and `foi_status_tokenizer` and ensures `foi_status`. The tokenizer
+is an app-owned local resource that loads no model weights and follows idle expiry.
+Remote serving imports by repository name, so its exact weight SHA is not attested.
+The checkpoint is a one-epoch integration candidate, not a validated classifier;
+its published evaluation identifies weaknesses around acknowledgements, mixed
+outcomes and unavailable attachments. Live evaluation is still required.
+
+The trained schema deliberately omits `process_states`: completion and next actor
+are outside this task. Public responses retain that enrichment field as null rather
+than inventing a value. Refusal, incomplete output and extra generated fields are
+errors; the adapter never repairs model JSON.
 
 Contract differences from the request step:
 

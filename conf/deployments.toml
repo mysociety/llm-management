@@ -8,6 +8,10 @@ revision = "eb0436d4be96f113f35b5f891f9cc876a0f0bd6b"
 repo = "mySociety/foi-topic-1b-2026-09-16-1"
 revision = "c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79"
 
+[model.foi_status]
+repo = "mySociety/foi-status-3b-2026-10-12-1"
+revision = "fde4ea32e68755ef6c08d2bd73cb804c3890b2df"
+
 [model.sar_logistic]
 repo = "mySociety/sar-detect-logistic-2026-10-09-1"
 revision = "ade6333a06995cbde835648d758d8b092900bc52"
@@ -33,6 +37,7 @@ loader = "topic_tokenizer"
 model_ref = "foi_topic"
 max_tokens = 2048
 
+
 [[local.deployment]]
 slug = "presidio"
 loader = "presidio"
@@ -57,12 +62,18 @@ head = "question_slice_head_cpu"
 tokenizer = "question_extractor_tokenizer"
 extraction_deployment = "question_slice"
 topic_deployment = "foi_topic"
+response_deployment = "foi_status"
+response_tokenizer = "foi_status_tokenizer"
 
 [foi.topic]
 output_limit = 2048
 min_output_tokens = 256
 output_overhead = 64
 output_tokens_per_question = 192
+
+[foi.response]
+context_tokens = 8192
+output_tokens = 2048
 
 [sanitization]
 deployment = "presidio"
@@ -145,6 +156,23 @@ inference_engine_params = [
 
 
 [[exoscale.deployment]]
+# Merged Granite 4.2 3B status candidate; prompt/tokenizer artifacts are pinned locally.
+slug = "foi_status"
+model_ref = "foi_status"
+gpu_type = "gpua5000"
+gpu_count = 1
+replicas = 1
+zone = "at-vie-2"
+inference_engine_params = [
+    "--max-model-len=8192",
+    "--dtype=bfloat16",
+    "--enforce-eager",
+    "--no-enable-prefix-caching",
+    '--structured-outputs-config={"backend":"xgrammar","disable_any_whitespace":true}',
+]
+
+
+[[exoscale.deployment]]
 # Prepared GPU Compute server; model and VM settings come from the recipe.
 slug = "clef"
 backend = "exoscale_compute"
@@ -200,3 +228,13 @@ classifier = "auto_deberta_cpu"
 [[deployment_group]]
 slug = "automatic_pipeline_cpu"
 deployments = ["auto_logistic_cpu", "auto_deberta_cpu"]
+
+
+[[deployment_group]]
+slug = "foi_response_pipeline"
+deployments = ["presidio", "foi_status_tokenizer", "foi_status"]
+
+[[local.deployment]]
+slug = "foi_status_tokenizer"
+loader = "response_tokenizer"
+model_ref = "foi_status"

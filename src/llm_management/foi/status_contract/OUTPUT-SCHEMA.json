@@ -1,0 +1,573 @@
+{
+  "$defs": {
+    "AcknowledgementEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "automatic": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "True/false only when known; null means origin unclear.",
+          "title": "Automatic"
+        },
+        "kind": {
+          "const": "acknowledgement",
+          "title": "Kind",
+          "type": "string"
+        },
+        "references": {
+          "items": {
+            "$ref": "#/$defs/LegalReference"
+          },
+          "title": "References",
+          "type": "array"
+        },
+        "scope": {
+          "discriminator": {
+            "mapping": {
+              "narrower": "#/$defs/NarrowerScope",
+              "question": "#/$defs/QuestionScope",
+              "unresolved": "#/$defs/UnresolvedScope",
+              "whole_request": "#/$defs/WholeRequestScope"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/WholeRequestScope"
+            },
+            {
+              "$ref": "#/$defs/QuestionScope"
+            },
+            {
+              "$ref": "#/$defs/NarrowerScope"
+            },
+            {
+              "$ref": "#/$defs/UnresolvedScope"
+            }
+          ],
+          "title": "Scope"
+        }
+      },
+      "required": [
+        "scope",
+        "kind",
+        "references"
+      ],
+      "title": "AcknowledgementEvent",
+      "type": "object"
+    },
+    "InformationOutcome": {
+      "additionalProperties": false,
+      "properties": {
+        "act": {
+          "enum": [
+            "supplied",
+            "withheld",
+            "not_held",
+            "pending",
+            "unavailable_unspecified",
+            "unclear"
+          ],
+          "title": "Act",
+          "type": "string"
+        },
+        "answer_content_visibility": {
+          "enum": [
+            "visible",
+            "partially_visible",
+            "unobservable",
+            "unknown",
+            "not_applicable"
+          ],
+          "title": "Answer Content Visibility",
+          "type": "string"
+        },
+        "content_source_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Content Source Ids",
+          "type": "array"
+        },
+        "references": {
+          "items": {
+            "$ref": "#/$defs/LegalReference"
+          },
+          "title": "References",
+          "type": "array"
+        },
+        "scope": {
+          "discriminator": {
+            "mapping": {
+              "narrower": "#/$defs/NarrowerScope",
+              "question": "#/$defs/QuestionScope",
+              "unresolved": "#/$defs/UnresolvedScope",
+              "whole_request": "#/$defs/WholeRequestScope"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/WholeRequestScope"
+            },
+            {
+              "$ref": "#/$defs/QuestionScope"
+            },
+            {
+              "$ref": "#/$defs/NarrowerScope"
+            },
+            {
+              "$ref": "#/$defs/UnresolvedScope"
+            }
+          ],
+          "title": "Scope"
+        }
+      },
+      "required": [
+        "scope",
+        "act",
+        "answer_content_visibility",
+        "content_source_ids",
+        "references"
+      ],
+      "title": "InformationOutcome",
+      "type": "object"
+    },
+    "LegalReference": {
+      "additionalProperties": false,
+      "description": "Explicit citation; instrument is a snake_case identifier when known.",
+      "properties": {
+        "instrument": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "E.g. foia_2000 when identified; null if unresolved.",
+          "title": "Instrument"
+        },
+        "provision": {
+          "description": "Explicit section/regulation, e.g. '43'.",
+          "minLength": 1,
+          "title": "Provision",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "basis_for_withholding",
+            "basis_for_release",
+            "under_consideration",
+            "explicitly_not_applied",
+            "unclear"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "subsection": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Explicit subdivision, e.g. '(2)'; null when unspecified.",
+          "title": "Subsection"
+        }
+      },
+      "required": [
+        "instrument",
+        "provision",
+        "subsection",
+        "role"
+      ],
+      "title": "LegalReference",
+      "type": "object"
+    },
+    "NarrowerScope": {
+      "additionalProperties": false,
+      "description": "Response introduces a smaller scope not already addressable in the request.",
+      "properties": {
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "kind": {
+          "const": "narrower",
+          "title": "Kind",
+          "type": "string"
+        },
+        "question_id": {
+          "pattern": "^q[1-9][0-9]*$",
+          "title": "Question Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "question_id",
+        "description"
+      ],
+      "title": "NarrowerScope",
+      "type": "object"
+    },
+    "ProcessReferenceGroup": {
+      "additionalProperties": false,
+      "description": "Process-level reference, or reference whose outcome/event owner is unresolved.",
+      "properties": {
+        "references": {
+          "items": {
+            "$ref": "#/$defs/LegalReference"
+          },
+          "title": "References",
+          "type": "array"
+        },
+        "scope": {
+          "discriminator": {
+            "mapping": {
+              "narrower": "#/$defs/NarrowerScope",
+              "question": "#/$defs/QuestionScope",
+              "unresolved": "#/$defs/UnresolvedScope",
+              "whole_request": "#/$defs/WholeRequestScope"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/WholeRequestScope"
+            },
+            {
+              "$ref": "#/$defs/QuestionScope"
+            },
+            {
+              "$ref": "#/$defs/NarrowerScope"
+            },
+            {
+              "$ref": "#/$defs/UnresolvedScope"
+            }
+          ],
+          "title": "Scope"
+        }
+      },
+      "required": [
+        "scope",
+        "references"
+      ],
+      "title": "ProcessReferenceGroup",
+      "type": "object"
+    },
+    "ProcessState": {
+      "additionalProperties": false,
+      "description": "Communicated state for a scope; do not manufacture finality from silence.\n\nopen requires outstanding action. closed is stated final disposition, not proof\nof adequate answers. conflict concerns the same scope, not different subparts.\nnext_actor concerns a required next action, not an optional invitation to reply.\nprocess_states=null means not assessed; [] means assessed with none identified.\nunclear inside a state means assessed but ambiguous, not a requirement to guess.",
+      "properties": {
+        "completion": {
+          "enum": [
+            "open",
+            "closed",
+            "unclear",
+            "conflict"
+          ],
+          "title": "Completion",
+          "type": "string"
+        },
+        "next_actor": {
+          "enum": [
+            "authority",
+            "requester",
+            "other_authority",
+            "none_stated",
+            "unclear"
+          ],
+          "title": "Next Actor",
+          "type": "string"
+        },
+        "scope": {
+          "discriminator": {
+            "mapping": {
+              "narrower": "#/$defs/NarrowerScope",
+              "question": "#/$defs/QuestionScope",
+              "unresolved": "#/$defs/UnresolvedScope",
+              "whole_request": "#/$defs/WholeRequestScope"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/WholeRequestScope"
+            },
+            {
+              "$ref": "#/$defs/QuestionScope"
+            },
+            {
+              "$ref": "#/$defs/NarrowerScope"
+            },
+            {
+              "$ref": "#/$defs/UnresolvedScope"
+            }
+          ],
+          "title": "Scope"
+        }
+      },
+      "required": [
+        "scope",
+        "completion",
+        "next_actor"
+      ],
+      "title": "ProcessState",
+      "type": "object"
+    },
+    "QuestionScope": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "question",
+          "title": "Kind",
+          "type": "string"
+        },
+        "question_id": {
+          "pattern": "^q[1-9][0-9]*$",
+          "title": "Question Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "question_id"
+      ],
+      "title": "QuestionScope",
+      "type": "object"
+    },
+    "ReviewDecisionEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "internal_review_decision",
+          "title": "Kind",
+          "type": "string"
+        },
+        "references": {
+          "items": {
+            "$ref": "#/$defs/LegalReference"
+          },
+          "title": "References",
+          "type": "array"
+        },
+        "review_result": {
+          "enum": [
+            "upheld",
+            "revised",
+            "partly_revised",
+            "unclear"
+          ],
+          "title": "Review Result",
+          "type": "string"
+        },
+        "scope": {
+          "discriminator": {
+            "mapping": {
+              "narrower": "#/$defs/NarrowerScope",
+              "question": "#/$defs/QuestionScope",
+              "unresolved": "#/$defs/UnresolvedScope",
+              "whole_request": "#/$defs/WholeRequestScope"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/WholeRequestScope"
+            },
+            {
+              "$ref": "#/$defs/QuestionScope"
+            },
+            {
+              "$ref": "#/$defs/NarrowerScope"
+            },
+            {
+              "$ref": "#/$defs/UnresolvedScope"
+            }
+          ],
+          "title": "Scope"
+        }
+      },
+      "required": [
+        "scope",
+        "kind",
+        "review_result",
+        "references"
+      ],
+      "title": "ReviewDecisionEvent",
+      "type": "object"
+    },
+    "SimpleProceduralEvent": {
+      "additionalProperties": false,
+      "description": "An observed act, coexisting with information outcomes.\n\nprocessing: ongoing handling without a promise of future information/response.\npending (an outcome): explicitly promised future information/substantive response.\nDo not add processing merely because an outcome is pending. delay_notice:\nexplicit delay, which may accompany pending. transfer means authority forwards;\nreferral directs the requester elsewhere. review_rights is routine advice, not\na review decision. internal_review_request can be a current requester message.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "processing",
+            "delay_notice",
+            "clarification_request",
+            "fee_notice",
+            "rejection_as_invalid",
+            "transfer",
+            "referral",
+            "alternative_access",
+            "internal_review_request",
+            "internal_review_acknowledgement",
+            "review_rights",
+            "other",
+            "unclear"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "references": {
+          "items": {
+            "$ref": "#/$defs/LegalReference"
+          },
+          "title": "References",
+          "type": "array"
+        },
+        "scope": {
+          "discriminator": {
+            "mapping": {
+              "narrower": "#/$defs/NarrowerScope",
+              "question": "#/$defs/QuestionScope",
+              "unresolved": "#/$defs/UnresolvedScope",
+              "whole_request": "#/$defs/WholeRequestScope"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/WholeRequestScope"
+            },
+            {
+              "$ref": "#/$defs/QuestionScope"
+            },
+            {
+              "$ref": "#/$defs/NarrowerScope"
+            },
+            {
+              "$ref": "#/$defs/UnresolvedScope"
+            }
+          ],
+          "title": "Scope"
+        }
+      },
+      "required": [
+        "scope",
+        "kind",
+        "references"
+      ],
+      "title": "SimpleProceduralEvent",
+      "type": "object"
+    },
+    "UnresolvedScope": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "unresolved",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "UnresolvedScope",
+      "type": "object"
+    },
+    "WholeRequestScope": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "whole_request",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "WholeRequestScope",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "events": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "acknowledgement": "#/$defs/AcknowledgementEvent",
+            "alternative_access": "#/$defs/SimpleProceduralEvent",
+            "clarification_request": "#/$defs/SimpleProceduralEvent",
+            "delay_notice": "#/$defs/SimpleProceduralEvent",
+            "fee_notice": "#/$defs/SimpleProceduralEvent",
+            "internal_review_acknowledgement": "#/$defs/SimpleProceduralEvent",
+            "internal_review_decision": "#/$defs/ReviewDecisionEvent",
+            "internal_review_request": "#/$defs/SimpleProceduralEvent",
+            "other": "#/$defs/SimpleProceduralEvent",
+            "processing": "#/$defs/SimpleProceduralEvent",
+            "referral": "#/$defs/SimpleProceduralEvent",
+            "rejection_as_invalid": "#/$defs/SimpleProceduralEvent",
+            "review_rights": "#/$defs/SimpleProceduralEvent",
+            "transfer": "#/$defs/SimpleProceduralEvent",
+            "unclear": "#/$defs/SimpleProceduralEvent"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/SimpleProceduralEvent"
+          },
+          {
+            "$ref": "#/$defs/AcknowledgementEvent"
+          },
+          {
+            "$ref": "#/$defs/ReviewDecisionEvent"
+          }
+        ]
+      },
+      "title": "Events",
+      "type": "array"
+    },
+    "outcomes": {
+      "items": {
+        "$ref": "#/$defs/InformationOutcome"
+      },
+      "title": "Outcomes",
+      "type": "array"
+    },
+    "process_references": {
+      "items": {
+        "$ref": "#/$defs/ProcessReferenceGroup"
+      },
+      "title": "Process References",
+      "type": "array"
+    }
+  },
+  "required": [
+    "outcomes",
+    "events",
+    "process_references"
+  ],
+  "title": "ExtractionOutput",
+  "type": "object"
+}

@@ -183,7 +183,8 @@ poetry run ruff format --check .
 git diff --check
 ```
 
-Model smoke tests do not establish classifier accuracy. Response-analysis schemas
-and validation are implemented, but its inference adapter currently returns 501.
+Model smoke tests do not establish classifier accuracy. Response analysis uses the
+pinned v4 status prompt and tokenizer with validated, bounded remote generation;
+the checkpoint remains an integration candidate requiring independent evaluation.
 The [shared GPU/LoRA design](proposals/shared-gpu-serving.md) is a proposal; it is
 not an additional implemented FOI backend.
