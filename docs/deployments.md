@@ -79,3 +79,13 @@ are temporarily disabled with a module-level skip in `tests/test_toast.py`, even
 when selected explicitly. Remove that skip only when Toast testing is needed again.
 The Clef Compute test requires a unique `SERVER_ROLE=systemone_live_<run>` and
 a persistent `COMPUTE_STATE_DIR`; it deletes its owned VM and access resources.
+
+### Managed inference authentication
+
+Set `EXOSCALE_INFERENCE_API_KEY` to a zone-scoped AI API key covering the managed
+deployments used by this application. This is separate from the IAM
+`EXOSCALE_API_KEY` and `EXOSCALE_API_SECRET` used for deployment management.
+See [Exoscale’s current authentication guide](https://community.exoscale.com/product/concrete-ai/quick-start/).
+When configured, the application uses that key and bypasses legacy deployment-key
+revelation. Without it, the legacy endpoint remains a fallback; live testing on
+2026-10-12 found that endpoint returning HTTP 404 in `at-vie-2`.

@@ -235,7 +235,10 @@ class ManagedDeployment:
         if deployment is None:
             raise DeploymentNotFoundError(self.config.slug)
         deployment_url = deployment.get("deployment-url", "")
-        api_key = client.reveal_deployment_api_key(id=deployment["id"]).get("api-key")
+        api_key = (
+            settings.exoscale_inference_api_key
+            or client.reveal_deployment_api_key(id=deployment["id"]).get("api-key", "")
+        )
         return ConnectionInfo(url=deployment_url, api_key=api_key)
 
     def query_status(self) -> DeploymentQueryResult:
@@ -253,8 +256,11 @@ class ManagedDeployment:
                 exists=False, replicas=0, deployment_url="", api_key=""
             )
         try:
-            api_key = client.reveal_deployment_api_key(id=deployment["id"]).get(
-                "api-key", ""
+            api_key = (
+                settings.exoscale_inference_api_key
+                or client.reveal_deployment_api_key(id=deployment["id"]).get(
+                    "api-key", ""
+                )
             )
         except Exception as exc:
             response = getattr(exc, "response", None)

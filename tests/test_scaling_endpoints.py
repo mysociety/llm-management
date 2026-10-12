@@ -237,3 +237,22 @@ def test_managed_credential_failure_logs_safe_diagnostics(deployment, caplog):
     assert "credential revelation failed" in caplog.text
     assert "RuntimeError" in caplog.text
     assert "private details" not in caplog.text
+
+
+def test_configured_inference_key_bypasses_legacy_revelation(deployment, monkeypatch):
+    """
+    Use the zone-scoped AI credential without calling the legacy reveal endpoint.
+    """
+    _, cfg, cloud, client, _ = deployment
+    cloud["deployment"] = {
+        "id": "test-id",
+        "name": cfg.deployment_name,
+        "replicas": 1,
+        "deployment-url": "https://inference.example/v1/",
+    }
+    monkeypatch.setattr(server.settings, "exoscale_inference_api_key", "ai-secret")
+    backend = ManagedDeployment(cfg)
+
+    assert backend.connection_info().api_key == "ai-secret"
+    assert backend.query_status().api_key == "ai-secret"
+    client.reveal_deployment_api_key.assert_not_called()
