@@ -199,3 +199,41 @@ def test_idle_scaler_observes_cooldown(deployment, monkeypatch, elapsed, stopped
         asyncio.run(server.app.state.service.idle_scaler())
     assert client.scale_deployment.call_count == int(stopped)
     assert cache.get("test").replicas == (0 if stopped else 2)
+
+
+def test_managed_connection_uses_documented_sdk_response_keys(deployment):
+    """
+    Preserve the endpoint and credentials returned by Exoscale's managed API.
+    """
+    _, cfg, cloud, client, _ = deployment
+    cloud["deployment"] = {
+        "id": "test-id",
+        "name": cfg.deployment_name,
+        "replicas": 1,
+        "deployment-url": "https://inference.example/v1/",
+    }
+    client.reveal_deployment_api_key.return_value = {"api-key": "test-secret"}
+    backend = ManagedDeployment(cfg)
+
+    connection = backend.connection_info()
+    status = backend.query_status()
+
+    assert connection.url == status.deployment_url == "https://inference.example/v1/"
+    assert connection.api_key == status.api_key == "test-secret"
+    assert status.exists and status.replicas == 1
+
+
+def test_managed_credential_failure_logs_safe_diagnostics(deployment, caplog):
+    """
+    Keep status readable while recording a failed credential operation safely.
+    """
+    _, cfg, cloud, client, _ = deployment
+    cloud["deployment"] = {"id": "test-id", "name": cfg.deployment_name, "replicas": 1}
+    client.reveal_deployment_api_key.side_effect = RuntimeError("private details")
+
+    status = ManagedDeployment(cfg).query_status()
+
+    assert status.exists and status.api_key == ""
+    assert "credential revelation failed" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "private details" not in caplog.text
