@@ -32,6 +32,20 @@ class GroupOutcome(BaseModel):
     deployments: list[GroupMemberOutcome]
 
 
+class GroupActionMemberOutcome(BaseModel):
+    slug: str
+    success: bool
+    action: str | None = None
+    seconds_until_scale_to_zero: float | None = None
+    error: str | None = None
+
+
+class GroupActionOutcome(BaseModel):
+    slug: str
+    success: bool
+    deployments: list[GroupActionMemberOutcome]
+
+
 class DeploymentState(BaseModel):
     """
     Cached state for a single deployment, including connection details

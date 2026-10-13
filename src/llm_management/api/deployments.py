@@ -7,9 +7,10 @@ from __future__ import annotations
 import time
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from ..deployments.types import GroupActionOutcome
 from ..inference.resources import ResourceStatus
 from .dependencies import ServiceDependency
 
@@ -20,7 +21,7 @@ class DeploymentStatusResponse(BaseModel):
     replicas: int
 
 
-class EnsureResponse(BaseModel):
+class WarmUpResponse(BaseModel):
     slug: str
     action: str
     replicas: int | None
@@ -33,7 +34,7 @@ class GroupMemberResult(BaseModel):
     error: str | None = None
 
 
-class GroupEnsureResponse(BaseModel):
+class GroupWarmUpResponse(BaseModel):
     slug: str
     success: bool
     deployments: list[GroupMemberResult]
@@ -44,7 +45,7 @@ class ScaleToZeroResponse(BaseModel):
     action: str
 
 
-class CooldownResponse(BaseModel):
+class CoolDownResponse(BaseModel):
     slug: str
     action: str
     seconds_until_scale_to_zero: float | None
@@ -73,7 +74,7 @@ class AllDeploymentsResponse(BaseModel):
     deployments: list[DeploymentOverview]
 
 
-router = APIRouter()
+router = APIRouter(tags=["Deployments"])
 
 
 @router.get("/deployments/{slug}/status")
@@ -90,62 +91,54 @@ def deployment_status(
     )
 
 
-@router.post("/deployments/{slug}/ensure")
-async def ensure_deployment(
+@router.post("/deployments/{slug}/warm-up")
+async def warm_up_deployment(
     service: ServiceDependency,
     slug: str,
     replicas: Annotated[int | None, Query(ge=1)] = None,
-) -> EnsureResponse:
+) -> WarmUpResponse | GroupWarmUpResponse:
     """
-    Warm a local resource or ensure a deployment at an optional replica count.
+    Warm a local resource, remote deployment, or group_ prefixed group.
+    Replica overrides apply only to individual remote deployments.
     """
+    if slug.startswith("group_"):
+        if replicas is not None:
+            raise HTTPException(
+                status_code=422, detail="Groups do not support replica overrides."
+            )
+        group_outcome = await service.ensure_group(slug)
+        return GroupWarmUpResponse.model_validate(group_outcome.model_dump())
     outcome = await service.ensure_deployment(slug, replicas)
-    return EnsureResponse(
+    return WarmUpResponse(
         slug=outcome.slug, action=outcome.action, replicas=outcome.replicas
     )
 
 
-@router.post("/deployment-groups/{slug}/ensure")
-async def ensure_deployment_group(
-    service: ServiceDependency, slug: str
-) -> GroupEnsureResponse:
-    """
-    Prepare group members concurrently; report failures without rolling back peers.
-    """
-    outcome = await service.ensure_group(slug)
-    return GroupEnsureResponse(
-        slug=outcome.slug,
-        success=outcome.success,
-        deployments=[
-            GroupMemberResult(
-                slug=member.slug,
-                success=member.success,
-                replicas=member.replicas,
-                error=member.error,
-            )
-            for member in outcome.deployments
-        ],
-    )
-
-
 @router.post("/deployments/{slug}/scale-to-zero")
-async def scale_to_zero(service: ServiceDependency, slug: str) -> ScaleToZeroResponse:
+async def scale_to_zero(
+    service: ServiceDependency, slug: str
+) -> ScaleToZeroResponse | GroupActionOutcome:
     """
-    Pause managed inference or delete a Compute VM and its access resources.
+    Stop one resource or every member of a group_ prefixed group.
     """
+    if slug.startswith("group_"):
+        return await service.change_group(slug, "scale-to-zero")
     await service.scale_to_zero(slug)
     return ScaleToZeroResponse(slug=slug, action="scaled_to_zero")
 
 
-@router.post("/deployments/{slug}/cooldown")
-async def cooldown_deployment(
+@router.post("/deployments/{slug}/cool-down")
+async def cool_down_deployment(
     service: ServiceDependency, slug: str
-) -> CooldownResponse:
+) -> CoolDownResponse | GroupActionOutcome:
     """
-    Shorten the idle countdown to at most a minute; new traffic resets it.
+    Shorten idle timers for one resource or a group_ prefixed group.
+    New traffic resets the shortened countdown.
     """
+    if slug.startswith("group_"):
+        return await service.change_group(slug, "cool-down")
     remaining = await service.cooldown(slug)
-    return CooldownResponse(
+    return CoolDownResponse(
         slug=slug,
         action="already_stopped" if remaining is None else "cooling_down",
         seconds_until_scale_to_zero=remaining,
@@ -183,17 +176,9 @@ def all_deployments_overview(service: ServiceDependency) -> AllDeploymentsRespon
     )
 
 
-@router.get("/local-models")
-async def local_model_status(service: ServiceDependency) -> list[ResourceStatus]:
+@router.get("/local-deployments")
+async def local_deployment_status(service: ServiceDependency) -> list[ResourceStatus]:
     """
     CPU readiness and idle timers in this API worker.
     """
     return [resource.status() for resource in service.resources.all()]
-
-
-@router.post("/local-models/{name}/ensure")
-async def ensure_local_model(service: ServiceDependency, name: str) -> ResourceStatus:
-    """
-    Load a CPU resource and reset its idle timer.
-    """
-    return await service.ensure_local(name)

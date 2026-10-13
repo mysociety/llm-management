@@ -35,7 +35,7 @@ async def sar_detection_endpoint(
     If `fast` is true, returns only logistic inference rather than cascading
     to the larger model.
 
-    Relevant deployment group: `sar_pipeline_cpu`.
+    Relevant deployment group: `group_sar_pipeline_cpu`.
     """
     return await sar_classifier.detect(body.body, fast=body.fast)
 
@@ -55,6 +55,6 @@ async def automatic_response_detection_endpoint(
     If `fast` is true, returns only logistic inference rather than cascading
     to the larger model.
 
-    Relevant deployment group: `automatic_pipeline_cpu`.
+    Relevant deployment group: `group_automatic_pipeline_cpu`.
     """
     return await automatic_classifier.detect(body.body, fast=body.fast)

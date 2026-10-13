@@ -2,8 +2,8 @@
 
 `POST /endpoint/foi/extract_questions` takes an FOI request and returns a structured
 set of questions with FOI/EIR/SAR status and a short description. Relevant deployment
-group: `foi_pipeline_cpu` for the default `backend=cpu`, or
-`foi_pipeline` for `backend=exoscale`.
+group: `group_foi_pipeline_cpu` for the default `backend=cpu`, or
+`group_foi_pipeline` for `backend=exoscale`.
 
 `POST /endpoint/foi/extract_questions/extract` returns just the question structure,
 primarily for internal debugging. It omits status and topic classification. The
@@ -110,11 +110,11 @@ Local model work runs outside the async event loop, and remote calls are awaited
 
 ## Prepare both deployments before a batch
 
-For batches using Exoscale extraction, call `POST /deployment-groups/foi_pipeline/ensure` before submitting requests. The `foi_pipeline` group in [deployments.toml](../conf/deployments.toml) contains `question_slice` and `foi_topic`, plus local `presidio`, `question_slice_head_cpu`, and `question_extractor_tokenizer` resources. The endpoint warms local resources and starts or resumes remote deployments concurrently, so their startup waits overlap. It does not run inference or change the order of extraction and classification within a request.
+For batches using Exoscale extraction, call `POST /deployments/group_foi_pipeline/warm-up` before submitting requests. The `group_foi_pipeline` group in [deployments.toml](../conf/deployments.toml) contains `question_slice` and `foi_topic`, plus local `presidio`, `question_slice_head_cpu`, and `question_extractor_tokenizer` resources. The endpoint warms local resources and starts or resumes remote deployments concurrently, so their startup waits overlap. It does not run inference or change the order of extraction and classification within a request.
 
 A known group returns HTTP 200 with an overall `success` flag and a `deployments` list containing each member's `slug`, `success`, `replicas` and `error`. Check the flags before starting the batch: one member can fail while another succeeds. Failed members have null `replicas`; successful members have null `error`. Unknown groups return 404. The usual API authentication applies.
 
-Successful deployments are left running if another member fails, and you can retry the group call. Warm-up resets each member's idle timer but does not reserve it indefinitely; normal idle scaling still applies. For CPU extraction, use `POST /deployment-groups/foi_pipeline_cpu/ensure` to warm Presidio, the CPU QuestionSlice classifier, the Granite tokenizer, and the remote topic deployment. Ordinary requests still start deployments on demand if you do not warm them first.
+Successful deployments are left running if another member fails, and you can retry the group call. Warm-up resets each member's idle timer but does not reserve it indefinitely; normal idle scaling still applies. For CPU extraction, use `POST /deployments/group_foi_pipeline_cpu/warm-up` to warm Presidio, the CPU QuestionSlice classifier, the Granite tokenizer, and the remote topic deployment. Ordinary requests still start deployments on demand if you do not warm them first.
 
 ## Where to start reading or calling the code
 
@@ -147,8 +147,7 @@ The full response contains `request_text`, `questions`, `extraction_status`, `ad
 
 Given a structured set of questions and a structured response document,
 `POST /endpoint/foi/response_status` identifies whether questions were answered or
-withheld. Relevant deployment group: `foi_response_pipeline`.
-
+withheld. Relevant deployment group: `group_foi_response_pipeline`.
 
 `POST /endpoint/foi/response_status` accepts a `request` containing the complete
 output of either request endpoint, or just its `questions`, `extraction_status`
@@ -198,7 +197,11 @@ Use the trained Granite chat template with thinking disabled and deterministic
 JSON generation. The total context is 8,192 tokens, reserving 2,048 for output;
 reject prompts over 6,144 tokens without truncating or starting a deployment.
 
-Warm `POST /deployment-groups/foi_response_pipeline/ensure` before a response batch.
+Warm `POST /deployments/group_foi_response_pipeline/warm-up` before a response batch.
+Afterwards, use `POST /deployments/group_foi_response_pipeline/cool-down` to shorten
+idle timers, or `POST /deployments/group_foi_response_pipeline/scale-to-zero` to
+stop/unload members immediately. Inspect each member's result; active work is
+protected and busy members report failure without blocking the others.
 It warms `presidio` and `foi_status_tokenizer` and ensures `foi_status`. The tokenizer
 is an app-owned local resource that loads no model weights and follows idle expiry.
 Remote serving imports by repository name, so its exact weight SHA is not attested.
@@ -373,7 +376,7 @@ async def process_batch(
         timeout=httpx2.Timeout(180.0, connect=10.0),
     ) as client:
         warmup = await client.post(
-            "/deployment-groups/foi_pipeline/ensure",
+            "/deployments/group_foi_pipeline/warm-up",
             timeout=httpx2.Timeout(900.0, connect=10.0),
         )
         warmup.raise_for_status()
@@ -423,7 +426,7 @@ if __name__ == "__main__":
 
 Results stay in the same order as the input strings, even when requests finish in a different order. The semaphore limits active HTTP requests; the remaining tasks wait in this client process. This is an in-memory batch, not a durable queue. The example collects per-request errors without automatic retries, so successful requests can be retained while failed ones are inspected or retried. A successful HTTP response may still have an extraction status of `uncertain` or `no_questions_found`.
 
-The group call ensures remote deployments are running and warms Presidio, the local classification head, and the Granite tokenizer. The QuestionSlice tokenizer still loads on its first extraction request; group warm-up does not run inference. Individual resources can also be warmed through `/deployments/{slug}/ensure`, as described in the [main README](sanitization.md). Deployments follow normal idle scaling after the batch. The example does not scale them down explicitly because other clients may be using them.
+The group call ensures remote deployments are running and warms Presidio, the local classification head, and the Granite tokenizer. The QuestionSlice tokenizer still loads on its first extraction request; group warm-up does not run inference. Individual resources can also be warmed through `/deployments/{slug}/warm-up`, as described in the [main README](sanitization.md). Deployments follow normal idle scaling after the batch. The example does not scale them down explicitly because other clients may be using them.
 
 ## Example: process a batch with Ruby
 
@@ -469,7 +472,7 @@ def process_batch(requests, concurrency: 4)
   end
   return [] if requests.empty?
 
-  readiness = post_json("/deployment-groups/foi_pipeline/ensure", read_timeout: 900)
+  readiness = post_json("/deployments/group_foi_pipeline/warm-up", read_timeout: 900)
   unless readiness.fetch("success")
     failed = readiness.fetch("deployments").reject { |member| member.fetch("success") }
     raise "Deployment warm-up failed: #{failed.inspect}"

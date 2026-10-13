@@ -150,31 +150,39 @@ available without authentication.
 
 ### Endpoints
 
+The interactive documentation groups routes into FOI endpoints, Misc endpoints,
+Deployments, Inference proxy, and Mocks.
+
+Clients using the former `/agents/...`, `/mock/agents/...`, `/deployment-groups/...`,
+or `/local-models` URLs must migrate to the paths below. Local warm-up now uses
+`/deployments/{slug}/warm-up`; its success response has `action: "warmed"` and
+`replicas: null`. Read local readiness from `/local-deployments`. The action URLs use `/warm-up`
+and `/cool-down`; the former `/ensure` and `/cooldown` routes are removed.
+
 #### FOI endpoints
 
 | Endpoint | Method | Description | Relevant deployment group |
 |---|---|---|---|
-| `/endpoint/foi/extract_questions` | POST | Given an FOI request, returns a structured set of questions with FOI/EIR/SAR status and a short description | `foi_pipeline_cpu` (default CPU extraction), or `foi_pipeline` (`backend=exoscale`) |
+| `/endpoint/foi/extract_questions` | POST | Given an FOI request, returns a structured set of questions with FOI/EIR/SAR status and a short description | `group_foi_pipeline_cpu` (default CPU extraction), or `group_foi_pipeline` (`backend=exoscale`) |
 | `/endpoint/foi/extract_questions/extract` | POST | Just the question structure, primarily for internal debugging; omits status and topic classification | Same groups as above; these warm the full pipeline |
-| `/endpoint/foi/response_status` | POST | Given a structured set of questions and a structured response document, identifies whether questions were answered or withheld | `foi_response_pipeline` |
-| `/endpoint/foi/sar_detection` | POST | Given an FOI request text, indicates whether it is likely to be a SAR, IMM, or other personal information request; `fast=true` uses only logistic inference rather than cascading to the larger model | `sar_pipeline_cpu` |
-| `/endpoint/foi/automatic_response_detection` | POST | Given a response to an FOI request, indicates whether it is likely to be an automatic response; `fast=true` uses only logistic inference rather than cascading to the larger model | `automatic_pipeline_cpu` |
+| `/endpoint/foi/response_status` | POST | Given a structured set of questions and a structured response document, identifies whether questions were answered or withheld | `group_foi_response_pipeline` |
+| `/endpoint/foi/sar_detection` | POST | Given an FOI request text, indicates whether it is likely to be a SAR, IMM, or other personal information request; `fast=true` uses only logistic inference rather than cascading to the larger model | `group_sar_pipeline_cpu` |
+| `/endpoint/foi/automatic_response_detection` | POST | Given a response to an FOI request, indicates whether it is likely to be an automatic response; `fast=true` uses only logistic inference rather than cascading to the larger model | `group_automatic_pipeline_cpu` |
 
-Warm a group with `POST /deployment-groups/{slug}/ensure`.
+Warm a group with `POST /deployments/{group_slug}/warm-up`.
 
 #### Deployment management and inference
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/health` | GET | Unauthenticated process health check |
+| `/health` | GET | Unauthenticated process health check (hidden from OpenAPI) |
 | `/deployments` | GET | Overview of all configured deployments with idle timers |
 | `/deployments/{slug}/status` | GET | Check whether a deployment exists and its replica count |
-| `/deployments/{slug}/ensure` | POST | Create/resume a deployment; optional `replicas` query parameter also resizes running deployments |
-| `/deployments/{slug}/cooldown` | POST | Shorten the remaining idle countdown to at most one minute |
-| `/deployments/{slug}/scale-to-zero` | POST | Scale a deployment to zero replicas (pause without destroying) |
-| `/deployments/{slug}/v1/{path}` | POST | Proxy requests to the underlying Exoscale deployment, injecting auth |
-| `/local-models` | GET | Local CPU resource readiness and idle timers in this worker |
-| `/local-models/{name}/ensure` | POST | Warm a local CPU resource and reset its idle timer |
+| `/deployments/{slug}/warm-up` | POST | Warm a local resource, remote deployment, or `group_` group; optional `replicas` applies only to individual remote deployments |
+| `/deployments/{slug}/cool-down` | POST | Shorten idle timers for one resource or every group member to at most one minute |
+| `/deployments/{slug}/scale-to-zero` | POST | Stop/unload one resource or every group member, protecting active work |
+| `/local-deployments` | GET | Local CPU resource readiness and idle timers in this worker |
+| `/deployments/{slug}/v1/{path}` | POST | Proxy requests, including System One (`path=systemone`), injecting upstream auth |
 
 #### Misc endpoints
 
@@ -191,22 +199,27 @@ Warm a group with `POST /deployment-groups/{slug}/ensure`.
 | `/mock/endpoint/foi/response_status` | POST | Example response analysis without inference |
 | `/mock/endpoint/misc/capital_city` | POST | Always returns `city: "Fake Paris"` and echoes the submitted country, without inference |
 
-The immigration examples remain callable but are hidden from OpenAPI.
-The standalone `/v1/systemone` route is removed; use
-`/deployments/{slug}/v1/systemone` instead.
+The immigration examples (`/endpoint/foi/immigration_detection` and its `/clef`
+variant) remain callable but are hidden from OpenAPI. The standalone `/v1/systemone`
+route has been removed; use `/deployments/{slug}/v1/systemone` instead.
 
 ## Common operations
 
-Start the API with `llm-management serve`. Warm a named deployment or local resource
-with `POST /deployments/{slug}/ensure`, or prepare a complete batch pipeline with
-`POST /deployment-groups/{slug}/ensure`. Group responses report each member's success;
-inspect the body even when HTTP returns 200.
+Start the API with `llm-management serve`. Warm a named deployment, local resource,
+or group with `POST /deployments/{slug}/warm-up`. Group slugs start with `group_`,
+for example `/deployments/group_foi_response_pipeline/warm-up`. Configuration
+validation reserves that prefix for groups. The former `/deployment-group/...`
+routes have been removed. Group responses report each member's success; inspect
+the body even when HTTP returns 200.
 
-An optional `replicas` query parameter on deployment ensure resizes managed
-inference deployments. Compute supports one replica. `POST /deployments/{slug}/cooldown`
+An optional `replicas` query parameter on deployment warm-up resizes managed
+inference deployments. Compute supports one replica. `POST /deployments/{slug}/cool-down`
 shortens the remaining idle timer to at most a minute; new traffic resets it.
 Managed deployments scale to zero when idle; prepared Compute VMs and their access
 resources are deleted. Local model weights unload independently when idle.
+Groups support the same three actions under `/deployments/{slug}/...`.
+Group calls return per-member results, including busy or failed members; inspect
+`success` even when HTTP returns 200. These actions also handle local resources.
 
 The Clef routes use prepared VM templates and System One transport. FOI routes use
 QuestionSlice extraction and remote Granite topic classification. SAR and automatic

@@ -22,7 +22,7 @@ Pydantic AI requests, tunnel recovery and cleanup. A fresh template VM completed
 its challenges in 5m 33s. The [template guide](../EXOSCALE_TEMPLATES.md#live-lifecycle-verification)
 records the template ID and lifecycle results.
 
-To request a replica count, call `POST /deployments/{slug}/ensure?replicas=3`.
+To request a replica count, call `POST /deployments/{slug}/warm-up?replicas=3`.
 The count must be a positive integer. Omitting it uses the configured count for
 creation/resume and leaves running deployments at their current count. The
 configuration is not changed. Resizing a running deployment returns action
@@ -36,38 +36,66 @@ to zero, while Compute VMs and their access resources are deleted. Active HTTP
 requests prevent idle teardown. Shutdown stops deployments used during the
 session. Prepared templates are retained.
 
-Call `POST /deployments/{slug}/cooldown` after a batch to reduce the remaining
+Call `POST /deployments/{slug}/cool-down` after a batch to reduce the remaining
 idle countdown to at most 60 seconds. A shorter countdown is preserved. The
 response includes `seconds_until_scale_to_zero`; already stopped deployments
 return `already_stopped` with a null countdown. Active requests return HTTP 409.
-Subsequent traffic or ensure calls reset the normal idle timer. The background
+Subsequent traffic or warm-up calls reset the normal idle timer. The background
 scaler checks every 60 seconds, so shutdown can occur up to one minute after
 the shortened countdown expires.
 
 ## Deployment groups
 
+Groups use the same lifecycle URLs as individual deployments. Every group slug
+must start with `group_` followed by a nonempty name; individual local and remote
+deployments cannot use that prefix. Catalog validation enforces this at load time.
+For example, use `group_foi_response_pipeline` as `{slug}` below. The separate
+`/deployment-group/...` routes are removed. Group warm-up rejects `replicas`
+overrides with HTTP 422 before starting any members.
+
+Groups support these authenticated actions for both local and remote members:
+
+- `POST /deployments/{slug}/warm-up` loads local resources and starts remote deployments.
+- `POST /deployments/{slug}/cool-down` shortens each member's idle countdown to at most 60 seconds. New activity or warm-up resets it.
+- `POST /deployments/{slug}/scale-to-zero` unloads local resources, pauses managed inference, and deletes Compute VMs and their access resources immediately.
+
+All actions run members concurrently and preserve configured order in the results.
+Busy members fail without interruption; other members still proceed. A known group
+returns HTTP 200 even on partial failure, so inspect overall and per-member `success`.
+Unknown groups return 404. Cool-down and scale-to-zero results include `slug`,
+`success`, `action`, `seconds_until_scale_to_zero`, and `error` per member. The
+countdown is populated only for a running member that was cooled down; stopped
+members return `action: "already_stopped"`. Successful stops return
+`action: "scaled_to_zero"`, including local resource unloading.
+
+The individual `/deployments/{slug}/cool-down` and `/scale-to-zero` actions also
+accept local resources. Local expiry uses the same periodic idle sweep; local
+cleanup does not guarantee immediate memory reclamation by the OS. Group actions
+operate on shared resources, so active work is protected but an idle resource may
+also belong to another group.
+
 Named groups in `conf/deployments.toml` let batch clients warm remote deployments and registered local CPU resources concurrently:
 
 ```toml
 [[deployment_group]]
-slug = "foi_pipeline"
+slug = "group_foi_pipeline"
 deployments = [
     "presidio", "question_slice_head_cpu", "question_extractor_tokenizer",
     "question_slice", "foi_topic",
 ]
 
 [[deployment_group]]
-slug = "foi_pipeline_cpu"
+slug = "group_foi_pipeline_cpu"
 deployments = ["presidio", "question_slice_cpu", "question_extractor_tokenizer", "foi_topic"]
 ```
 
-Call `POST /deployment-groups/foi_pipeline/ensure` with the usual authentication before a batch using GPU extraction. This warms Presidio, the local classification head and Granite tokenizer while creating or resuming both GPU deployments, even when automatic startup on inference requests is disabled. For CPU extraction, use `POST /deployment-groups/foi_pipeline_cpu/ensure`, which warms the full CPU classifier and the remote topic model. Existing per-deployment locks prevent overlapping group and inference requests from starting the same deployment twice within one API process.
+Call `POST /deployments/group_foi_pipeline/warm-up` with the usual authentication before a batch using GPU extraction. This warms Presidio, the local classification head and Granite tokenizer while creating or resuming both GPU deployments, even when automatic startup on inference requests is disabled. For CPU extraction, use `POST /deployments/group_foi_pipeline_cpu/warm-up`, which warms the full CPU classifier and the remote topic model. Existing per-deployment locks prevent overlapping group and inference requests from starting the same deployment twice within one API process.
 
-A known group returns HTTP 200 with `slug`, overall `success`, and an ordered `deployments` list. Each member has `slug`, `success`, `replicas` (null for local resources or on failure) and `error` (null on success). Inspect the success flags: a partial or complete startup failure is reported in the body. Unknown groups return 404. Successful members are not rolled back when another fails; retrying the group reuses loaded local resources and running deployments. Idle scaling and shutdown cleanup follow each resource's lifecycle, and warm-up does not keep a group running indefinitely.
+Group warm-up returns HTTP 200 with `slug`, overall `success`, and an ordered `deployments` list. Each member has `slug`, `success`, `replicas` (null for local resources or on failure) and `error` (null on success). Inspect the success flags: a partial or complete startup failure is reported in the body. Unknown groups return 404. Successful members are not rolled back when another fails; retrying the group reuses loaded local resources and running deployments. Idle scaling and shutdown cleanup follow each resource's lifecycle, and warm-up does not keep a group running indefinitely.
 
 Groups must be nonempty, have unique names, and reference local or Exoscale deployment slugs declared in the catalog without repeated members. Local and remote names must not collide. Catalog validation checks these references before registering cold factories, without importing resource owners or loading models. Adding a local deployment with a supported loader makes it available to individual and group warm-up without changing the HTTP handlers.
 
-The `foi_response_pipeline` warm-up group includes `presidio`,
+The `group_foi_response_pipeline` warm-up group includes `presidio`,
 `foi_status_tokenizer`, and `foi_status`. Its tokenizer uses the same pinned
 checkpoint reference as the remote deployment; `[foi.response]` configures the
 total context and reserved output budget.

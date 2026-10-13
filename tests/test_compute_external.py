@@ -60,9 +60,9 @@ def test_compute_lifecycle_and_agents_live():
 
     try:
         with TestClient(server.app) as client:
-            assert client.post("/deployments/clef/ensure").status_code == 401
+            assert client.post("/deployments/clef/warm-up").status_code == 401
             start = time.monotonic()
-            record("ensure", client.post("/deployments/clef/ensure", headers=headers))
+            record("ensure", client.post("/deployments/clef/warm-up", headers=headers))
             report["ensure_seconds"] = round(time.monotonic() - start, 3)
             original = backend.instance(get_client(cfg.zone))
             report["instance_id"] = original["id"]
@@ -111,7 +111,7 @@ def test_compute_lifecycle_and_agents_live():
             server.app.state.service.cache.remove("clef")
             start = time.monotonic()
             record(
-                "reconnect", client.post("/deployments/clef/ensure", headers=headers)
+                "reconnect", client.post("/deployments/clef/warm-up", headers=headers)
             )
             report["reconnect_seconds"] = round(time.monotonic() - start, 3)
             assert backend.instance(get_client(cfg.zone))["id"] == original["id"]

@@ -26,7 +26,7 @@ pytestmark = pytest.mark.external
 @pytest.fixture(scope="session")
 def client() -> Iterator[TestClient]:
     with TestClient(app) as c:
-        resp = c.post(f"/deployments/{DEPLOYMENT}/ensure")
+        resp = c.post(f"/deployments/{DEPLOYMENT}/warm-up")
         resp.raise_for_status()
         yield c
 

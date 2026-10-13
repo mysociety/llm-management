@@ -187,7 +187,7 @@ llm-management logs clef
 llm-management pause clef
 ```
 
-The same lifecycle is used by `/deployments/clef/ensure` and requests to
+The same lifecycle is used by `/deployments/clef/warm-up` and requests to
 `/deployments/clef/v1/systemone` or the hidden example
 `/endpoint/foi/immigration_detection/clef`. Startup resolves the
 private template name to its UUID, creates one GPU VM, opens an SSH tunnel and

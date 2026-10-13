@@ -29,7 +29,7 @@ def deployment_client(
 ) -> Iterator[tuple[TestClient, str]]:
     deployment = request.param
     with TestClient(app) as c:
-        resp = c.post(f"/deployments/{deployment}/ensure")
+        resp = c.post(f"/deployments/{deployment}/warm-up")
         resp.raise_for_status()
         yield c, deployment
 

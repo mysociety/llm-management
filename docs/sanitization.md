@@ -26,16 +26,18 @@ Model resources share the same model-family/version name across runtimes:
 the full local CPU model, and `question_slice_head_cpu` its local classification
 head used with GPU embeddings. Use these names in warm-up calls and groups.
 
-Local resources load on demand. Use `POST /local-models/presidio/ensure`,
-`POST /local-models/question_slice_cpu/ensure`,
-`POST /local-models/question_slice_head_cpu/ensure`, or
-`POST /local-models/question_extractor_tokenizer/ensure` to warm them explicitly. These endpoints
+Local resources load on demand. Use `POST /deployments/presidio/warm-up`,
+`POST /deployments/question_slice_cpu/warm-up`,
+`POST /deployments/question_slice_head_cpu/warm-up`, or
+`POST /deployments/question_extractor_tokenizer/warm-up` to warm them explicitly. These endpoints
 use the same authentication as the rest of the API. The shared
-`POST /deployments/{slug}/ensure` endpoint also accepts registered local resource
-names; local success returns `action: "warmed"` and `replicas: null`. The local
-endpoint is an alias returning resource status. `GET /local-models` reports resource
+`POST /deployments/{slug}/warm-up` endpoint accepts both remote deployments and registered local resource
+names; local success returns `action: "warmed"` and `replicas: null`. `GET /local-deployments` reports resource
 controllers constructed in the current worker. Local resource names can also be
-included alongside remote deployment slugs in deployment groups.
+included alongside remote deployment slugs in deployment groups. Individual and
+group `cool-down` actions shorten local idle expiry to at most 60 seconds;
+`scale-to-zero` unloads local resources immediately. Busy resources are protected.
+New work or warm-up cancels a shortened idle deadline.
 
 Idle cleanup drops model/tokenizer references after `CPU_IDLE_TIMEOUT_MINUTES`
 (default 15), and the next request reloads them from the persistent model cache.

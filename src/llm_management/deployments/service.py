@@ -14,15 +14,23 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from typing import Literal
 
-from ..inference.errors import ClassifierUnavailable
+from ..inference.errors import ClassifierBusy, ClassifierUnavailable
 from ..inference.resources import ResourceRegistry, ResourceStatus
 from .backends import DeploymentBackend, backend_for
 from .cache import DeploymentCache
 from .catalog import DeploymentCatalog
 from .config import DeploymentConfig
 from .errors import DeploymentServiceError, LLMManagementError
-from .types import EnsureOutcome, GroupMemberOutcome, GroupOutcome, RunningDeployment
+from .types import (
+    EnsureOutcome,
+    GroupActionMemberOutcome,
+    GroupActionOutcome,
+    GroupMemberOutcome,
+    GroupOutcome,
+    RunningDeployment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -267,11 +275,18 @@ class DeploymentService:
 
     async def scale_to_zero(self, slug: str) -> None:
         """
-        Scale or delete a remote backend while holding its lifecycle lock.
+        Unload a local resource or scale/delete a remote backend under its lifecycle lock.
 
         Reject deployments with in-flight requests using a 409 service error. Refresh
         cached status after the backend operation; Compute scaling deletes its VM.
         """
+        resource = self.resources.get(slug)
+        if resource is not None:
+            try:
+                await asyncio.to_thread(resource.stop)
+            except ClassifierBusy as exc:
+                raise DeploymentServiceError(status_code=409, detail=str(exc)) from exc
+            return
         self.get_config(slug)
         async with self.cache.ensure_lock(slug):
             backend = self.get_backend(slug)
@@ -285,12 +300,18 @@ class DeploymentService:
 
     async def cooldown(self, slug: str) -> float | None:
         """
-        Shorten a running deployment's idle countdown without stopping it now.
+        Shorten a local or remote resource's idle countdown without stopping it now.
 
         Reject in-flight work. Return remaining seconds, or None for an absent or stopped
         managed deployment. Existing Compute VMs remain eligible even before a tunnel is
         ready. New requests reset the activity timestamp and cancel the shortened window.
         """
+        resource = self.resources.get(slug)
+        if resource is not None:
+            try:
+                return await asyncio.to_thread(resource.cooldown, self.cpu_idle_seconds)
+            except ClassifierBusy as exc:
+                raise DeploymentServiceError(status_code=409, detail=str(exc)) from exc
         self.get_config(slug)
         async with self.cache.ensure_lock(slug):
             backend = self.get_backend(slug)
@@ -398,6 +419,54 @@ class DeploymentService:
             *(ensure_member(member) for member in group.deployments)
         )
         return GroupOutcome(
+            slug=slug,
+            success=all(member.success for member in members),
+            deployments=members,
+        )
+
+    async def change_group(
+        self, slug: str, action: Literal["cool-down", "scale-to-zero"]
+    ) -> GroupActionOutcome:
+        """Apply a lifecycle action concurrently, preserving per-member failures."""
+        try:
+            group = self.catalog.get_group(slug)
+        except LLMManagementError as exc:
+            raise DeploymentServiceError(
+                status_code=404, detail=f"Deployment group '{slug}' not found"
+            ) from exc
+
+        async def change_member(member: str) -> GroupActionMemberOutcome:
+            try:
+                if action == "cool-down":
+                    remaining = await self.cooldown(member)
+                    return GroupActionMemberOutcome(
+                        slug=member,
+                        success=True,
+                        action="already_stopped"
+                        if remaining is None
+                        else "cooling_down",
+                        seconds_until_scale_to_zero=remaining,
+                    )
+                await self.scale_to_zero(member)
+                return GroupActionMemberOutcome(
+                    slug=member, success=True, action="scaled_to_zero"
+                )
+            except DeploymentServiceError as exc:
+                return GroupActionMemberOutcome(
+                    slug=member, success=False, error=exc.detail
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Group %s failed for %s: %s", action, member, type(exc).__name__
+                )
+                return GroupActionMemberOutcome(
+                    slug=member, success=False, error="Resource lifecycle action failed"
+                )
+
+        members = await asyncio.gather(
+            *(change_member(member) for member in group.deployments)
+        )
+        return GroupActionOutcome(
             slug=slug,
             success=all(member.success for member in members),
             deployments=members,

@@ -5,7 +5,7 @@
 Given an FOI request text, returns a quick indication of whether it is likely to be
 a SAR, IMM, or other personal information request. If `fast` is true, returns only
 logistic inference rather than cascading to the larger model.
-Relevant deployment group: `sar_pipeline_cpu`.
+Relevant deployment group: `group_sar_pipeline_cpu`.
 
 
 `POST /endpoint/foi/sar_detection` accepts `{"body": "the complete original correspondence"}`
@@ -36,8 +36,8 @@ modes retain the existing `is_sar: true`, `status: "unclear"` failure policy.
 
 Models are lazy local resources named `sar_logistic_cpu` and
 `sar_deberta_cpu`. Before a batch, call
-`POST /deployment-groups/sar_pipeline_cpu/ensure`, or use individual
-`POST /local-models/{name}/ensure` calls. Inspect the group's member success flags.
+`POST /deployments/group_sar_pipeline_cpu/warm-up`, or use individual
+`POST /deployments/{name}/warm-up` calls. Inspect the group's member success flags.
 Warm-up and loading are per API worker, and resources follow the normal CPU idle
 unloading policy. Allow roughly 1.28 GB for the reported SAR process footprint,
 plus other resources loaded in the same worker. DeBERTa uses CPU float32, the shared
@@ -81,7 +81,7 @@ Apache-2.0 with upstream DeBERTa MIT notices retained in their repositories.
 Given a response to an FOI request, returns a quick indication of whether it is
 likely to be an automatic response. If `fast` is true, returns only logistic
 inference rather than cascading to the larger model.
-Relevant deployment group: `automatic_pipeline_cpu`.
+Relevant deployment group: `group_automatic_pipeline_cpu`.
 
 
 `POST /endpoint/foi/automatic_response_detection` accepts one current email body:
@@ -115,9 +115,9 @@ An unresolved result must be distinguished from a resolved authored classificati
 Malformed HTTP request bodies receive normal validation errors.
 
 Models are lazy local resources, loaded on demand and shared per API worker.
-Before a batch, call `POST /deployment-groups/automatic_pipeline_cpu/ensure`, or
+Before a batch, call `POST /deployments/group_automatic_pipeline_cpu/warm-up`, or
 warm `auto_logistic_cpu` and `auto_deberta_cpu` individually with
-`POST /local-models/{name}/ensure`, just as for SAR. Inspect the warm-up group's
+`POST /deployments/{name}/warm-up`, just as for SAR. Inspect the warm-up group's
 member success flags. Missing models or credentials fail warm-up; inference-time
 loading failures return unresolved classification results. API startup does not
 load these models or require their downloads to succeed.
