@@ -141,7 +141,7 @@ The full response contains `request_text`, `questions`, `extraction_status`, `ad
 }
 ```
 
-`meta` contains `extraction_backend`, `extraction_model`, `extraction_revision`, `classification_model`, `ignored_text` and `promoted_continuation_index`. The full response omits `unit_predictions`; use `/extract_questions/extract` for those diagnostics. When no questions are found, `questions` and `request_topics` are empty and `meta.classification_model` is null. The mock uses the same response shape.
+`meta` contains `extraction_backend`, `extraction_model`, `extraction_revision`, `classification_model`, `ignored_text` and `promoted_continuation_index`. The full response omits `unit_predictions`; use `/extract_questions/extract` for those diagnostics. When no questions are found, `questions` and `request_topics` are empty and `meta.classification_model` is null. The mock uses the same response shape. Pass the complete result, its `questions` list, or an object containing that list as `request` to `/response_status`.
 
 ## Response status analysis
 
@@ -149,9 +149,14 @@ Given a structured set of questions and a structured response document,
 `POST /endpoint/foi/response_status` identifies whether questions were answered or
 withheld. Relevant deployment group: `group_foi_response_pipeline`.
 
-`POST /endpoint/foi/response_status` accepts a `request` containing the complete
-output of either request endpoint, or just its `questions`, `extraction_status`
-and `additional_text`. It also requires a nonempty `sources` list describing
+`POST /endpoint/foi/response_status` accepts a minimal `request` containing just
+`questions`, or a bare list of `{question_id, text}` objects in `request`. No
+`unit_predictions`, extraction model metadata, or classification results are needed.
+`additional_text` defaults to `[]`; omitted `extraction_status` becomes
+`questions_found` for a nonempty list and `no_questions_found` for an empty one.
+You can explicitly supply `uncertain` for tentative questions. Full outputs from
+either request endpoint remain accepted and are reduced to the same model input.
+It also requires a nonempty `sources` list describing
 response emails/attachments. Each source has a unique `id`, `kind` (`email` or
 `attachment`), `role` (`current`, `prior`, `quoted`), nullable `sender`
 (`authority`, `requester`, `other`, `unknown`), nullable `filename`,
@@ -162,9 +167,7 @@ filename keys are required even when null.
 ```json
 {
   "request": {
-    "questions": [{"question_id": "q1", "text": "Please provide the report."}],
-    "extraction_status": "questions_found",
-    "additional_text": []
+    "questions": [{"question_id": "q1", "text": "Please provide the report."}]
   },
   "request_text": "Please provide the report.",
   "sources": [{
@@ -223,8 +226,8 @@ Contract differences from the request step:
   it at the top level. The adapter copies it automatically; an explicit conflicting
   `request_text` is rejected. Extraction-only results require callers to supply
   original text separately if they want that optional context.
-- `classification.questions` contains regime/topic metadata, not question text.
-  Response analysis uses the top-level reconstructed `questions` array. The v4
+- Each question contains its text and regime/topic metadata.
+  Response analysis uses only question IDs and text from the `questions` array. The v4
   model does not consume topics or regimes or return the request-step diagnostics.
 - The existing request schemas do not enforce unique IDs or status/list consistency.
   Response analysis enforces both v4 invariants without changing the request endpoints.

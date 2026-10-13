@@ -8,7 +8,12 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .schemas import InformationRequestResult, QuestionSliceResult
+from .schemas import (
+    ClassifiedQuestion,
+    ExtractQuestionsResponse,
+    InformationRequestResult,
+    QuestionSliceResult,
+)
 
 NonEmptyText = Annotated[str, Field(min_length=1)]
 QuestionId = Annotated[str, Field(pattern=r"^q[1-9][0-9]*$")]
@@ -325,19 +330,44 @@ class ExtractionTrainingPair(APIModel):
         return self
 
 
+class ResponseAnalysisRequestContext(APIModel):
+    """Minimal public request context; extraction diagnostics are unnecessary."""
+
+    questions: list[ResponseContextQuestion | ClassifiedQuestion]
+    extraction_status: (
+        Literal["questions_found", "no_questions_found", "uncertain"] | None
+    ) = Field(
+        default=None, description="If omitted, derived from whether questions is empty."
+    )
+    additional_text: list[str] = Field(default_factory=list)
+
+
 class ResponseAnalysisInput(ResponseInputSources):
     """
-    Accept either request-step result or the compact v4 request context.
+    Accept a question list, minimal question context, or a complete request-step result.
     """
 
-    request: InformationRequestResult | QuestionSliceResult | ResponseRequestContext
+    request: (
+        ResponseAnalysisRequestContext
+        | list[ResponseContextQuestion | ClassifiedQuestion]
+        | ExtractQuestionsResponse
+        | InformationRequestResult
+        | QuestionSliceResult
+    ) = Field(
+        description="Question list or an object with questions; extraction diagnostics are not required.",
+        examples=[
+            {"questions": [{"question_id": "q1", "text": "Please provide the report."}]}
+        ],
+    )
 
     @model_validator(mode="after")
     def consistent_request_context(self) -> Self:
         # Apply the v4 invariants even to the existing request-step schemas.
         self.model_input()
         if (
-            isinstance(self.request, InformationRequestResult)
+            isinstance(
+                self.request, (InformationRequestResult, ExtractQuestionsResponse)
+            )
             and self.request_text is not None
             and self.request_text != self.request.request_text
         ):
@@ -348,14 +378,31 @@ class ResponseAnalysisInput(ResponseInputSources):
         """
         Project public diagnostics out of the training-compatible model input.
         """
-        request = ResponseRequestContext.model_validate(
-            self.request.model_dump(
+        if isinstance(self.request, list):
+            data: dict[str, object] = {
+                "questions": [q.model_dump(mode="json") for q in self.request]
+            }
+        else:
+            data = self.request.model_dump(
                 mode="json",
                 include={"questions", "extraction_status", "additional_text"},
             )
+        questions = (
+            self.request if isinstance(self.request, list) else self.request.questions
         )
+        data["questions"] = [
+            {"question_id": q.question_id, "text": q.text} for q in questions
+        ]
+        if data.get("extraction_status") is None:
+            data["extraction_status"] = (
+                "questions_found" if data["questions"] else "no_questions_found"
+            )
+        data.setdefault("additional_text", [])
+        request = ResponseRequestContext.model_validate(data)
         request_text = self.request_text
-        if request_text is None and isinstance(self.request, InformationRequestResult):
+        if request_text is None and isinstance(
+            self.request, (InformationRequestResult, ExtractQuestionsResponse)
+        ):
             request_text = self.request.request_text
         return ExtractionInput(
             request=request, request_text=request_text, sources=self.sources

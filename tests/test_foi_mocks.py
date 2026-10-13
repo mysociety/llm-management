@@ -159,3 +159,15 @@ def test_capital_city_mock_is_fixed_without_inference(client, country):
     )
     assert response.status_code == 200
     assert response.json() == {"country": country, "city": "Fake Paris"}
+
+
+@pytest.mark.parametrize("form", ["object", "list"])
+def test_mock_response_status_accepts_minimal_questions(client, monkeypatch, form):
+    example = validation_examples().responses[0]
+    body = example.input.model_dump(mode="json")
+    questions = body["request"]["questions"]
+    body["request"] = {"questions": questions} if form == "object" else questions
+    monkeypatch.setattr(mocks.random, "choice", lambda pool: example)
+    response = client.post("/mock/endpoint/foi/response_status", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json() == example.expected.model_dump(mode="json")

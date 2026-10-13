@@ -271,3 +271,78 @@ def test_unavailable_attachment_and_event_variants(client, body, output, monkeyp
     response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 200, response.text
     assert response.json() == output
+
+
+@pytest.mark.parametrize("form", ["object", "list"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_minimal_questions_without_extraction_diagnostics(
+    client, body, output, monkeypatch, form, empty
+):
+    questions = [] if empty else body["request"]["questions"]
+    body["request"] = {"questions": questions} if form == "object" else questions
+    if empty:
+        output["outcomes"][0]["scope"] = {"kind": "whole_request"}
+    predict = AsyncMock(return_value=output)
+    monkeypatch.setattr(response_analysis, "predict", predict)
+    response = client.post("/endpoint/foi/response_status", json=body)
+    assert response.status_code == 200, response.text
+    assert predict.call_args.args[0].value.request.model_dump() == {
+        "questions": questions,
+        "extraction_status": "no_questions_found" if empty else "questions_found",
+        "additional_text": [],
+    }
+
+
+@pytest.mark.parametrize("form", ["object", "list"])
+@pytest.mark.parametrize("invalid", ["duplicate", "bad_id", "missing_text"])
+def test_minimal_questions_reject_invalid_references(
+    client, body, monkeypatch, form, invalid
+):
+    questions = body["request"]["questions"]
+    if invalid == "duplicate":
+        questions *= 2
+    elif invalid == "bad_id":
+        questions[0]["question_id"] = "bad"
+    else:
+        questions[0].pop("text")
+    body["request"] = {"questions": questions} if form == "object" else questions
+    predict = AsyncMock()
+    monkeypatch.setattr(response_analysis, "predict", predict)
+    assert client.post("/endpoint/foi/response_status", json=body).status_code == 422
+    predict.assert_not_called()
+
+
+@pytest.mark.parametrize("form", ["full", "object", "list"])
+def test_enriched_questions_chain_to_response_status(
+    client, body, output, monkeypatch, form
+):
+    from llm_management.foi.examples import validation_examples
+    from llm_management.foi.schemas import ExtractQuestionsResponse
+
+    result = ExtractQuestionsResponse.from_result(
+        validation_examples().requests[0].information_result("cpu")
+    ).model_dump(mode="json")
+    original_questions = [
+        {"question_id": q["question_id"], "text": q["text"]}
+        for q in result["questions"]
+    ]
+    body["request"] = (
+        result
+        if form == "full"
+        else {"questions": result["questions"]}
+        if form == "object"
+        else result["questions"]
+    )
+    predict = AsyncMock(return_value=output)
+    monkeypatch.setattr(response_analysis, "predict", predict)
+    response = client.post("/endpoint/foi/response_status", json=body)
+    assert response.status_code == 200, response.text
+    observed = predict.call_args.args[0].value
+    assert observed.request.model_dump()["questions"] == original_questions
+    assert observed.request_text == (result["request_text"] if form == "full" else None)
+
+    if form == "full":
+        body["request_text"] = "Conflicting request"
+        assert (
+            client.post("/endpoint/foi/response_status", json=body).status_code == 422
+        )
