@@ -123,7 +123,9 @@ def test_endpoint_conservative_response(chain, monkeypatch):
     monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
     chain[1].classify.side_effect = ClassifierBusy()
     with TestClient(server.app) as client:
-        response = client.post("/agents/sar_detection", json={"request": "my records"})
+        response = client.post(
+            "/endpoint/foi/sar_detection", json={"body": "my records"}
+        )
     assert response.status_code == 200
     assert response.json()["is_sar"] is True
     assert response.json()["reason"] == "deberta_busy"
@@ -200,7 +202,7 @@ def test_endpoint_requires_authentication(monkeypatch):
     with TestClient(server.app) as client:
         assert (
             client.post(
-                "/agents/sar_detection", json={"request": "records"}
+                "/endpoint/foi/sar_detection", json={"body": "records"}
             ).status_code
             == 401
         )
@@ -291,13 +293,13 @@ def test_fast_logistic_loading_failure_keeps_unclear_flag(chain):
 def test_endpoint_fast_parameter_and_stage(chain, monkeypatch, fast):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
     monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
-    payload = {"request": "my records"}
+    payload = {"body": "my records"}
     if fast is not None:
         payload["fast"] = fast
     # Disagreement demonstrates that only fast mode skips confirmation.
     chain[1].classify.return_value = [[0.9, 0.1]]
     with TestClient(server.app) as client:
-        response = client.post("/agents/sar_detection", json=payload)
+        response = client.post("/endpoint/foi/sar_detection", json=payload)
     assert response.status_code == 200
     assert response.json()["is_sar"] is bool(fast)
     assert response.json()["stage"] == ("logistic" if fast else "deberta")

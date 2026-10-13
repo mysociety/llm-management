@@ -101,9 +101,9 @@ def test_compute_lifecycle_and_agents_live():
                 ),
             ]:
                 response = client.post(
-                    "/agents/immigration_detection/clef",
+                    "/endpoint/foi/immigration_detection/clef",
                     headers=headers,
-                    json={"request": text},
+                    json={"body": text},
                 )
                 record(f"native_agent_{expected}", response)
                 assert response.json()["classification"] == expected

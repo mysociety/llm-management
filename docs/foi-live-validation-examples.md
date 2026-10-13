@@ -5,9 +5,9 @@ Ten copied validation examples for an agent testing the application API: five ra
 ## How to run and compare
 
 - Use the app’s base URL and configured authentication, with `Content-Type: application/json`. Send only the **Input** JSON block for each case; case metadata is not part of the HTTP body.
-- For R1–R5, POST to `/agents/foi_structure/extract?backend=cpu` (or `backend=exoscale` for remote extraction). To test extraction plus topic classification, send the same body to `/agents/foi_structure?backend=cpu` (or `backend=exoscale`) and also compare the separate **Expected classification field** block for that case. That block contains the response’s top-level `classification` field; it is not another input payload.
-- For S1–S5, POST to `/agents/foi_response_analysis`. Each input already includes its own gold request context; do not replace it with R1–R5 or with fresh model predictions when testing response analysis in isolation.
-- Require HTTP 200, then compare parsed JSON. R1–R5 expectations are a subset of the full response: compare `questions`, `extraction_status` and `additional_text`, retaining question order and IDs. For the full `/agents/foi_structure` endpoint, also compare `classification.questions` and `classification.request_topics`. Ignore other diagnostic/provenance fields. S1–S5 expectations are the complete public output, including `process_states: null`.
+- For R1–R5, POST to `/endpoint/foi/extract_questions/extract?backend=cpu` (or `backend=exoscale` for remote extraction). To test extraction plus topic classification, send the same body to `/endpoint/foi/extract_questions?backend=cpu` (or `backend=exoscale`) and also compare the **Expected full-endpoint fields** block for that case. That block shows the merged public question fields and request topics. It is not another input payload.
+- For S1–S5, POST to `/endpoint/foi/response_status`. Each input already includes its own gold request context; do not replace it with R1–R5 or with fresh model predictions when testing response analysis in isolation.
+- Require HTTP 200, then compare parsed JSON. R1–R5 expectations are a subset of the full response: compare `questions`, `extraction_status` and `additional_text`, retaining question order and IDs. For the full `/endpoint/foi/extract_questions` endpoint, compare each question’s `regime` and `topic` against the full-endpoint block, and compare top-level `request_topics`. Ignore other diagnostic/provenance fields. S1–S5 expectations are the complete public output, including `process_states: null`.
 - Start with exact field comparisons; report whitespace-only text differences separately from changed wording, missing content or different question grouping. JSON object key order does not matter. For response semantic comparison, outcomes/events may be matched by their full contents irrespective of array order; retain scope IDs, acts, visibility, source references and legal references, and reject missing or extra items.
 - For topic classification, require exact question IDs, order and regimes. Record exact topic-string matches against the dataset separately from semantically equivalent wording; changed subject matter is a semantic mismatch. If extracted question text or grouping differs, flag the extraction mismatch first because classification depends on those questions.
 - JSON `\n` escapes represent the original newlines: parse the JSON once and send the resulting strings without rewriting bullets, line breaks, placeholders or relative dates.
@@ -16,7 +16,7 @@ Ten copied validation examples for an agent testing the application API: five ra
 
 ## Dataset provenance
 
-Request labels come from [mySociety/foi-modernbert-question-slice-v2](https://huggingface.co/datasets/mySociety/foi-modernbert-question-slice-v2/tree/5f3d5085f3e64398df248e6009f214a5eda52c3c), revision `5f3d5085f3e64398df248e6009f214a5eda52c3c`, split `validation_heldout_topic.jsonl`. That export contains labelled semantic units rather than complete raw messages. Full request text was copied without rewriting from the matching `case_id` in [mySociety/foi-granite-topic-grounded-v2](https://huggingface.co/datasets/mySociety/foi-granite-topic-grounded-v2/tree/d52dfb7def21f967d914066434438a351afcc985), revision `d52dfb7def21f967d914066434438a351afcc985`, the same split. All five expected question lists were independently reconstructed from the QuestionSlice gold labels and checked against that companion export. `ADDITIONAL` units form the expected additional_text lists. Topic-classification expectations are copied verbatim from `completion[0].content` in those same companion topic records and wrapped in the public response’s `classification` field. Their source revision and file checksum are the same as for the raw request text.
+Request labels come from [mySociety/foi-modernbert-question-slice-v2](https://huggingface.co/datasets/mySociety/foi-modernbert-question-slice-v2/tree/5f3d5085f3e64398df248e6009f214a5eda52c3c), revision `5f3d5085f3e64398df248e6009f214a5eda52c3c`, split `validation_heldout_topic.jsonl`. That export contains labelled semantic units rather than complete raw messages. Full request text was copied without rewriting from the matching `case_id` in [mySociety/foi-granite-topic-grounded-v2](https://huggingface.co/datasets/mySociety/foi-granite-topic-grounded-v2/tree/d52dfb7def21f967d914066434438a351afcc985), revision `d52dfb7def21f967d914066434438a351afcc985`, the same split. All five expected question lists were independently reconstructed from the QuestionSlice gold labels and checked against that companion export. `ADDITIONAL` units form the expected additional_text lists. Topic-classification expectations are copied verbatim from `completion[0].content` in those same companion topic records and merged with reconstructed question text by ID in the full-endpoint blocks below. Their source revision and file checksum are the same as for the raw request text.
 
 The five request examples have distinct `case_id`/`group_id` values and different subjects/structures. These exports do not expose a separate `family_id`; descriptive family headings below are editorial categories, not claimed dataset taxonomy. “Raw” means the complete pre-extraction text supplied by the dataset, including its existing anonymization placeholders.
 
@@ -40,7 +40,7 @@ Three separate questions; budget qualifications remain attached to the first two
 
 ```json
 {
-  "request": "I am writing to request some information about how public funds are allocated and managed in our region, particularly regarding transport and policing. Could you provide a breakdown of how the regional transport budget is allocated to different public transport modes, such as bus, rail, and trams? I am interested in the most recent summary of budget allocations and any available figures for the current financial year. Additionally, I would like to know the annual budgets and expenditure for highway maintenance for each local authority district within the region. Please include winter gritting expenditure figures if available. Finally, I would appreciate details about the legal requirements and process that guide police stop and search procedures in this region."
+  "body": "I am writing to request some information about how public funds are allocated and managed in our region, particularly regarding transport and policing. Could you provide a breakdown of how the regional transport budget is allocated to different public transport modes, such as bus, rail, and trams? I am interested in the most recent summary of budget allocations and any available figures for the current financial year. Additionally, I would like to know the annual budgets and expenditure for highway maintenance for each local authority district within the region. Please include winter gritting expenditure figures if available. Finally, I would appreciate details about the legal requirements and process that guide police stop and search procedures in this region."
 }
 ```
 
@@ -69,36 +69,41 @@ Three separate questions; budget qualifications remain attached to the first two
 }
 ```
 
-**Expected classification field**
+**Expected full-endpoint fields**
 
-Source: companion topic split line 1, `completion[0].content`. Compare this field on the full `/agents/foi_structure` response.
+Source: companion topic split line 1, `completion[0].content`. Question text and classification are merged by question ID. Runtime metadata and original request text are omitted from this comparison.
 
 ```json
 {
-  "classification": {
-    "questions": [
-      {
-        "question_id": "q1",
-        "regime": "FOI",
-        "topic": "regional transport budget allocation by public transport mode"
-      },
-      {
-        "question_id": "q2",
-        "regime": "FOI",
-        "topic": "highway maintenance budgets and expenditure by local authority district"
-      },
-      {
-        "question_id": "q3",
-        "regime": "FOI",
-        "topic": "police stop and search legal requirements"
-      }
-    ],
-    "request_topics": [
-      "regional transport budget allocation by public transport mode",
-      "highway maintenance budgets and expenditure by local authority district",
-      "police stop and search legal requirements"
-    ]
-  }
+  "questions": [
+    {
+      "question_id": "q1",
+      "text": "Could you provide a breakdown of how the regional transport budget is allocated to different public transport modes, such as bus, rail, and trams? I am interested in the most recent summary of budget allocations and any available figures for the current financial year.",
+      "regime": "FOI",
+      "topic": "regional transport budget allocation by public transport mode"
+    },
+    {
+      "question_id": "q2",
+      "text": "Additionally, I would like to know the annual budgets and expenditure for highway maintenance for each local authority district within the region. Please include winter gritting expenditure figures if available.",
+      "regime": "FOI",
+      "topic": "highway maintenance budgets and expenditure by local authority district"
+    },
+    {
+      "question_id": "q3",
+      "text": "Finally, I would appreciate details about the legal requirements and process that guide police stop and search procedures in this region.",
+      "regime": "FOI",
+      "topic": "police stop and search legal requirements"
+    }
+  ],
+  "extraction_status": "questions_found",
+  "additional_text": [
+    "I am writing to request some information about how public funds are allocated and managed in our region, particularly regarding transport and policing."
+  ],
+  "request_topics": [
+    "regional transport budget allocation by public transport mode",
+    "highway maintenance budgets and expenditure by local authority district",
+    "police stop and search legal requirements"
+  ]
 }
 ```
 
@@ -114,7 +119,7 @@ Join wrapped lines and keep the requested monthly breakdown within q1. Existing 
 
 ```json
 {
-  "request": "I am writing to request a statistical overview of planning\napplications handled by your authority. This request is made\nunder the relevant provisions for access to recorded\ninformation held by public authorities.\nRequester: <PERSON>. Email: <EMAIL_ADDRESS>.\n- Please provide the number of planning applications received and the number determined each month for the period from January 2023 to December 2023.\nThe figures should be broken down by calendar month and\nindicate the number of applications received, the number\napproved, refused, withdrawn, and those still under\nconsideration at year end."
+  "body": "I am writing to request a statistical overview of planning\napplications handled by your authority. This request is made\nunder the relevant provisions for access to recorded\ninformation held by public authorities.\nRequester: <PERSON>. Email: <EMAIL_ADDRESS>.\n- Please provide the number of planning applications received and the number determined each month for the period from January 2023 to December 2023.\nThe figures should be broken down by calendar month and\nindicate the number of applications received, the number\napproved, refused, withdrawn, and those still under\nconsideration at year end."
 }
 ```
 
@@ -138,24 +143,30 @@ Join wrapped lines and keep the requested monthly breakdown within q1. Existing 
 }
 ```
 
-**Expected classification field**
+**Expected full-endpoint fields**
 
-Source: companion topic split line 3, `completion[0].content`. Compare this field on the full `/agents/foi_structure` response.
+Source: companion topic split line 3, `completion[0].content`. Question text and classification are merged by question ID. Runtime metadata and original request text are omitted from this comparison.
 
 ```json
 {
-  "classification": {
-    "questions": [
-      {
-        "question_id": "q1",
-        "regime": "FOI",
-        "topic": "planning application statistics"
-      }
-    ],
-    "request_topics": [
-      "planning application statistics"
-    ]
-  }
+  "questions": [
+    {
+      "question_id": "q1",
+      "text": "- Please provide the number of planning applications received and the number determined each month for the period from January 2023 to December 2023. The figures should be broken down by calendar month and indicate the number of applications received, the number approved, refused, withdrawn, and those still under consideration at year end.",
+      "regime": "FOI",
+      "topic": "planning application statistics"
+    }
+  ],
+  "extraction_status": "questions_found",
+  "additional_text": [
+    "I am writing to request a statistical overview of planning applications handled by your authority.",
+    "This request is made under the relevant provisions for access to recorded information held by public authorities.",
+    "Requester: <PERSON>.",
+    "Email: <EMAIL_ADDRESS>."
+  ],
+  "request_topics": [
+    "planning application statistics"
+  ]
 }
 ```
 
@@ -171,7 +182,7 @@ The dataset labels the two sentences beginning “Focus on” and “Specify” 
 
 ```json
 {
-  "request": "• List the geographic locations and operational status of all active sites in the national air quality monitoring network.\nFocus on sites that currently measure PM2.5, NO2, O3, SO2, and CO in line with UK-adopted EU directives. Specify whether each site is urban, rural, or roadside."
+  "body": "• List the geographic locations and operational status of all active sites in the national air quality monitoring network.\nFocus on sites that currently measure PM2.5, NO2, O3, SO2, and CO in line with UK-adopted EU directives. Specify whether each site is urban, rural, or roadside."
 }
 ```
 
@@ -193,24 +204,28 @@ The dataset labels the two sentences beginning “Focus on” and “Specify” 
 }
 ```
 
-**Expected classification field**
+**Expected full-endpoint fields**
 
-Source: companion topic split line 6, `completion[0].content`. Compare this field on the full `/agents/foi_structure` response.
+Source: companion topic split line 6, `completion[0].content`. Question text and classification are merged by question ID. Runtime metadata and original request text are omitted from this comparison.
 
 ```json
 {
-  "classification": {
-    "questions": [
-      {
-        "question_id": "q1",
-        "regime": "EIR",
-        "topic": "national air quality monitoring network sites"
-      }
-    ],
-    "request_topics": [
-      "national air quality monitoring network sites"
-    ]
-  }
+  "questions": [
+    {
+      "question_id": "q1",
+      "text": "• List the geographic locations and operational status of all active sites in the national air quality monitoring network.",
+      "regime": "EIR",
+      "topic": "national air quality monitoring network sites"
+    }
+  ],
+  "extraction_status": "questions_found",
+  "additional_text": [
+    "Focus on sites that currently measure PM2.5, NO2, O3, SO2, and CO in line with UK-adopted EU directives.",
+    "Specify whether each site is urban, rural, or roadside."
+  ],
+  "request_topics": [
+    "national air quality monitoring network sites"
+  ]
 }
 ```
 
@@ -226,7 +241,7 @@ The repeated introductory request is ADDITIONAL. Extract the explicit request an
 
 ```json
 {
-  "request": "I am writing to request copies of all correspondence between\nmyself and my allocated social care support worker.\nThis request is from <PERSON>. Replies can be sent to\n<EMAIL_ADDRESS>.\nPlease provide copies of all emails or letters exchanged\nbetween me and my allocated social care support worker.\nThese records should cover the period from January 2023 to\nthe present."
+  "body": "I am writing to request copies of all correspondence between\nmyself and my allocated social care support worker.\nThis request is from <PERSON>. Replies can be sent to\n<EMAIL_ADDRESS>.\nPlease provide copies of all emails or letters exchanged\nbetween me and my allocated social care support worker.\nThese records should cover the period from January 2023 to\nthe present."
 }
 ```
 
@@ -249,24 +264,29 @@ The repeated introductory request is ADDITIONAL. Extract the explicit request an
 }
 ```
 
-**Expected classification field**
+**Expected full-endpoint fields**
 
-Source: companion topic split line 14, `completion[0].content`. Compare this field on the full `/agents/foi_structure` response.
+Source: companion topic split line 14, `completion[0].content`. Question text and classification are merged by question ID. Runtime metadata and original request text are omitted from this comparison.
 
 ```json
 {
-  "classification": {
-    "questions": [
-      {
-        "question_id": "q1",
-        "regime": "SAR",
-        "topic": "communications with allocated social care support worker"
-      }
-    ],
-    "request_topics": [
-      "communications with allocated social care support worker"
-    ]
-  }
+  "questions": [
+    {
+      "question_id": "q1",
+      "text": "Please provide copies of all emails or letters exchanged between me and my allocated social care support worker. These records should cover the period from January 2023 to the present.",
+      "regime": "SAR",
+      "topic": "communications with allocated social care support worker"
+    }
+  ],
+  "extraction_status": "questions_found",
+  "additional_text": [
+    "I am writing to request copies of all correspondence between myself and my allocated social care support worker.",
+    "This request is from <PERSON>.",
+    "Replies can be sent to <EMAIL_ADDRESS>."
+  ],
+  "request_topics": [
+    "communications with allocated social care support worker"
+  ]
 }
 ```
 
@@ -282,7 +302,7 @@ Keep care records and land contamination reports as separate questions, with the
 
 ```json
 {
-  "request": "I need some information from Northbridge Borough Council. Please treat this as two separate requests below. I am <PERSON>. Email: <EMAIL_ADDRESS>. My postal address is <ADDRESS>. Telephone: <PHONE_NUMBER>.\n• Can you send me the minutes and notes from my most recent annual care plan review meeting and any earlier review records you hold?\nPlease include any amendments or updates made to my care or support plan in the last three years.\n* Also, could you provide me with preliminary land contamination reports you have for any sites currently under consideration for development by Northbridge Borough Council?\nI am particularly interested in reports that include details on chemicals detected during site surveys and any initial recommendations for further investigation. Thanks for your help."
+  "body": "I need some information from Northbridge Borough Council. Please treat this as two separate requests below. I am <PERSON>. Email: <EMAIL_ADDRESS>. My postal address is <ADDRESS>. Telephone: <PHONE_NUMBER>.\n• Can you send me the minutes and notes from my most recent annual care plan review meeting and any earlier review records you hold?\nPlease include any amendments or updates made to my care or support plan in the last three years.\n* Also, could you provide me with preliminary land contamination reports you have for any sites currently under consideration for development by Northbridge Borough Council?\nI am particularly interested in reports that include details on chemicals detected during site surveys and any initial recommendations for further investigation. Thanks for your help."
 }
 ```
 
@@ -313,30 +333,40 @@ Keep care records and land contamination reports as separate questions, with the
 }
 ```
 
-**Expected classification field**
+**Expected full-endpoint fields**
 
-Source: companion topic split line 17, `completion[0].content`. Compare this field on the full `/agents/foi_structure` response.
+Source: companion topic split line 17, `completion[0].content`. Question text and classification are merged by question ID. Runtime metadata and original request text are omitted from this comparison.
 
 ```json
 {
-  "classification": {
-    "questions": [
-      {
-        "question_id": "q1",
-        "regime": "SAR",
-        "topic": "care plan review records"
-      },
-      {
-        "question_id": "q2",
-        "regime": "EIR",
-        "topic": "preliminary land contamination reports for development sites"
-      }
-    ],
-    "request_topics": [
-      "care plan review records",
-      "preliminary land contamination reports for development sites"
-    ]
-  }
+  "questions": [
+    {
+      "question_id": "q1",
+      "text": "• Can you send me the minutes and notes from my most recent annual care plan review meeting and any earlier review records you hold? Please include any amendments or updates made to my care or support plan in the last three years.",
+      "regime": "SAR",
+      "topic": "care plan review records"
+    },
+    {
+      "question_id": "q2",
+      "text": "* Also, could you provide me with preliminary land contamination reports you have for any sites currently under consideration for development by Northbridge Borough Council? I am particularly interested in reports that include details on chemicals detected during site surveys and any initial recommendations for further investigation.",
+      "regime": "EIR",
+      "topic": "preliminary land contamination reports for development sites"
+    }
+  ],
+  "extraction_status": "questions_found",
+  "additional_text": [
+    "I need some information from Northbridge Borough Council.",
+    "Please treat this as two separate requests below.",
+    "I am <PERSON>.",
+    "Email: <EMAIL_ADDRESS>.",
+    "My postal address is <ADDRESS>.",
+    "Telephone: <PHONE_NUMBER>.",
+    "Thanks for your help."
+  ],
+  "request_topics": [
+    "care plan review records",
+    "preliminary land contamination reports for development sites"
+  ]
 }
 ```
 

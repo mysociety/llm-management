@@ -74,3 +74,40 @@ def test_separate_catalogs_and_registries_warm_their_own_checkpoint(monkeypatch)
     assert first_guard.release()
     assert not first_guard.status().ready
     assert second_guard.status().ready
+
+
+def test_http_dependencies_use_the_serving_application(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from starlette.testclient import TestClient
+
+    from llm_management.api.dependencies import get_service
+    from llm_management.server import create_app
+    from llm_management.settings import settings
+
+    monkeypatch.setattr(settings, "auth_tokens", {})
+    first, second = assemble_application(), assemble_application()
+    apps = [create_app(first), create_app(second)]
+    calls = []
+    for application, label in [(first, "first"), (second, "second")]:
+        call = AsyncMock(
+            return_value=SimpleNamespace(slug="example", action=label, replicas=1)
+        )
+        monkeypatch.setattr(application.deployments, "ensure_deployment", call)
+        calls.append(call)
+
+    # No lifespan needed: mocked lifecycle actions never load resources.
+    clients = [TestClient(app) for app in apps]
+    for client, label in zip(clients, ["first", "second"]):
+        assert client.post("/deployments/example/warm-up").json()["action"] == label
+    for call in calls:
+        call.assert_awaited_once_with("example", None)
+
+    apps[0].dependency_overrides[get_service] = lambda: second.deployments
+    assert clients[0].post("/deployments/example/warm-up").json()["action"] == "second"
+    assert clients[1].post("/deployments/example/warm-up").json()["action"] == "second"
+    assert calls[0].await_count == 1
+    assert calls[1].await_count == 3
+    for client in clients:
+        client.close()

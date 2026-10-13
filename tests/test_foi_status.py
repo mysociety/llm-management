@@ -149,7 +149,7 @@ def test_exact_prompt_and_sanitized_transport(serving, body, output):
     from starlette.testclient import TestClient
 
     with TestClient(server.app) as client:
-        response = client.post("/agents/foi_response_analysis", json=body)
+        response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 200, response.text
     assert response.json() == {**output, "process_states": None}
     serving.ensure.assert_awaited_once_with("foi_status")
@@ -196,7 +196,7 @@ def test_context_budget_before_startup(serving, body, tokens, expected):
 
     serving.control["tokens"] = tokens
     with TestClient(server.app) as client:
-        response = client.post("/agents/foi_response_analysis", json=body)
+        response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == expected, response.text
     if expected == 422:
         serving.ensure.assert_not_called()
@@ -248,7 +248,7 @@ def test_failed_status_generation_is_502_and_records_activity(
     if failure in {"extra_states", "question", "source"}:
         serving.control["content"] = data
     with TestClient(server.app) as client:
-        response = client.post("/agents/foi_response_analysis", json=body)
+        response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 502, response.text
     assert serving.touch == ["foi_status"]
     assert len(serving.calls) == 1
@@ -276,7 +276,7 @@ def test_tokenizer_failure_does_not_start_deployment(serving, body, monkeypatch)
 
     monkeypatch.setattr(server.app.state.application.foi, "response_tokenizer", failed)
     with TestClient(server.app) as client:
-        response = client.post("/agents/foi_response_analysis", json=body)
+        response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 503
     assert "private details" not in response.text
     serving.ensure.assert_not_called()
@@ -292,7 +292,7 @@ def test_changed_instruction_is_rejected_before_startup(serving, body, monkeypat
 
     monkeypatch.setattr(response_model, "SYSTEM_PROMPT_SHA256", "0" * 64)
     with TestClient(server.app) as client:
-        response = client.post("/agents/foi_response_analysis", json=body)
+        response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 503
     serving.ensure.assert_not_called()
     assert not serving.calls
@@ -305,7 +305,7 @@ def test_startup_failure_records_activity(serving, body):
 
     serving.ensure.side_effect = LLMManagementError("private provider details")
     with TestClient(server.app) as client:
-        response = client.post("/agents/foi_response_analysis", json=body)
+        response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 503
     assert "private provider details" not in response.text
     assert serving.touch == ["foi_status"]
@@ -320,7 +320,7 @@ def test_missing_inference_credentials_are_503(serving, body):
 
     serving.ensure.return_value.state.api_key = ""
     with TestClient(server.app) as client:
-        response = client.post("/agents/foi_response_analysis", json=body)
+        response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 503
     assert serving.calls == []
     assert serving.touch == ["foi_status"]

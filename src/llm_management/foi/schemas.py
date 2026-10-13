@@ -21,7 +21,7 @@ class QuestionSliceRequest(BaseModel):
     Raw correspondence accepted by request extraction and classification routes.
     """
 
-    request: str = Field(min_length=1, max_length=100_000)
+    body: str = Field(min_length=1, max_length=100_000)
 
 
 class UnitLabel(StrEnum):
@@ -122,3 +122,56 @@ class InformationRequestResult(QuestionSliceResult):
     request_text: str
     classification: TopicOutput | None
     classification_model: str | None
+
+
+class ClassifiedQuestion(TopicQuestion):
+    """An extracted question with its access regime and short topic."""
+
+    text: str = Field(min_length=1)
+
+
+class ExtractionMetadata(StrictModel):
+    extraction_backend: ExtractionBackend
+    extraction_model: str
+    extraction_revision: str | None
+    classification_model: str | None
+    ignored_text: list[str]
+    promoted_continuation_index: int | None = None
+
+
+class ExtractQuestionsResponse(StrictModel):
+    """Public combined extraction and classification result."""
+
+    request_text: str
+    questions: list[ClassifiedQuestion]
+    extraction_status: Literal["questions_found", "no_questions_found", "uncertain"]
+    additional_text: list[str]
+    request_topics: list[str]
+    meta: ExtractionMetadata
+
+    @classmethod
+    def from_result(cls, result: InformationRequestResult) -> Self:
+        classifications = (
+            {q.question_id: q for q in result.classification.questions}
+            if result.classification
+            else {}
+        )
+        if set(classifications) != {q.question_id for q in result.questions}:
+            raise ValueError("Classification IDs must match extracted questions")
+        return cls(
+            request_text=result.request_text,
+            questions=[
+                ClassifiedQuestion(
+                    **classifications[q.question_id].model_dump(), text=q.text
+                )
+                for q in result.questions
+            ],
+            extraction_status=result.extraction_status,
+            additional_text=result.additional_text,
+            request_topics=result.classification.request_topics
+            if result.classification
+            else [],
+            meta=ExtractionMetadata.model_validate(
+                result.model_dump(include=set(ExtractionMetadata.model_fields))
+            ),
+        )

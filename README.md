@@ -150,6 +150,20 @@ available without authentication.
 
 ### Endpoints
 
+#### FOI endpoints
+
+| Endpoint | Method | Description | Relevant deployment group |
+|---|---|---|---|
+| `/endpoint/foi/extract_questions` | POST | Given an FOI request, returns a structured set of questions with FOI/EIR/SAR status and a short description | `foi_pipeline_cpu` (default CPU extraction), or `foi_pipeline` (`backend=exoscale`) |
+| `/endpoint/foi/extract_questions/extract` | POST | Just the question structure, primarily for internal debugging; omits status and topic classification | Same groups as above; these warm the full pipeline |
+| `/endpoint/foi/response_status` | POST | Given a structured set of questions and a structured response document, identifies whether questions were answered or withheld | `foi_response_pipeline` |
+| `/endpoint/foi/sar_detection` | POST | Given an FOI request text, indicates whether it is likely to be a SAR, IMM, or other personal information request; `fast=true` uses only logistic inference rather than cascading to the larger model | `sar_pipeline_cpu` |
+| `/endpoint/foi/automatic_response_detection` | POST | Given a response to an FOI request, indicates whether it is likely to be an automatic response; `fast=true` uses only logistic inference rather than cascading to the larger model | `automatic_pipeline_cpu` |
+
+Warm a group with `POST /deployment-groups/{slug}/ensure`.
+
+#### Deployment management and inference
+
 | Endpoint | Method | Description |
 |---|---|---|
 | `/health` | GET | Unauthenticated process health check |
@@ -160,16 +174,25 @@ available without authentication.
 | `/deployments/{slug}/scale-to-zero` | POST | Scale a deployment to zero replicas (pause without destroying) |
 | `/deployments/{slug}/v1/{path}` | POST | Proxy requests to the underlying Exoscale deployment, injecting auth |
 | `/v1/systemone` | POST | Proxy System One decision requests to the selected Exoscale deployment |
-| `/agents/sar_detection` | POST | Local personal-records moderation; failures retain an unclear flag |
-| `/agents/automatic_response_detection` | POST | Classify one email body as automatic or authored; supports fast logistic-only mode |
-| `/agents/immigration_detection/clef` | POST | Single Clef choice question returning `IMM` or `FOI` |
-| `/agents/capital_city` | POST | Native structured-output example — returns a country's capital city |
-| `/agents/foi_structure` | POST | QuestionSlice extraction followed by fine-tuned Granite regimes/topics; `backend=cpu` or `exoscale` selects extraction |
-| `/agents/foi_structure/extract` | POST | QuestionSlice extraction only |
 | `/local-models` | GET | Local CPU resource readiness and idle timers in this worker |
 | `/local-models/{name}/ensure` | POST | Warm a local CPU resource and reset its idle timer |
-| `/agents/foi_response_analysis` | POST | Granite status analysis against upstream request questions and response sources |
-| `/agents/immigration_detection` | POST | Validated plain-text example — classifies a request as immigration-related (`IMM`) or FOI (`FOI`) |
+
+#### Misc endpoints
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/endpoint/misc/capital_city` | POST | Structured-output example using model inference; returns a country's capital city |
+
+#### Mocks and examples
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/mock/endpoint/foi/extract_questions` | POST | Example extraction and classification without inference |
+| `/mock/endpoint/foi/extract_questions/extract` | POST | Example extraction without inference |
+| `/mock/endpoint/foi/response_status` | POST | Example response analysis without inference |
+| `/mock/endpoint/misc/capital_city` | POST | Always returns `city: "Fake Paris"` and echoes the submitted country, without inference |
+
+The immigration examples remain callable but are hidden from OpenAPI.
 
 ## Common operations
 

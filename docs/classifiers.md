@@ -2,7 +2,13 @@
 
 ## SAR moderation on local CPU
 
-`POST /agents/sar_detection` accepts `{"request": "the complete original correspondence"}`
+Given an FOI request text, returns a quick indication of whether it is likely to be
+a SAR, IMM, or other personal information request. If `fast` is true, returns only
+logistic inference rather than cascading to the larger model.
+Relevant deployment group: `sar_pipeline_cpu`.
+
+
+`POST /endpoint/foi/sar_detection` accepts `{"body": "the complete original correspondence"}`
 and an optional `fast` boolean (default `false`). It returns `is_sar`,
 `stage` (`logistic` or `deberta`), `status` (`complete` or `unclear`), `reason`,
 `logistic_score` and `deberta_score`. It flags requests for personal records,
@@ -18,7 +24,7 @@ inference, invalid-score, overlength and busy failures return HTTP 200 with
 receive normal validation errors. Treat unclear results as requiring moderator review.
 Scores describe model outputs, not established real-world probabilities.
 
-With `fast: true`, for example `{"request": "My personal records", "fast": true}`,
+With `fast: true`, for example `{"body": "My personal records", "fast": true}`,
 the endpoint returns the logistic decision immediately and skips DeBERTa for both
 positive and negative results. It uses the existing inclusive cutoff
 `0.0018603434604847564`; the pinned SAR release has no separate standalone policy.
@@ -72,7 +78,13 @@ Apache-2.0 with upstream DeBERTa MIT notices retained in their repositories.
 
 ## Automatic-response classification on local CPU
 
-`POST /agents/automatic_response_detection` accepts one current email body:
+Given a response to an FOI request, returns a quick indication of whether it is
+likely to be an automatic response. If `fast` is true, returns only logistic
+inference rather than cascading to the larger model.
+Relevant deployment group: `automatic_pipeline_cpu`.
+
+
+`POST /endpoint/foi/automatic_response_detection` accepts one current email body:
 
 ```json
 {"body": "This is an automatic reply. I am out of the office.", "fast": false}

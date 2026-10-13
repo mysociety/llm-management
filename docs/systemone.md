@@ -14,7 +14,7 @@ so manifests and private SSH keys survive restarts. One manager process/worker o
 Compute deployment.
 
 The server exposes `/v1/systemone?deployment=clef` and the native Pydantic AI
-immigration agent at `/agents/immigration_detection/clef?deployment=clef`.
+immigration agent at `/endpoint/foi/immigration_detection/clef?deployment=clef`.
 Model settings come from the template recipe. The serving container includes
 Clef's decision head; Exoscale's managed vLLM gateway is not involved.
 
@@ -31,6 +31,7 @@ curl 'http://localhost:8000/v1/systemone?deployment=clef' \
   -d '{"model":"Cloudflare/clef-flash","state":"Please update me on my visa application.","questions":{"classification":{"type":"choice","instructions":"Classify this request.","criteria":{"IMM":"Immigration matters","FOI":"Other information requests"}}}}'
 ```
 
+The immigration examples remain callable but are hidden from OpenAPI.
 The minimal immigration endpoint uses a Pydantic AI `Agent` with a typed
 `ClassificationResponse` output. Its native
 [`SystemOneModel`](https://pydantic.dev/docs/ai/models/system-one/) translates
@@ -39,10 +40,10 @@ answer and probabilities. The provider uses the deployment's resolved API connec
 
 
 ```bash
-curl 'http://localhost:8000/agents/immigration_detection/clef?deployment=clef' \
+curl 'http://localhost:8000/endpoint/foi/immigration_detection/clef?deployment=clef' \
   -H 'Authorization: Bearer <server-token>' \
   -H 'Content-Type: application/json' \
-  -d '{"request":"Please update me on my visa application."}'
+  -d '{"body":"Please update me on my visa application."}'
 # {"classification":"IMM"}
 ```
 
@@ -50,4 +51,4 @@ Both endpoints use normal server authentication and `ensure_running`, which
 updates the shared idle timer. Unknown deployment slugs return 404; transport
 failures return 503 and timeouts return 504. The immigration endpoint returns
 502 for upstream errors or malformed classifications. The original
-`/agents/immigration_detection?deployment=toast_llama` remains available.
+`/endpoint/foi/immigration_detection?deployment=toast_llama` remains available.

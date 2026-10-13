@@ -9,7 +9,7 @@ from starlette.testclient import TestClient
 
 from llm_management.deployments import get_catalog
 from llm_management.foi.examples import ExtractionExpectation, validation_examples
-from llm_management.foi.schemas import InformationRequestResult
+from llm_management.foi.schemas import ExtractQuestionsResponse, TopicOutput
 from llm_management.server import app
 from tests.foi_validation import (
     assert_extraction_matches,
@@ -39,13 +39,13 @@ def test_full_pipeline_validation(client, backend, example, record_property):
     """
     response = post_example(
         client,
-        "/agents/foi_structure",
+        "/endpoint/foi/extract_questions",
         example.id,
         example.input,
         record_property,
         backend=backend,
     )
-    result = InformationRequestResult.model_validate(response.json())
+    result = ExtractQuestionsResponse.model_validate(response.json())
     assert_extraction_matches(
         ExtractionExpectation.from_result(result),
         example.expected,
@@ -53,12 +53,16 @@ def test_full_pipeline_validation(client, backend, example, record_property):
         record_property=record_property,
     )
     assert (
-        result.classification_model
+        result.meta.classification_model
         == get_catalog().get(get_catalog().require_foi().topic_deployment).model
     )
-    assert result.classification is not None
     assert_topics_match(
-        result.classification,
+        TopicOutput.model_validate(
+            {
+                "questions": [q.model_dump(exclude={"text"}) for q in result.questions],
+                "request_topics": result.request_topics,
+            }
+        ),
         example.classification,
         record_property,
         accepted=example.accepted_classifications,
@@ -71,15 +75,15 @@ def test_no_questions_skips_classification(client, backend):
     Retain the empty-question behaviour absent from the supplied gold examples.
     """
     response = client.post(
-        "/agents/foi_structure",
+        "/endpoint/foi/extract_questions",
         params={"backend": backend},
         json={
-            "request": "Dear Council,\n\nThank you for your response.\n\nKind regards,\nA resident"
+            "body": "Dear Council,\n\nThank you for your response.\n\nKind regards,\nA resident"
         },
     )
     assert response.status_code == 200, response.text
-    result = InformationRequestResult.model_validate(response.json())
+    result = ExtractQuestionsResponse.model_validate(response.json())
     assert result.extraction_status == "no_questions_found"
     assert result.questions == []
-    assert result.classification is None
-    assert result.classification_model is None
+    assert result.request_topics == []
+    assert result.meta.classification_model is None

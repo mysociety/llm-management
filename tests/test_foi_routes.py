@@ -52,7 +52,7 @@ def test_no_questions_skips_all_remote_work(client, classifier, monkeypatch):
     ensure = AsyncMock(side_effect=AssertionError("CPU must not provision a GPU"))
     monkeypatch.setattr(server.app.state.service, "ensure_running", ensure)
     response = client.post(
-        "/agents/foi_structure/extract", json={"request": "Thank you."}
+        "/endpoint/foi/extract_questions/extract", json={"body": "Thank you."}
     )
     assert response.status_code == 200
     assert response.json()["extraction_status"] == "no_questions_found"
@@ -66,8 +66,8 @@ def test_orphan_keeps_indices_and_does_not_invent_start(client, classifier):
         [0.01, 0.01, 0.97, 0.01],
     ]
     response = client.post(
-        "/agents/foi_structure/extract",
-        json={"request": "Please provide the totals.\n\nPlease provide the reports."},
+        "/endpoint/foi/extract_questions/extract",
+        json={"body": "Please provide the totals.\n\nPlease provide the reports."},
     )
     assert response.status_code == 200
     output = response.json()
@@ -82,8 +82,8 @@ def test_gpu_disabled_does_not_provision(client, classifier, monkeypatch):
     ensure = AsyncMock()
     monkeypatch.setattr(server.app.state.service, "ensure_running", ensure)
     response = client.post(
-        "/agents/foi_structure/extract?backend=exoscale",
-        json={"request": "Please provide the report."},
+        "/endpoint/foi/extract_questions/extract?backend=exoscale",
+        json={"body": "Please provide the report."},
     )
     assert response.status_code == 503
     ensure.assert_not_called()
@@ -106,9 +106,9 @@ def test_backend_switch_shares_reconstruction(client, classifier, monkeypatch):
     results = []
     for backend in ["cpu", "exoscale"]:
         response = client.post(
-            "/agents/foi_structure/extract",
+            "/endpoint/foi/extract_questions/extract",
             params={"backend": backend},
-            json={"request": "Please provide the report."},
+            json={"body": "Please provide the report."},
         )
         assert response.status_code == 200
         results.append(response.json())
@@ -131,8 +131,8 @@ def test_overlength_rejected_before_gpu_start(client, classifier, monkeypatch):
     ensure = AsyncMock()
     monkeypatch.setattr(server.app.state.service, "ensure_running", ensure)
     response = client.post(
-        "/agents/foi_structure/extract?backend=exoscale",
-        json={"request": "Long request."},
+        "/endpoint/foi/extract_questions/extract?backend=exoscale",
+        json={"body": "Long request."},
     )
     assert response.status_code == 422
     ensure.assert_not_called()
@@ -145,8 +145,8 @@ def test_overlength_rejected_before_gpu_start(client, classifier, monkeypatch):
 def test_bad_probabilities_are_upstream_errors(client, classifier, rows):
     classifier.classify = lambda texts: rows
     response = client.post(
-        "/agents/foi_structure/extract",
-        json={"request": "Please provide the report."},
+        "/endpoint/foi/extract_questions/extract",
+        json={"body": "Please provide the report."},
     )
     assert response.status_code == 502
 
@@ -157,8 +157,8 @@ def test_busy_cpu_returns_retryable_response(client, classifier):
 
     classifier.classify = busy
     response = client.post(
-        "/agents/foi_structure/extract",
-        json={"request": "Please provide the report."},
+        "/endpoint/foi/extract_questions/extract",
+        json={"body": "Please provide the report."},
     )
     assert response.status_code == 429
     assert response.headers["Retry-After"] == "1"
@@ -229,24 +229,31 @@ def pipeline(monkeypatch):
         )
 
 
-def test_new_route_orchestrates_and_keeps_source_diagnostics(pipeline):
+def test_full_route_merges_questions_and_groups_metadata(pipeline):
     response = pipeline.client.post(
-        "/agents/foi_structure?backend=exoscale",
-        json={"request": "Please provide report 0."},
+        "/endpoint/foi/extract_questions?backend=exoscale",
+        json={"body": "Please provide report 0."},
     )
     assert response.status_code == 200, response.text
     result = response.json()
-    assert result["classification"] == topic_data()
+    assert [
+        {k: v for k, v in q.items() if k != "text"} for q in result["questions"]
+    ] == topic_data()["questions"]
+    assert result["request_topics"] == topic_data()["request_topics"]
     assert result["questions"][0]["text"] == "Please provide report 0."
-    assert result["promoted_continuation_index"] == 0
-    assert result["unit_predictions"][0]["label"] == "QUESTION_CONTINUATION"
+    assert result["meta"]["promoted_continuation_index"] == 0
+    assert "unit_predictions" not in result
+    assert "unit_predictions" not in result["meta"]
+    assert "classification" not in result
     assert (
-        result["classification_model"]
+        result["meta"]["classification_model"]
         == get_catalog().get(get_catalog().require_foi().topic_deployment).model
     )
-    assert result["extraction_model"] == "modernbert"
-    assert result["extraction_revision"] == "pinned"
-    assert result["extraction_backend"] == "cpu"  # The mocked extractor's result.
+    assert result["meta"]["extraction_model"] == "modernbert"
+    assert result["meta"]["extraction_revision"] == "pinned"
+    assert (
+        result["meta"]["extraction_backend"] == "cpu"
+    )  # The mocked extractor's result.
     assert not {
         "keywords",
         "model",
@@ -263,11 +270,12 @@ def test_new_route_orchestrates_and_keeps_source_diagnostics(pipeline):
 def test_no_questions_never_starts_topic_model(pipeline):
     pipeline.extractor.return_value = extraction((0,))
     response = pipeline.client.post(
-        "/agents/foi_structure", json={"request": "Thank you."}
+        "/endpoint/foi/extract_questions", json={"body": "Thank you."}
     )
     assert response.status_code == 200
-    assert response.json()["classification"] is None
-    assert response.json()["classification_model"] is None
+    assert response.json()["questions"] == []
+    assert response.json()["request_topics"] == []
+    assert response.json()["meta"]["classification_model"] is None
     pipeline.ensure.assert_not_called()
     pipeline.classify.assert_not_called()
 
@@ -275,17 +283,20 @@ def test_no_questions_never_starts_topic_model(pipeline):
 def test_partial_uncertainty_is_retained(pipeline):
     pipeline.extractor.return_value = extraction((3, 2))
     result = pipeline.client.post(
-        "/agents/foi_structure", json={"request": "Request"}
+        "/endpoint/foi/extract_questions", json={"body": "Request"}
     ).json()
     assert result["extraction_status"] == "uncertain"
     assert "orphan_continuation_indices" not in result
-    assert result["classification"] == topic_data()
+    assert [
+        {k: v for k, v in q.items() if k != "text"} for q in result["questions"]
+    ] == topic_data()["questions"]
+    assert result["request_topics"] == topic_data()["request_topics"]
 
 
 def test_base_model_cannot_be_substituted(pipeline):
     pipeline.cfg.model = "ibm-granite/granite-4.0-1b"
     response = pipeline.client.post(
-        "/agents/foi_structure", json={"request": "Request"}
+        "/endpoint/foi/extract_questions", json={"body": "Request"}
     )
     assert response.status_code == 503
     pipeline.ensure.assert_not_called()
@@ -297,7 +308,7 @@ def test_prompt_rejection_precedes_provisioning(pipeline, monkeypatch):
 
     monkeypatch.setattr(foi_topic, "prepare_topic_request", reject)
     response = pipeline.client.post(
-        "/agents/foi_structure", json={"request": "Request"}
+        "/endpoint/foi/extract_questions", json={"body": "Request"}
     )
     assert response.status_code == 422
     pipeline.ensure.assert_not_called()
@@ -307,7 +318,7 @@ def test_bad_upstream_returns_502(pipeline):
     pipeline.classify.side_effect = foi_topic.TopicOutputError("invalid")
     assert (
         pipeline.client.post(
-            "/agents/foi_structure", json={"request": "Request"}
+            "/endpoint/foi/extract_questions", json={"body": "Request"}
         ).status_code
         == 502
     )
@@ -315,9 +326,9 @@ def test_bad_upstream_returns_502(pipeline):
 
 def test_old_flow_removed_from_api():
     paths = server.app.openapi()["paths"]
-    assert "/agents/foi_structure/legacy" not in paths
-    assert "/agents/foi_structure/legacy/extract" not in paths
-    assert "/agents/foi_structure/metadata" not in paths
-    assert "/agents/foi_structure/v2/extract" not in paths
-    assert "/agents/foi_structure/extract" in paths
-    assert "/agents/foi_structure" in paths
+    assert "/endpoint/foi/extract_questions/legacy" not in paths
+    assert "/endpoint/foi/extract_questions/legacy/extract" not in paths
+    assert "/endpoint/foi/extract_questions/metadata" not in paths
+    assert "/endpoint/foi/extract_questions/v2/extract" not in paths
+    assert "/endpoint/foi/extract_questions/extract" in paths
+    assert "/endpoint/foi/extract_questions" in paths

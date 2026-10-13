@@ -8,13 +8,11 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from .. import automatic, sar
-from ..automatic.pipeline import AutomaticClassifier
-from ..deployments.service import DeploymentService
-from ..sar.pipeline import SARClassifier
+from .dependencies import AutomaticClassifierDependency, SARClassifierDependency
 
 
 class SARDetectionRequest(BaseModel):
-    request: str = Field(min_length=1, max_length=100_000)
+    body: str = Field(min_length=1, max_length=100_000)
     fast: bool = False
 
 
@@ -23,29 +21,40 @@ class AutomaticResponseRequest(BaseModel):
     fast: bool = False
 
 
-def build_router(
-    service: DeploymentService,
-    sar_classifier: SARClassifier,
-    automatic_classifier: AutomaticClassifier,
-) -> APIRouter:
-    router = APIRouter()
+router = APIRouter(tags=["FOI endpoints"])
 
-    @router.post("/agents/sar_detection", response_model=sar.SARResult)
-    async def sar_detection_endpoint(body: SARDetectionRequest) -> sar.SARResult:
-        """
-        Flag personal-records correspondence; inference failures retain the flag.
-        """
-        return await sar_classifier.detect(body.request, fast=body.fast)
 
-    @router.post(
-        "/agents/automatic_response_detection", response_model=automatic.AutomaticResult
-    )
-    async def automatic_response_detection_endpoint(
-        body: AutomaticResponseRequest,
-    ) -> automatic.AutomaticResult:
-        """
-        Classify one current email body, leaving notification decisions to callers.
-        """
-        return await automatic_classifier.detect(body.body, fast=body.fast)
+@router.post("/endpoint/foi/sar_detection", response_model=sar.SARResult)
+async def sar_detection_endpoint(
+    sar_classifier: SARClassifierDependency, body: SARDetectionRequest
+) -> sar.SARResult:
+    """
+    Given an FOI request text, returns a quick indication of whether it is
+    likely to be a SAR, IMM, or other personal information request.
 
-    return router
+    If `fast` is true, returns only logistic inference rather than cascading
+    to the larger model.
+
+    Relevant deployment group: `sar_pipeline_cpu`.
+    """
+    return await sar_classifier.detect(body.body, fast=body.fast)
+
+
+@router.post(
+    "/endpoint/foi/automatic_response_detection",
+    response_model=automatic.AutomaticResult,
+)
+async def automatic_response_detection_endpoint(
+    automatic_classifier: AutomaticClassifierDependency,
+    body: AutomaticResponseRequest,
+) -> automatic.AutomaticResult:
+    """
+    Given a response to an FOI request, returns a quick indication of whether
+    it is likely to be an automatic response.
+
+    If `fast` is true, returns only logistic inference rather than cascading
+    to the larger model.
+
+    Relevant deployment group: `automatic_pipeline_cpu`.
+    """
+    return await automatic_classifier.detect(body.body, fast=body.fast)
