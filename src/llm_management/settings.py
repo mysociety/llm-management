@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     )
     server_role: str = "test"
     auth_tokens: dict[str, str] = Field(default_factory=dict)
+    http_max_body_bytes: int = Field(default=1_048_576, ge=1)
+    http_max_concurrent_requests: int = Field(default=64, ge=1)
+    http_body_timeout_seconds: float = Field(default=30, gt=0)
+    logistic_max_pending: int = Field(default=64, ge=1)
 
     @field_validator("auth_tokens")
     @classmethod

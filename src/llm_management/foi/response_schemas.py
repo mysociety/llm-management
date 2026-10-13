@@ -15,7 +15,7 @@ from .schemas import (
     QuestionSliceResult,
 )
 
-NonEmptyText = Annotated[str, Field(min_length=1)]
+NonEmptyText = Annotated[str, Field(min_length=1, max_length=100_000)]
 QuestionId = Annotated[str, Field(pattern=r"^q[1-9][0-9]*$")]
 SnakeCaseIdentifier = Annotated[str, Field(pattern=r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")]
 Visibility = Literal[
@@ -47,7 +47,7 @@ class ResponseSource(APIModel):
     sender: Literal["authority", "requester", "other", "unknown"] | None
     filename: NonEmptyText | None
     availability: Literal["visible", "unavailable", "unknown"]
-    text: str | None
+    text: str | None = Field(max_length=100_000)
 
     @model_validator(mode="after")
     def observed_text_only(self) -> Self:
@@ -132,7 +132,7 @@ class ResponseInputSources(APIModel):
         default=None,
         description="Optional original request for context; IDs come only from request.questions.",
     )
-    sources: list[ResponseSource] = Field(min_length=1)
+    sources: list[ResponseSource] = Field(min_length=1, max_length=64)
 
     @model_validator(mode="after")
     def unique_sources(self) -> Self:
@@ -363,7 +363,20 @@ class ResponseAnalysisInput(ResponseInputSources):
     @model_validator(mode="after")
     def consistent_request_context(self) -> Self:
         # Apply the v4 invariants even to the existing request-step schemas.
-        self.model_input()
+        observed = self.model_input()
+        if (
+            len(observed.request.questions) > 256
+            or len(observed.request.additional_text) > 256
+        ):
+            raise ValueError("Too many questions or additional text items")
+        texts = [
+            *(q.text for q in observed.request.questions),
+            *observed.request.additional_text,
+            *(source.text or "" for source in observed.sources),
+            observed.request_text or "",
+        ]
+        if sum(map(len, texts)) > 200_000:
+            raise ValueError("Response analysis text exceeds 200000 characters")
         if (
             isinstance(
                 self.request, (InformationRequestResult, ExtractQuestionsResponse)

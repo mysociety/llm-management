@@ -17,7 +17,7 @@ class SARDetectionRequest(BaseModel):
 
 
 class AutomaticResponseRequest(BaseModel):
-    body: str
+    body: str = Field(max_length=100_000)
     fast: bool = False
 
 
