@@ -188,7 +188,8 @@ llm-management pause clef
 ```
 
 The same lifecycle is used by `/deployments/clef/ensure` and requests to
-`/v1/systemone` or `/endpoint/foi/immigration_detection/clef`. Startup resolves the
+`/deployments/clef/v1/systemone` or the hidden example
+`/endpoint/foi/immigration_detection/clef`. Startup resolves the
 private template name to its UUID, creates one GPU VM, opens an SSH tunnel and
 waits for matching health before forwarding requests. Concurrent requests share
 the startup lock. An existing stopped VM is resumed; after a manager restart,

@@ -83,9 +83,7 @@ def test_compute_lifecycle_and_agents_live():
                         }
                     },
                 }
-                path = (
-                    "/v1/systemone" if index == 0 else "/deployments/clef/v1/systemone"
-                )
+                path = "/deployments/clef/v1/systemone"
                 response = client.post(path, headers=headers, json=body)
                 record(f"proxy_{index + 1}", response)
                 assert (

@@ -173,7 +173,6 @@ Warm a group with `POST /deployment-groups/{slug}/ensure`.
 | `/deployments/{slug}/cooldown` | POST | Shorten the remaining idle countdown to at most one minute |
 | `/deployments/{slug}/scale-to-zero` | POST | Scale a deployment to zero replicas (pause without destroying) |
 | `/deployments/{slug}/v1/{path}` | POST | Proxy requests to the underlying Exoscale deployment, injecting auth |
-| `/v1/systemone` | POST | Proxy System One decision requests to the selected Exoscale deployment |
 | `/local-models` | GET | Local CPU resource readiness and idle timers in this worker |
 | `/local-models/{name}/ensure` | POST | Warm a local CPU resource and reset its idle timer |
 
@@ -193,6 +192,8 @@ Warm a group with `POST /deployment-groups/{slug}/ensure`.
 | `/mock/endpoint/misc/capital_city` | POST | Always returns `city: "Fake Paris"` and echoes the submitted country, without inference |
 
 The immigration examples remain callable but are hidden from OpenAPI.
+The standalone `/v1/systemone` route is removed; use
+`/deployments/{slug}/v1/systemone` instead.
 
 ## Common operations
 

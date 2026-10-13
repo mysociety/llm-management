@@ -4,16 +4,12 @@ OpenAI and System One HTTP forwarding.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
-
 import httpx2
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from ..transports import systemone
 from .dependencies import ServiceDependency
 
-router = APIRouter()
+router = APIRouter(tags=["Inference proxy"])
 
 
 @router.api_route(
@@ -39,62 +35,38 @@ async def proxy_to_deployment(
     for h in ("host", "content-length", "transfer-encoding"):
         headers.pop(h, None)
 
-    params = dict(request.query_params)
+    params = httpx2.QueryParams(tuple(request.query_params.multi_items()))
 
-    async with httpx2.AsyncClient(timeout=300.0) as client:
-        resp = await client.request(
-            method=request.method,
-            url=target_url,
-            headers=headers,
-            params=params,
-            content=body,
-        )
+    try:
+        async with httpx2.AsyncClient(timeout=300.0) as client:
+            resp = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=headers,
+                params=params,
+                content=body,
+            )
+    except httpx2.TimeoutException as exc:
+        raise HTTPException(
+            status_code=504, detail="Deployment server timed out"
+        ) from exc
+    except httpx2.RequestError as exc:
+        raise HTTPException(
+            status_code=503, detail="Deployment server could not be reached"
+        ) from exc
 
     return Response(
         content=resp.content,
         status_code=resp.status_code,
-        headers=dict(resp.headers),
-    )
-
-
-@contextmanager
-def systemone_http_errors() -> Iterator[None]:
-    """
-    Translate transport failures without exposing upstream credentials.
-    """
-    try:
-        yield
-    except systemone.SystemOneTimeout as exc:
-        raise HTTPException(status_code=504, detail=str(exc)) from exc
-    except systemone.SystemOneUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-@router.post("/v1/systemone")
-async def proxy_to_systemone(
-    service: ServiceDependency, request: Request, deployment: str = "clef"
-) -> Response:
-    """
-    Forward System One JSON through the shared Exoscale lifecycle.
-    """
-    state = (await service.ensure_running(deployment)).state
-    with systemone_http_errors():
-        response = await systemone.send_systemone(
-            await request.body(),
-            deployment_url=state.deployment_url,
-            api_key=state.api_key,
-            params=[
-                (k, v)
-                for k, v in request.query_params.multi_items()
-                if k != "deployment"
-            ],
-        )
-    # httpx2 decodes compressed bodies, so do not copy encoding or length headers.
-    headers = {
-        name: response.headers[name]
-        for name in ("content-type", "retry-after")
-        if name in response.headers
-    }
-    return Response(
-        content=response.content, status_code=response.status_code, headers=headers
+        headers={
+            name: value
+            for name, value in resp.headers.items()
+            if name.lower()
+            not in (
+                "content-encoding",
+                "content-length",
+                "transfer-encoding",
+                "connection",
+            )
+        },
     )
