@@ -67,7 +67,8 @@ def test_proxy_preserves_payload_query_status_and_uses_upstream_auth(clef_client
 
 
 @pytest.mark.parametrize(
-    "path", ["/deployments/clef/v1/systemone", "/endpoint/foi/immigration_detection/clef"]
+    "path",
+    ["/deployments/clef/v1/systemone", "/endpoint/foi/immigration_detection/clef"],
 )
 def test_auth_rejects_before_contacting_clef(clef_client, path):
     client, requests, _ = clef_client
@@ -155,7 +156,8 @@ def test_bad_classification_returns_502(clef_client, reply):
 
 
 @pytest.mark.parametrize(
-    "path", ["/deployments/clef/v1/systemone", "/endpoint/foi/immigration_detection/clef"]
+    "path",
+    ["/deployments/clef/v1/systemone", "/endpoint/foi/immigration_detection/clef"],
 )
 @pytest.mark.parametrize(
     "error, status",
@@ -176,7 +178,8 @@ def test_transport_errors(clef_client, path, error, status):
 
 
 @pytest.mark.parametrize(
-    "path", ["/deployments/clef/v1/systemone", "/endpoint/foi/immigration_detection/clef"]
+    "path",
+    ["/deployments/clef/v1/systemone", "/endpoint/foi/immigration_detection/clef"],
 )
 def test_unknown_deployment_returns_404(clef_client, path):
     client, requests, _ = clef_client
@@ -269,3 +272,29 @@ def test_systemone_alias_is_removed(clef_client):
     assert post(client, "/v1/systemone", json={}).status_code == 404
     assert requests == []
     server.app.state.service.ensure_running.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "%2e%2e/admin",
+        "%252e%252e/admin",
+        "chat/%2e%2e/admin",
+        "%2fadmin",
+        "chat%5c..%5cadmin",
+        "chat%3fadmin",
+    ],
+)
+def test_proxy_rejects_unsafe_paths_before_startup(clef_client, path):
+    client, requests, _ = clef_client
+    response = post(client, "/deployments/clef/v1/" + path, json={})
+    assert response.status_code == 400
+    assert not requests
+    server.app.state.service.ensure_running.assert_not_awaited()
+
+
+def test_proxy_bounds_upstream_response(clef_client, monkeypatch):
+    client, _, replies = clef_client
+    monkeypatch.setattr(server.settings, "proxy_max_response_bytes", 8)
+    replies.append(httpx2.Response(200, content=b"x" * 9))
+    assert post(client, "/deployments/clef/v1/systemone", json={}).status_code == 502
