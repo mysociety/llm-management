@@ -191,3 +191,19 @@ def test_local_cooldown_expiry_and_new_work_reset(monkeypatch):
     assert resource.cooldown(900) == 10
     clock[0] += 10
     assert resource.release(900)
+
+
+def test_local_cooldown_clamps_timestamp_rounding(monkeypatch):
+    from llm_management.inference import resources
+
+    clock = [4.01]
+    assert (clock[0] + 60) - clock[0] > 60  # Reproduce the CI rounding boundary.
+    monkeypatch.setattr(resources.time, "monotonic", lambda: clock[0])
+    resource = LocalResource("local", Mock(), Mock())
+    resource.warmup()
+    assert resource.cooldown(900) == 60.0
+    clock[0] += 30
+    assert 0 < resource.cooldown(900) < 60
+    clock[0] += 31
+    assert resource.cooldown(900) == 0.0
+    assert resource.release(900)

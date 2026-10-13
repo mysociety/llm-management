@@ -150,7 +150,8 @@ class LocalResource(Generic[T]):
             if self._cooldown_at is not None:
                 deadline = min(deadline, self._cooldown_at)
             self._cooldown_at = deadline
-            return max(0, deadline - now)
+            # Timestamp subtraction can round just above the one-minute bound.
+            return min(60.0, max(0.0, deadline - now))
         finally:
             self._lock.release()
 
