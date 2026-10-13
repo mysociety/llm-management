@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     classifier_batch_size: int = Field(default=8, ge=1, le=256)
     classifier_max_units: int = Field(default=256, ge=1, le=4096)
     automatic_max_concurrency: int = Field(default=4, ge=1, le=64)
+    deberta_batch_size: int = Field(default=8, ge=1, le=64)
+    deberta_batch_delay_ms: float = Field(default=10, ge=0, le=1000)
+    deberta_queue_size: int = Field(default=64, ge=1, le=4096)
+    deberta_queue_timeout_seconds: float = Field(default=30, gt=0)
     cpu_inference_threads: int = Field(default=1, ge=1)
     classifier_cache_dir: str | None = None
     cpu_idle_timeout_minutes: int = Field(default=15, ge=1)

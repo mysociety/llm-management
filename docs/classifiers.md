@@ -7,7 +7,6 @@ a SAR, IMM, or other personal information request. If `fast` is true, returns on
 logistic inference rather than cascading to the larger model.
 Relevant deployment group: `group_sar_pipeline_cpu`.
 
-
 `POST /endpoint/foi/sar_detection` accepts `{"body": "the complete original correspondence"}`
 and an optional `fast` boolean (default `false`). It returns `is_sar`,
 `stage` (`logistic` or `deberta`), `status` (`complete` or `unclear`), `reason`,
@@ -41,9 +40,10 @@ Models are lazy local resources named `sar_logistic_cpu` and
 Warm-up and loading are per API worker, and resources follow the normal CPU idle
 unloading policy. Allow roughly 1.28 GB for the reported SAR process footprint,
 plus other resources loaded in the same worker. DeBERTa uses CPU float32, the shared
-`CPU_INFERENCE_THREADS` setting (default 1), and one in-flight inference per worker;
-concurrent DeBERTa calls return an unclear busy flag. Logistic negatives can continue
-while DeBERTa is busy. Blocking inference runs off the event loop.
+`CPU_INFERENCE_THREADS` setting (default 1). Positive cascade decisions enter a
+per-model async queue and are processed in batches of up to eight. Fast requests
+and logistic negatives bypass that queue. Blocking inference runs off the event loop.
+A full queue or expired result deadline returns an unclear `deberta_busy` result.
 
 Private artifact access uses Pydantic Settings: `HF_TOKEN` takes precedence over
 legacy `HUGGINGFACE_TOKEN`. `CLASSIFIER_CACHE_DIR` controls the Hugging Face cache;
@@ -83,7 +83,6 @@ likely to be an automatic response. If `fast` is true, returns only logistic
 inference rather than cascading to the larger model.
 Relevant deployment group: `group_automatic_pipeline_cpu`.
 
-
 `POST /endpoint/foi/automatic_response_detection` accepts one current email body:
 
 ```json
@@ -110,7 +109,7 @@ scores, and encoder inputs above 512 tokens including special tokens return HTTP
 with `is_automatic: false`, `unresolved: true`, and a reason. Encoder inputs are never
 truncated. Reasons include `empty_body`, `logistic_failure`, `overlong_body`,
 `encoder_failure`, `encoder_unavailable`, `encoder_busy`, `invalid_score`,
-`classifier_busy` and `inference_failed`.
+`inference_failed`. Queue overload or deadline expiry uses `encoder_busy`.
 An unresolved result must be distinguished from a resolved authored classification.
 Malformed HTTP request bodies receive normal validation errors.
 
@@ -135,11 +134,36 @@ supplied release manifest. Revisions are pinned in `conf/deployments.toml`:
 | `mySociety/autoreply-deberta-2026-10-09-1` | `ddf70e25af71b64260e72ac3cdef1353a990d4c8` |
 
 Blocking inference runs off the async event loop. `AUTOMATIC_MAX_CONCURRENCY`
-(default 4) bounds admitted work per worker, including fast requests; further
-requests return an unresolved `classifier_busy` result. DeBERTa allows one
-inference at a time and returns `encoder_busy` for overlapping confirmations.
-Cancellation retains capacity until the worker finishes. `CPU_INFERENCE_THREADS`
-(default 1) controls the shared process-wide PyTorch thread count.
+(default 4) limits concurrent logistic worker calls; further calls await capacity
+without occupying a worker thread. Positive cascade decisions then enter the
+model's async batch queue. Fast mode uses its own logistic decision policy and
+never joins the DeBERTa queue. Cancellation retains logistic capacity and model
+resource leases until already-running work finishes.
+
+### Queued DeBERTa inference
+
+SAR and automatic-response detection each have an independent queue per API worker:
+
+| Setting | Default | Meaning |
+|---|---:|---|
+| `DEBERTA_BATCH_SIZE` | 8 | Maximum documents in one inference batch |
+| `DEBERTA_BATCH_DELAY_MS` | 10 | Maximum collection delay for a partial batch; full batches start immediately when the model is free |
+| `DEBERTA_QUEUE_SIZE` | 64 | Maximum waiting documents, in addition to the active batch |
+| `DEBERTA_QUEUE_TIMEOUT_SECONDS` | 30 | Deadline from enqueue to result, including model loading and inference |
+| `CPU_INFERENCE_THREADS` | 1 | Shared process-wide PyTorch thread count |
+
+A queued single request waits up to 10 ms to collect peers before model execution
+when idle. Under load, it also waits for earlier batches. Queue waiting does not
+occupy inference threads. Invalid or overlong inputs are isolated from valid peers;
+inputs remain untruncated. Cancelled or expired queued requests are skipped. If
+inference has already started, it finishes under its model lease even when the
+caller disconnects or times out. Server shutdown rejects pending work and waits
+for the active batch before unloading resources. Group cool-down and scale-to-zero
+continue to protect active inference; queued work alone does not reserve a model.
+
+The synchronous Python classifier helpers still run directly; cross-request batching
+is provided by the async service and HTTP endpoints. Each API worker owns its own
+queues and model copies. This batching change does not apply to QuestionSlice.
 
 The generic logistic predictor and authenticated tokenizer loader are shared with
 SAR. Normalization removes angle-bracket placeholders, applies NFKC and casefold,

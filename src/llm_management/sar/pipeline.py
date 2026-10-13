@@ -11,6 +11,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from ..inference.batching import AsyncClassifierBatcher
 from ..inference.errors import (
     ClassifierBusy,
     ClassifierOutputError,
@@ -18,6 +19,7 @@ from ..inference.errors import (
 )
 from ..inference.logistic_v1 import normalize_text_v1
 from ..inference.validation import binary_positive_probability, validate_probability
+from ..settings import settings
 from .resources import deberta_detector, logistic_detector
 from .schemas import SARResult
 
@@ -126,19 +128,49 @@ class SARClassifier:
         """
         self.logistic_provider = logistic_provider
         self.encoder_provider = encoder_provider
+        self.batcher = AsyncClassifierBatcher(
+            lambda texts: self.encoder_provider().classify(texts),
+            batch_size=settings.deberta_batch_size,
+            delay_seconds=settings.deberta_batch_delay_ms / 1000,
+            max_pending=settings.deberta_queue_size,
+            timeout_seconds=settings.deberta_queue_timeout_seconds,
+        )
 
     async def detect(self, raw_text: str, fast: bool = False) -> SARResult:
-        """
-        Run the moderation cascade in a worker thread using this application's owners.
-
-        fast=True skips encoder confirmation. Cancelling the async caller does not stop
-        the running thread; model owners retain their resource leases until work ends.
-        Inference failures are represented by an unclear result that retains the flag.
-        """
-        return await asyncio.to_thread(
+        """Run logistic gating in a thread, then await batched encoder confirmation."""
+        result = await asyncio.to_thread(
             _detect_sar,
             raw_text,
-            fast,
+            True,
             logistic_provider=self.logistic_provider,
             encoder_provider=self.encoder_provider,
+        )
+        if fast or result.status != "complete" or not result.is_sar:
+            return result
+        try:
+            row = await self.batcher.predict(normalize_text_v1(raw_text))
+            probability = binary_positive_probability([row])
+            return SARResult(
+                is_sar=probability >= 0.5,
+                stage="deberta",
+                status="complete",
+                logistic_score=result.logistic_score,
+                deberta_score=probability,
+            )
+        except ClassifierBusy:
+            reason = "deberta_busy"
+        except ClassifierOutputError:
+            reason = "invalid_score"
+        except ClassifierUnavailable:
+            reason = "deberta_unavailable"
+        except ValueError:
+            reason = "deberta_input_unsupported"
+        except Exception:
+            reason = "inference_failed"
+        return SARResult(
+            is_sar=True,
+            stage="deberta",
+            status="unclear",
+            reason=reason,
+            logistic_score=result.logistic_score,
         )

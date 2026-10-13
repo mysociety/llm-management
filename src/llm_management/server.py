@@ -42,6 +42,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await task
         except asyncio.CancelledError:
             pass
+        await app.state.application.sar.batcher.close()
+        await app.state.application.automatic.close()
         await service.close()
 
 
