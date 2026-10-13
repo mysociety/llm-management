@@ -334,3 +334,8 @@ Start reading application code at `bootstrap.py` and `server.py`. HTTP contracts
 live under `api/`; deployment lifecycle and cloud operations live under
 `deployments/`; reusable execution and resource guards live under `inference/`.
 FOI, SAR and automatic classification each keep their own decisions and schemas.
+
+Docker builds use a deny-by-default `.dockerignore` that admits application
+source, package metadata and the two deployment configuration files. Supply
+credentials at runtime; local environment files, state, SSH keys and Git history
+are excluded from the build context.

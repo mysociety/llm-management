@@ -1,0 +1,17 @@
+# Deny by default: never send credentials, state, history or caches to Docker.
+**
+!pyproject.toml
+!poetry.lock
+!README.md
+!LICENSE.md
+!src/
+!src/**
+!conf/
+!conf/deployments.toml
+!conf/exoscale_templates.toml
+# Exclude generated files even inside allowed source directories.
+**/__pycache__/
+**/*.pyc
+**/.env*
+**/*.pem
+**/id_*
