@@ -7,10 +7,10 @@ Unicode compatibility adaptation. Results describe classification only.
 from __future__ import annotations
 
 import asyncio
-import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal, Protocol
 
+from ..inference.batching import AsyncClassifierBatcher
 from ..inference.errors import (
     ClassifierBusy,
     ClassifierInputTooLong,
@@ -19,6 +19,7 @@ from ..inference.errors import (
 )
 from ..inference.logistic_v1 import BinaryPredictionV1, normalize_text_v1
 from ..inference.validation import binary_positive_probability, validate_probability
+from ..settings import settings
 from .schemas import AutomaticResult, unresolved
 
 if TYPE_CHECKING:
@@ -133,7 +134,15 @@ class AutomaticClassifier:
         """
         self.logistic_provider = logistic_provider
         self.encoder_provider = encoder_provider
-        self.capacity = threading.BoundedSemaphore(max_concurrency)
+        self.capacity = asyncio.Semaphore(max_concurrency)
+        self.batcher = AsyncClassifierBatcher(
+            lambda texts: self.encoder_provider().classify(texts),
+            batch_size=settings.deberta_batch_size,
+            delay_seconds=settings.deberta_batch_delay_ms / 1000,
+            max_pending=settings.deberta_queue_size,
+            timeout_seconds=settings.deberta_queue_timeout_seconds,
+        )
+        self._gates: set[asyncio.Task[AutomaticResult]] = set()
 
     def detector(self, fast: bool) -> AutoDetector:
         """
@@ -157,26 +166,50 @@ class AutomaticClassifier:
         except Exception:
             return unresolved("none", "inference_failed")
 
+    def classify_gate(self, body: str, fast: bool) -> AutomaticResult:
+        """Apply the selected logistic policy without resolving the encoder."""
+        return AutoDetector(
+            lambda text: self.logistic_provider().predict(text, fast=fast),
+            mode="logistic",
+        ).classify(body)
+
+    async def _gate(self, body: str, fast: bool) -> AutomaticResult:
+        async with self.capacity:
+            return await asyncio.to_thread(self.classify_gate, body, fast)
+
+    async def close(self) -> None:
+        await self.batcher.close()
+        if self._gates:
+            await asyncio.gather(*self._gates, return_exceptions=True)
+
     async def detect(self, body: str, fast: bool = False) -> AutomaticResult:
-        """
-        Admit work without waiting and run it in a shielded worker task.
-
-        Return classifier_busy as an unresolved result when capacity is exhausted. Hold
-        capacity until the worker ends, even if its async caller is cancelled; shielding
-        prevents cancellation from releasing admission while inference is still running.
-        Fast mode uses only the standalone logistic decision policy.
-        """
-        if not self.capacity.acquire(blocking=False):
-            return unresolved("none", "classifier_busy")
-
-        def work() -> AutomaticResult:
-            """
-            Release admission only when the synchronous worker exits.
-            """
-            try:
-                return self.classify(body, fast)
-            finally:
-                self.capacity.release()
-
-        task = asyncio.create_task(asyncio.to_thread(work))
-        return await asyncio.shield(task)
+        """Await logistic capacity, then batch only positive cascade decisions."""
+        task = asyncio.create_task(self._gate(body, fast))
+        self._gates.add(task)
+        task.add_done_callback(self._gates.discard)
+        try:
+            result = await asyncio.shield(task)
+        except Exception:
+            return unresolved("none", "inference_failed")
+        if fast or result.unresolved or not result.is_automatic:
+            return result
+        try:
+            row = await self.batcher.predict(normalize_text_v1(body))
+            probability = binary_positive_probability([row])
+            return AutomaticResult(
+                is_automatic=probability >= 0.5,
+                stage="deberta",
+                logistic_score=result.logistic_score,
+                encoder_score=probability,
+            )
+        except ClassifierBusy:
+            reason = "encoder_busy"
+        except ClassifierUnavailable:
+            reason = "encoder_unavailable"
+        except ClassifierOutputError:
+            reason = "invalid_score"
+        except ClassifierInputTooLong:
+            reason = "overlong_body"
+        except Exception:
+            reason = "encoder_failure"
+        return unresolved("deberta", reason, result.logistic_score)

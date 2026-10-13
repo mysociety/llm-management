@@ -218,16 +218,15 @@ def test_loading_once_and_shared_weights(monkeypatch):
 
 def test_endpoint_contract_and_auth(chain, monkeypatch):
     detector, _, encoder = chain
+    owner = Mock()
+    owner.predict.side_effect = lambda body, fast=False: logistic_v1.predict_binary(
+        body, policy()
+    )
     monkeypatch.setattr(
-        server.app.state.application.automatic,
-        "detector",
-        lambda fast: (
-            inference.AutoDetector(
-                lambda body: logistic_v1.predict_binary(body, policy()), mode="logistic"
-            )
-            if fast
-            else detector
-        ),
+        server.app.state.application.automatic, "logistic_provider", lambda: owner
+    )
+    monkeypatch.setattr(
+        server.app.state.application.automatic, "encoder_provider", lambda: encoder
     )
     monkeypatch.setattr(server.settings, "auth_tokens", {})
     monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
@@ -264,18 +263,16 @@ def test_endpoint_contract_and_auth(chain, monkeypatch):
 def test_bounded_admission_survives_cancellation(monkeypatch):
     entered, release, finished = threading.Event(), threading.Event(), threading.Event()
 
-    def classify(body):
+    def classify(body, fast):
         entered.set()
         assert release.wait(5)
         finished.set()
         return inference.AutomaticResult(is_automatic=False, stage="logistic")
 
-    detector = Mock()
-    detector.classify.side_effect = classify
-    capacity = threading.BoundedSemaphore(1)
+    capacity = asyncio.Semaphore(1)
     monkeypatch.setattr(server.app.state.application.automatic, "capacity", capacity)
     monkeypatch.setattr(
-        server.app.state.application.automatic, "detector", lambda fast: detector
+        server.app.state.application.automatic, "classify_gate", classify
     )
 
     async def scenario():
@@ -287,11 +284,15 @@ def test_bounded_admission_survives_cancellation(monkeypatch):
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
-            result = await server.app.state.application.automatic.detect("another")
-            assert result.unresolved and result.reason == "classifier_busy"
+            waiting = asyncio.create_task(
+                server.app.state.application.automatic.detect("another")
+            )
+            await asyncio.sleep(0.01)
+            assert not waiting.done()
         finally:
             release.set()
         assert await asyncio.to_thread(finished.wait, 5)
+        assert not (await waiting).unresolved
         # Yield to let the worker release its lease before the next admission.
         await asyncio.sleep(0.01)
         assert not (
