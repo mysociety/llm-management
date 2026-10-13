@@ -75,7 +75,7 @@ def test_custom_replicas_create_resume_and_resize(deployment, initial):
     http, cfg, cloud, client, cache = deployment
     if initial is not None:
         cloud["deployment"] = {"id": "test-id", "name": "test", "replicas": initial}
-    response = http.post("/deployments/test/ensure?replicas=3")
+    response = http.post("/deployments/test/warm-up?replicas=3")
     assert response.status_code == 200
     assert response.json() == {
         "slug": "test",
@@ -101,7 +101,7 @@ def test_omitted_replicas_preserves_defaults_and_running_count(
     http, _, cloud, _, _ = deployment
     if initial is not None:
         cloud["deployment"] = {"id": "test-id", "name": "test", "replicas": initial}
-    response = http.post("/deployments/test/ensure")
+    response = http.post("/deployments/test/warm-up")
     assert response.status_code == 200
     assert response.json()["replicas"] == expected
 
@@ -109,7 +109,9 @@ def test_omitted_replicas_preserves_defaults_and_running_count(
 @pytest.mark.parametrize("replicas", ["0", "-1", "1.5", "no"])
 def test_invalid_replicas_rejected_before_startup(deployment, replicas):
     http, _, _, client, _ = deployment
-    assert http.post(f"/deployments/test/ensure?replicas={replicas}").status_code == 422
+    assert (
+        http.post(f"/deployments/test/warm-up?replicas={replicas}").status_code == 422
+    )
     client.create_deployment.assert_not_called()
 
 
@@ -132,7 +134,7 @@ def test_local_resource_rejects_replicas(deployment, monkeypatch):
     warm = Mock()
     registry.register(LocalResource("local", warm, Mock()))
     monkeypatch.setattr(server.app.state.service, "resources", registry)
-    assert http.post("/deployments/local/ensure?replicas=2").status_code == 422
+    assert http.post("/deployments/local/warm-up?replicas=2").status_code == 422
     warm.assert_not_called()
 
 
@@ -150,7 +152,7 @@ def test_cooldown_shortens_timer_and_traffic_resets_it(
         last_request_time=0 if remaining is None else 10_000 - 900 + remaining,
     )
     cache.set(state)
-    response = http.post("/deployments/test/cooldown")
+    response = http.post("/deployments/test/cool-down")
     assert response.status_code == 200
     expected = 60 if remaining is None else max(0, min(60, remaining))
     assert response.json()["seconds_until_scale_to_zero"] == expected
@@ -164,7 +166,7 @@ def test_cooldown_shortens_timer_and_traffic_resets_it(
 def test_cooldown_stopped_deployment_does_not_start_it(deployment, exists):
     http, _, _, client, cache = deployment
     cache.set(DeploymentState(slug="test", exists=exists, last_refreshed=time.time()))
-    response = http.post("/deployments/test/cooldown")
+    response = http.post("/deployments/test/cool-down")
     assert response.json()["action"] == "already_stopped"
     assert response.json()["seconds_until_scale_to_zero"] is None
     client.create_deployment.assert_not_called()
@@ -183,7 +185,7 @@ def test_cooldown_rejects_active_requests(deployment):
         )
     )
     before = cache.get("test").last_request_time
-    assert http.post("/deployments/test/cooldown").status_code == 409
+    assert http.post("/deployments/test/cool-down").status_code == 409
     assert cache.get("test").last_request_time == before
 
 
@@ -193,7 +195,7 @@ def test_idle_scaler_observes_cooldown(deployment, monkeypatch, elapsed, stopped
     now = [10_000.0]
     monkeypatch.setattr(time, "time", lambda: now[0])
     cloud["deployment"] = {"id": "test-id", "name": "test", "replicas": 2}
-    assert http.post("/deployments/test/cooldown").status_code == 200
+    assert http.post("/deployments/test/cool-down").status_code == 200
     # Refreshes must preserve the shortened idle timer.
     cache.refresh(server.app.state.service.get_backend("test"))
     now[0] += elapsed

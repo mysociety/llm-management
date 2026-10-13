@@ -182,7 +182,7 @@ class BinaryCascadePipeline(CatalogModel):
 
 
 class DeploymentGroupConfig(CatalogModel):
-    slug: str = Field(min_length=1)
+    slug: str = Field(pattern=r"^group_.+$")
     deployments: list[str] = Field(min_length=1)
 
 
@@ -258,6 +258,8 @@ class DeploymentCatalog(CatalogModel):
                         f"Deployment model disagrees with model reference: {ref}"
                     )
         known = set(remote_names) | set(local_names)
+        if any(name.startswith("group_") for name in known):
+            raise ValueError("The group_ prefix is reserved for deployment groups")
         groups = set()
         for group in self.deployment_group:
             if group.slug in groups:

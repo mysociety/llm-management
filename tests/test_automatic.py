@@ -443,7 +443,7 @@ def test_app_warmup_inference_and_expiry_share_one_logistic_owner(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
 
     with TestClient(server.app) as client:
-        assert client.post(f"/local-models/{config.logistic}/ensure").status_code == 200
+        assert client.post(f"/deployments/{config.logistic}/warm-up").status_code == 200
         assert loader.call_count == 2
         owner = application.automatic.logistic_provider()
         assert owner.resource is service.resources.get(config.logistic)
@@ -478,7 +478,7 @@ def test_warmup_group_reports_required_models(monkeypatch, fail_encoder):
     registry.register(LocalResource(pipeline.classifier, encoder_load, Mock()))
     monkeypatch.setattr(server.app.state.service, "resources", registry)
     result = asyncio.run(
-        server.app.state.service.ensure_group("automatic_pipeline_cpu")
+        server.app.state.service.ensure_group("group_automatic_pipeline_cpu")
     )
     assert result.success is (not fail_encoder)
     assert [r.slug for r in result.deployments] == [

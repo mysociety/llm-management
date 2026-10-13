@@ -182,8 +182,9 @@ protocol = "systemone"
 template = "clef_flash"
 
 
+# Group slugs use the reserved group_ prefix for shared lifecycle API routing.
 [[deployment_group]]
-slug = "foi_pipeline"
+slug = "group_foi_pipeline"
 # Remote deployments and registered local CPU resources share the warm-up path.
 deployments = [
     "presidio",
@@ -195,12 +196,12 @@ deployments = [
 
 
 [[deployment_group]]
-slug = "foi_pipeline_cpu"
+slug = "group_foi_pipeline_cpu"
 deployments = ["presidio", "question_slice_cpu", "question_extractor_tokenizer", "foi_topic"]
 
 
 [[deployment_group]]
-slug = "sar_pipeline_cpu"
+slug = "group_sar_pipeline_cpu"
 deployments = ["sar_logistic_cpu", "sar_deberta_cpu"]
 
 # Automatic email detection, pinned from fast-auto-classifier releases.json.
@@ -228,12 +229,12 @@ logistic = "auto_logistic_cpu"
 classifier = "auto_deberta_cpu"
 
 [[deployment_group]]
-slug = "automatic_pipeline_cpu"
+slug = "group_automatic_pipeline_cpu"
 deployments = ["auto_logistic_cpu", "auto_deberta_cpu"]
 
 
 [[deployment_group]]
-slug = "foi_response_pipeline"
+slug = "group_foi_response_pipeline"
 deployments = ["presidio", "foi_status_tokenizer", "foi_status"]
 
 [[local.deployment]]

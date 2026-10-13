@@ -65,8 +65,8 @@ async def question_slice_endpoint(
 
     This omits FOI/EIR/SAR status and topic classification.
 
-    Relevant deployment group: `foi_pipeline_cpu` for `backend=cpu`
-    (the default), or `foi_pipeline` for `backend=exoscale`.
+    Relevant deployment group: `group_foi_pipeline_cpu` for `backend=cpu`
+    (the default), or `group_foi_pipeline` for `backend=exoscale`.
     These groups warm the full pipeline, including classification.
     """
     with foi_http_errors():
@@ -89,8 +89,8 @@ async def information_request_endpoint(
     Given an FOI request, returns a structured set of questions with
     FOI/EIR/SAR status and a short description.
 
-    Relevant deployment group: `foi_pipeline_cpu` for `backend=cpu`
-    (the default), or `foi_pipeline` for `backend=exoscale`.
+    Relevant deployment group: `group_foi_pipeline_cpu` for `backend=cpu`
+    (the default), or `group_foi_pipeline` for `backend=exoscale`.
     """
     with foi_http_errors():
         result = await pipeline.process_information_request(
@@ -117,7 +117,7 @@ async def foi_response_status_endpoint(
     Given a structured set of questions and a structured response document,
     identifies whether questions were answered or withheld.
 
-    Relevant deployment group: `foi_response_pipeline`.
+    Relevant deployment group: `group_foi_response_pipeline`.
     """
     with foi_http_errors():
         return await response_analysis.analyze_response(

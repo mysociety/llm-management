@@ -112,7 +112,7 @@ def test_resource_registration_and_warmup_group():
         get_catalog().require_sar().logistic,
         get_catalog().require_sar().classifier,
     } <= server.app.state.service.resources.names()
-    assert config.get_group("sar_pipeline_cpu").deployments == [
+    assert config.get_group("group_sar_pipeline_cpu").deployments == [
         get_catalog().require_sar().logistic,
         get_catalog().require_sar().classifier,
     ]

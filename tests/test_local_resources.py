@@ -126,14 +126,14 @@ def test_cpu_ensure_status_and_failure(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
     monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
     with TestClient(server.app) as client:
-        assert client.post("/local-models/presidio/ensure").json()["ready"]
-        rows = client.get("/local-models").json()
+        assert client.post("/deployments/presidio/warm-up").json()["action"] == "warmed"
+        rows = client.get("/local-deployments").json()
         assert any(row["name"] == "presidio" and row["ready"] for row in rows)
-        assert client.post("/local-models/missing/ensure").status_code == 404
+        assert client.post("/deployments/missing/warm-up").status_code == 404
         monkeypatch.setattr(
             sanitizer.resource, "_load", Mock(side_effect=RuntimeError("load failed"))
         )
-        assert client.post("/local-models/presidio/ensure").status_code == 503
+        assert client.post("/deployments/presidio/warm-up").status_code == 503
     assert not sanitizer.resource.status().ready
 
 
@@ -161,3 +161,33 @@ def test_registry_cold_factory_discovery_and_concurrent_lookup():
     assert all(resource is results[0] for resource in results)
     results[0].warmup()
     load.assert_called_once()
+
+
+def test_local_cooldown_expiry_and_new_work_reset(monkeypatch):
+    from llm_management.inference import resources
+
+    clock = [1000.0]
+    monkeypatch.setattr(resources.time, "monotonic", lambda: clock[0])
+    unload = Mock()
+    resource = LocalResource("local", Mock(), unload)
+    assert resource.cooldown(900) is None
+    resource.stop()  # Already cold is a successful no-op.
+    unload.assert_not_called()
+    resource.warmup()
+    assert resource.cooldown(900) == 60
+    clock[0] += 30
+    assert resource.cooldown(900) == 30  # Never extend an earlier deadline.
+    assert not resource.release(900)
+    with resource.use():
+        pass
+    clock[0] += 31
+    assert not resource.release(900)  # New work cancels the shortened deadline.
+    assert resource.cooldown(900) == 60
+    clock[0] += 60
+    assert resource.release(900)
+    unload.assert_called_once()
+    resource.warmup()
+    clock[0] += 890
+    assert resource.cooldown(900) == 10
+    clock[0] += 10
+    assert resource.release(900)

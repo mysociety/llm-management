@@ -25,6 +25,8 @@ from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
 
+from .errors import ClassifierBusy
+
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
 
@@ -86,6 +88,7 @@ class LocalResource(Generic[T]):
         self._ready = False
         self._last_used: float | None = None
         self._active = 0
+        self._cooldown_at: float | None = None
 
     @contextmanager
     def use(self) -> Iterator[None]:
@@ -109,6 +112,7 @@ class LocalResource(Generic[T]):
             finally:
                 self._active -= 1
                 self._last_used = time.monotonic()
+                self._cooldown_at = None
 
     def warmup(self) -> T:
         """Call the loader under a lease, mark success, and return its value.
@@ -132,12 +136,42 @@ class LocalResource(Generic[T]):
         """
         self._ready = True
 
+    def cooldown(self, idle_seconds: float) -> float | None:
+        """Shorten local expiry to at most a minute without interrupting work."""
+        if not self._lock.acquire(blocking=False):
+            raise ClassifierBusy("Local resource is in use.")
+        try:
+            if self._active:
+                raise ClassifierBusy("Local resource is in use.")
+            if self._last_used is None:
+                return None
+            now = time.monotonic()
+            deadline = min(self._last_used + idle_seconds, now + 60)
+            if self._cooldown_at is not None:
+                deadline = min(deadline, self._cooldown_at)
+            self._cooldown_at = deadline
+            return max(0, deadline - now)
+        finally:
+            self._lock.release()
+
+    def stop(self) -> None:
+        """Release an idle resource now, rejecting active work atomically."""
+        if not self._lock.acquire(blocking=False):
+            raise ClassifierBusy("Local resource is in use.")
+        try:
+            if self._active:
+                raise ClassifierBusy("Local resource is in use.")
+            self.release()
+        finally:
+            self._lock.release()
+
     def release(self, idle_seconds: float = 0) -> bool:
         """Attempt nonblocking cleanup once the resource is idle long enough.
 
         Args:
-            idle_seconds: Minimum elapsed seconds since the last lease ended.
-                Zero requests immediate cleanup of an inactive resource.
+            idle_seconds: Normal minimum elapsed time since the last lease ended;
+                an explicit cooldown can shorten it. Zero requests immediate cleanup
+                of an inactive resource.
 
         Returns:
             True when the unload callback completed and lifecycle state was
@@ -155,11 +189,15 @@ class LocalResource(Generic[T]):
         try:
             if self._active or self._last_used is None:
                 return False
-            if time.monotonic() - self._last_used < idle_seconds:
+            now = time.monotonic()
+            if now - self._last_used < idle_seconds and (
+                self._cooldown_at is None or now < self._cooldown_at
+            ):
                 return False
             self._unload()
             self._ready = False
             self._last_used = None
+            self._cooldown_at = None
             return True
         finally:
             self._lock.release()
