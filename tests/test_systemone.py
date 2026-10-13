@@ -9,7 +9,6 @@ from starlette.testclient import TestClient
 
 from llm_management import server
 from llm_management.deployments.types import RunningDeployment
-from llm_management.transports import systemone
 
 
 @pytest.fixture
@@ -37,7 +36,7 @@ def clef_client(monkeypatch):
 
     real_client = httpx2.AsyncClient
     monkeypatch.setattr(
-        systemone.httpx2,
+        httpx2,
         "AsyncClient",
         lambda **kwargs: real_client(transport=httpx2.MockTransport(handle), **kwargs),
     )
@@ -58,7 +57,7 @@ def test_proxy_preserves_payload_query_status_and_uses_upstream_auth(clef_client
         httpx2.Response(429, json={"error": "busy"}, headers={"Retry-After": "2"})
     )
     body = b'{"model":"clef","state":{"text":"hello"},"questions":{},"images":[]}'
-    response = post(client, "/v1/systemone?tag=a&tag=b", content=body)
+    response = post(client, "/deployments/clef/v1/systemone?tag=a&tag=b", content=body)
     assert response.status_code == 429
     assert response.json() == {"error": "busy"}
     assert response.headers["retry-after"] == "2"
@@ -68,7 +67,7 @@ def test_proxy_preserves_payload_query_status_and_uses_upstream_auth(clef_client
 
 
 @pytest.mark.parametrize(
-    "path", ["/v1/systemone", "/endpoint/foi/immigration_detection/clef"]
+    "path", ["/deployments/clef/v1/systemone", "/endpoint/foi/immigration_detection/clef"]
 )
 def test_auth_rejects_before_contacting_clef(clef_client, path):
     client, requests, _ = clef_client
@@ -81,7 +80,7 @@ def test_selected_deployment_uses_shared_lifecycle(clef_client):
     client, requests, replies = clef_client
     replies.append(httpx2.Response(200, json={"answers": {}}))
     assert (
-        post(client, "/v1/systemone?deployment=clef_flash&tag=a", json={}).status_code
+        post(client, "/deployments/clef_flash/v1/systemone?tag=a", json={}).status_code
         == 200
     )
     server.app.state.service.ensure_running.assert_awaited_once_with("clef_flash")
@@ -156,7 +155,7 @@ def test_bad_classification_returns_502(clef_client, reply):
 
 
 @pytest.mark.parametrize(
-    "path", ["/v1/systemone", "/endpoint/foi/immigration_detection/clef"]
+    "path", ["/deployments/clef/v1/systemone", "/endpoint/foi/immigration_detection/clef"]
 )
 @pytest.mark.parametrize(
     "error, status",
@@ -177,7 +176,7 @@ def test_transport_errors(clef_client, path, error, status):
 
 
 @pytest.mark.parametrize(
-    "path", ["/v1/systemone", "/endpoint/foi/immigration_detection/clef"]
+    "path", ["/deployments/clef/v1/systemone", "/endpoint/foi/immigration_detection/clef"]
 )
 def test_unknown_deployment_returns_404(clef_client, path):
     client, requests, _ = clef_client
@@ -234,3 +233,39 @@ def test_native_model_validates_choices_and_probabilities(
     )
     assert response.status_code == 502
     assert response.json() == {"detail": "Clef returned an invalid classification"}
+
+
+@pytest.mark.parametrize(
+    "error, status",
+    [(httpx2.ReadTimeout("secret"), 504), (httpx2.ConnectError("secret"), 503)],
+)
+def test_generic_proxy_transport_errors(clef_client, error, status):
+    client, _, replies = clef_client
+    replies.append(error)
+    response = post(client, "/deployments/clef/v1/systemone", json={})
+    assert response.status_code == status
+    assert "secret" not in response.text
+
+
+def test_generic_proxy_decoded_response_headers(clef_client):
+    import gzip
+
+    client, _, replies = clef_client
+    replies.append(
+        httpx2.Response(
+            200,
+            content=gzip.compress(b'{"answers": {}}'),
+            headers={"Content-Encoding": "gzip", "Content-Type": "application/json"},
+        )
+    )
+    response = post(client, "/deployments/clef/v1/systemone", json={})
+    assert response.json() == {"answers": {}}
+    assert "content-encoding" not in response.headers
+    assert int(response.headers["content-length"]) == len(response.content)
+
+
+def test_systemone_alias_is_removed(clef_client):
+    client, requests, _ = clef_client
+    assert post(client, "/v1/systemone", json={}).status_code == 404
+    assert requests == []
+    server.app.state.service.ensure_running.assert_not_awaited()

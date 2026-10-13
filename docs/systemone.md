@@ -13,27 +13,27 @@ continue scaling to zero. Persist `COMPUTE_STATE_DIR` (default `.state/compute`)
 so manifests and private SSH keys survive restarts. One manager process/worker owns each
 Compute deployment.
 
-The server exposes `/v1/systemone?deployment=clef` and the native Pydantic AI
-immigration agent at `/endpoint/foi/immigration_detection/clef?deployment=clef`.
-Model settings come from the template recipe. The serving container includes
-Clef's decision head; Exoscale's managed vLLM gateway is not involved.
+System One uses the standard `POST /deployments/{slug}/v1/{path}` proxy:
+call `/deployments/clef/v1/systemone` with the upstream server's JSON request
+shape. No separate System One route is needed. Model settings come from the
+template recipe. The serving container includes Clef's decision head; Exoscale's
+managed vLLM gateway is not involved.
 
-Call `/v1/systemone?deployment=clef` with the upstream server's JSON request
-shape. Bodies and upstream query parameters are forwarded unchanged; the local
-`deployment` selector is removed. Client credentials are removed before forwarding; managed deployment keys are
-injected when present. The upstream status and body are returned to the caller. The
-existing `/deployments/clef/v1/systemone` proxy can also forward these requests.
+Bodies and upstream query parameters are forwarded unchanged. Client credentials
+are removed before forwarding; managed deployment keys are injected when present.
+The upstream status and body are returned to the caller. There is no standalone
+`/v1/systemone` route; select the deployment in the proxy URL.
 
 ```bash
-curl 'http://localhost:8000/v1/systemone?deployment=clef' \
+curl 'http://localhost:8000/deployments/clef/v1/systemone' \
   -H 'Authorization: Bearer <server-token>' \
   -H 'Content-Type: application/json' \
   -d '{"model":"Cloudflare/clef-flash","state":"Please update me on my visa application.","questions":{"classification":{"type":"choice","instructions":"Classify this request.","criteria":{"IMM":"Immigration matters","FOI":"Other information requests"}}}}'
 ```
 
-The immigration examples remain callable but are hidden from OpenAPI.
-The minimal immigration endpoint uses a Pydantic AI `Agent` with a typed
-`ClassificationResponse` output. Its native
+The immigration examples are hidden from OpenAPI because they are not live service
+endpoints. They remain callable for examples. The minimal immigration endpoint uses
+a Pydantic AI `Agent` with a typed `ClassificationResponse` output. Its native
 [`SystemOneModel`](https://pydantic.dev/docs/ai/models/system-one/) translates
 the classification field into a choice question and validates the returned
 answer and probabilities. The provider uses the deployment's resolved API connection:

@@ -21,7 +21,6 @@ from llm_management.deployments.config import ComputeDeploymentConfig
 from llm_management.deployments.errors import DeploymentServiceError, LLMManagementError
 from llm_management.templates import TemplateConfig
 from llm_management.templates.state import ComputeState
-from llm_management.transports import systemone
 
 
 class Cloud:
@@ -70,7 +69,7 @@ class Cloud:
 
     def create_security_group(self, **kw):
         self.groups.append(dict(kw, id="group"))
-        return {"id": "group-op"}
+        return {"id": "group_op"}
 
     def add_rule_to_security_group(self, **kw):
         assert kw["network"] == "192.0.2.1/32"
@@ -291,11 +290,11 @@ def test_http_request_lease_prevents_teardown_and_releases_after_failure(
         with pytest.raises(DeploymentServiceError) as error:
             await server.app.state.service.scale_to_zero("clef")
         assert error.value.status_code == 409
-        raise systemone.SystemOneUnavailable("Test failure")
+        raise httpx2.ConnectError("Test failure")
 
-    monkeypatch.setattr(systemone, "send_systemone", send)
+    monkeypatch.setattr(proxy_routes.httpx2.AsyncClient, "request", send)
     # No lifespan: avoid idle/shutdown activity in this HTTP lease test.
-    response = TestClient(server.app).post("/v1/systemone", json={})
+    response = TestClient(server.app).post("/deployments/clef/v1/systemone", json={})
     assert response.status_code == 503
     assert cache.get("clef").requests_in_flight == 0
     assert cache.get("clef").last_request_time > 0
@@ -494,11 +493,10 @@ def test_compute_proxies_strip_client_credentials_and_use_v1_tunnel(
         lambda **kw: client_class(transport=httpx2.MockTransport(handle), **kw),
     )
     client = TestClient(server.app)
-    for path in ("/v1/systemone", "/deployments/clef/v1/systemone"):
-        response = client.post(
-            path,
-            json={"state": "test"},
-            headers={"Authorization": "Bearer client-token"},
-        )
-        assert response.status_code == 200 and response.json() == {"served": True}
-    assert len(requests) == 2
+    response = client.post(
+        "/deployments/clef/v1/systemone",
+        json={"state": "test"},
+        headers={"Authorization": "Bearer client-token"},
+    )
+    assert response.status_code == 200 and response.json() == {"served": True}
+    assert len(requests) == 1
