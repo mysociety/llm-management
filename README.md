@@ -345,6 +345,7 @@ can be adjusted through environment variables:
 | `HTTP_MAX_BODY_BYTES` | 1,048,576 | Oversized requests return 413, including chunked uploads. |
 | `HTTP_MAX_CONCURRENT_REQUESTS` | 64 | Excess concurrent requests return 429 with `Retry-After`. |
 | `HTTP_BODY_TIMEOUT_SECONDS` | 30 | Incomplete uploads return 408. |
+| `PROXY_MAX_RESPONSE_BYTES` | 8,388,608 | Oversized upstream proxy responses return 502. |
 | `LOGISTIC_MAX_PENDING` | 64 | Bounds retained logistic jobs per classifier, including queued or caller-cancelled jobs; overload returns 429. |
 
 Automatic-response text is limited to 100,000 characters. Response-status input
@@ -354,6 +355,9 @@ source text is limited to 100,000 characters, and combined model-input text to
 
 Configured authentication token values must be nonblank ASCII strings. An empty
 `AUTH_TOKENS` mapping retains the existing unauthenticated mode.
+
+The proxy rejects dot segments, backslashes and residual percent encoding in its
+path before starting a deployment. Query parameters remain supported.
 
 Docker builds use a deny-by-default `.dockerignore` that admits application
 source, package metadata and the two deployment configuration files. Supply

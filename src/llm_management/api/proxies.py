@@ -7,6 +7,7 @@ from __future__ import annotations
 import httpx2
 from fastapi import APIRouter, HTTPException, Request, Response
 
+from ..settings import settings
 from .dependencies import ServiceDependency
 
 router = APIRouter(tags=["Inference proxy"])
@@ -24,6 +25,16 @@ async def proxy_to_deployment(
     corresponding Exoscale deployment endpoint, injecting the correct
     bearer token. Resets the idle-scaler timer for this deployment.
     """
+    # ASGI has decoded the path once. Reject residual encoding as well, so
+    # upstream servers cannot decode another traversal layer.
+    if (
+        not path
+        or path.startswith("/")
+        or any(c in path for c in "%\\?#")
+        or any(part in (".", "..", "") for part in path.split("/"))
+        or any(ord(c) < 32 or ord(c) == 127 for c in path)
+    ):
+        raise HTTPException(status_code=400, detail="Invalid inference path")
     state = (await service.ensure_running(slug)).state
 
     target_url = f"{state.deployment_url.rstrip('/')}/{path}"
@@ -39,13 +50,20 @@ async def proxy_to_deployment(
 
     try:
         async with httpx2.AsyncClient(timeout=300.0) as client:
-            resp = await client.request(
+            async with client.stream(
                 method=request.method,
                 url=target_url,
                 headers=headers,
                 params=params,
                 content=body,
-            )
+            ) as resp:
+                content = bytearray()
+                async for chunk in resp.aiter_bytes(chunk_size=65536):
+                    if len(content) + len(chunk) > settings.proxy_max_response_bytes:
+                        raise HTTPException(
+                            status_code=502, detail="Upstream response too large"
+                        )
+                    content.extend(chunk)
     except httpx2.TimeoutException as exc:
         raise HTTPException(
             status_code=504, detail="Deployment server timed out"
@@ -56,7 +74,7 @@ async def proxy_to_deployment(
         ) from exc
 
     return Response(
-        content=resp.content,
+        content=bytes(content),
         status_code=resp.status_code,
         headers={
             name: value
