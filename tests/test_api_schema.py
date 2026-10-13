@@ -43,3 +43,18 @@ def test_examples_are_hidden_and_obsolete_routes_removed():
     assert not any("/agents/" in path or "/local-models" in path for path in paths)
     assert "/local-deployments/{name}/ensure" not in registered
     assert "/local-models/{name}/ensure" not in registered
+
+
+def test_documented_operations_declare_bearer_auth():
+    schema = server.app.openapi()
+    scheme = schema["components"]["securitySchemes"]["BearerAuth"]
+    assert scheme["type"] == "http"
+    assert scheme["scheme"] == "bearer"
+    for path in schema["paths"].values():
+        for method, operation in path.items():
+            if method in {"get", "post", "put", "patch", "delete", "options", "head"}:
+                assert operation["security"] == [{"BearerAuth": []}]
+                assert not any(
+                    p["name"].lower() == "authorization"
+                    for p in operation.get("parameters", [])
+                )

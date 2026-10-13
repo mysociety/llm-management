@@ -9,11 +9,11 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from .api import agents, classifiers, deployments, foi, mocks, proxies
-from .api.auth import require_bearer_auth_when_enabled
+from .api.auth import bearer_auth, require_bearer_auth_when_enabled
 from .api.limits import RequestLimits
 from .bootstrap import Application, assemble_application
 from .deployments.errors import DeploymentServiceError, LLMManagementError
@@ -100,7 +100,7 @@ def create_app(application: Application | None = None) -> FastAPI:
         return {"status": "ok"}
 
     for routes in (deployments, proxies, agents, foi, mocks, classifiers):
-        app.include_router(routes.router)
+        app.include_router(routes.router, dependencies=[Depends(bearer_auth)])
     return app
 
 

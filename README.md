@@ -148,6 +148,12 @@ Requests with a missing or incorrect token are rejected with `401 Not authentica
 The health endpoint and API documentation (`/`, `/openapi.json`, and `/redoc`) remain
 available without authentication.
 
+To authenticate **Try it out** requests in the interactive docs at `/`, click
+**Authorize**, paste a token value from `AUTH_TOKENS` (without the `Bearer `
+prefix), and confirm. Swagger adds the Authorization header automatically.
+Use **Logout** in that dialog to clear the token; authorization is not configured
+to persist across page reloads.
+
 ### Endpoints
 
 The interactive documentation groups routes into FOI endpoints, Misc endpoints,

@@ -80,3 +80,31 @@ def test_health_and_api_docs_are_public(monkeypatch):
     assert docs.status_code == 200
     assert openapi.status_code == 200
     assert redoc.status_code == 200
+
+
+def test_swagger_style_authorization_reaches_endpoint(monkeypatch):
+    monkeypatch.setattr(settings, "auth_tokens", {"docs-user": "docs-test-token"})
+    with TestClient(server.app) as client:
+        path = "/mock/endpoint/misc/capital_city"
+        body = {"country": "France"}
+        assert client.post(path, json=body).status_code == 401
+        assert (
+            client.post(
+                path, json=body, headers={"Authorization": "Bearer incorrect"}
+            ).status_code
+            == 401
+        )
+        response = client.post(
+            path, json=body, headers={"Authorization": "Bearer docs-test-token"}
+        )
+        assert response.status_code == 200
+        assert response.json()["city"] == "Fake Paris"
+
+
+def test_documented_security_does_not_require_token_in_open_mode(monkeypatch):
+    monkeypatch.setattr(settings, "auth_tokens", {})
+    with TestClient(server.app) as client:
+        response = client.post(
+            "/mock/endpoint/misc/capital_city", json={"country": "France"}
+        )
+        assert response.status_code == 200

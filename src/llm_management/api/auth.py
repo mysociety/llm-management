@@ -9,8 +9,19 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer
 
 from ..settings import settings
+
+# Publish the credential format for Swagger; middleware remains the validator.
+bearer_auth = HTTPBearer(
+    scheme_name="BearerAuth",
+    description=(
+        "Enter a token value from AUTH_TOKENS, without the Bearer prefix. "
+        "Authentication is optional when AUTH_TOKENS is empty."
+    ),
+    auto_error=False,
+)
 
 PUBLIC_PATHS = {"/", "/docs/oauth2-redirect", "/health", "/openapi.json", "/redoc"}
 
