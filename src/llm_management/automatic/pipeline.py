@@ -184,6 +184,8 @@ class AutomaticClassifier:
 
     async def detect(self, body: str, fast: bool = False) -> AutomaticResult:
         """Await logistic capacity, then batch only positive cascade decisions."""
+        if len(self._gates) >= settings.logistic_max_pending:
+            raise ClassifierBusy("Logistic queue is full")
         task = asyncio.create_task(self._gate(body, fast))
         self._gates.add(task)
         task.add_done_callback(self._gates.discard)

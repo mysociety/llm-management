@@ -14,8 +14,10 @@ from fastapi.responses import JSONResponse
 
 from .api import agents, classifiers, deployments, foi, mocks, proxies
 from .api.auth import require_bearer_auth_when_enabled
+from .api.limits import RequestLimits
 from .bootstrap import Application, assemble_application
 from .deployments.errors import DeploymentServiceError, LLMManagementError
+from .inference.errors import ClassifierBusy
 from .settings import settings
 
 logger = logging.getLogger(__name__)
@@ -42,7 +44,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await task
         except asyncio.CancelledError:
             pass
-        await app.state.application.sar.batcher.close()
+        await app.state.application.sar.close()
         await app.state.application.automatic.close()
         await service.close()
 
@@ -79,7 +81,16 @@ def create_app(application: Application | None = None) -> FastAPI:
         with service.track_requests():
             return await call_next(request)
 
+    app.add_middleware(RequestLimits)
     app.middleware("http")(require_bearer_auth_when_enabled)
+
+    @app.exception_handler(ClassifierBusy)
+    async def classifier_busy(request: Request, exc: ClassifierBusy) -> JSONResponse:
+        return JSONResponse(
+            {"detail": "Classifier is busy"},
+            status_code=429,
+            headers={"Retry-After": "1"},
+        )
 
     @app.get("/health", include_in_schema=False)
     def health() -> dict[str, str]:

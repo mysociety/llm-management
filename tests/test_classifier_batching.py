@@ -199,3 +199,50 @@ def test_cascades_batch_positives_and_bypass_fast_and_negative(kind):
         await owner.batcher.close()
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("kind", ["automatic", "sar"])
+def test_logistic_admission_survives_caller_cancellation(monkeypatch, kind):
+    from llm_management.settings import settings
+
+    monkeypatch.setattr(settings, "logistic_max_pending", 1)
+    started, release = threading.Event(), threading.Event()
+
+    def gate(*args, **kwargs):
+        started.set()
+        assert release.wait(5)
+        if kind == "automatic":
+            from llm_management.automatic.schemas import AutomaticResult
+
+            return AutomaticResult(
+                is_automatic=False, stage="logistic", logistic_score=0.0
+            )
+        from llm_management.sar.schemas import SARResult
+
+        return SARResult(
+            is_sar=False, stage="logistic", status="complete", logistic_score=0.0
+        )
+
+    async def run():
+        if kind == "automatic":
+            classifier = AutomaticClassifier(
+                lambda: None, lambda: None, max_concurrency=1
+            )
+            monkeypatch.setattr(classifier, "classify_gate", gate)
+        else:
+            classifier = SARClassifier(lambda: None, lambda: None)
+            monkeypatch.setattr("llm_management.sar.pipeline._detect_sar", gate)
+        request = asyncio.create_task(classifier.detect("test", fast=True))
+        try:
+            assert await asyncio.to_thread(started.wait, 2)
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+            with pytest.raises(ClassifierBusy):
+                await classifier.detect("second", fast=True)
+        finally:
+            release.set()
+            await classifier.close()
+        assert len(classifier._gates) == 0
+
+    asyncio.run(run())

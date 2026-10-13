@@ -136,15 +136,29 @@ class SARClassifier:
             timeout_seconds=settings.deberta_queue_timeout_seconds,
         )
 
+        self._gates: set[asyncio.Task[SARResult]] = set()
+
+    async def close(self) -> None:
+        await self.batcher.close()
+        if self._gates:
+            await asyncio.gather(*self._gates, return_exceptions=True)
+
     async def detect(self, raw_text: str, fast: bool = False) -> SARResult:
         """Run logistic gating in a thread, then await batched encoder confirmation."""
-        result = await asyncio.to_thread(
-            _detect_sar,
-            raw_text,
-            True,
-            logistic_provider=self.logistic_provider,
-            encoder_provider=self.encoder_provider,
+        if len(self._gates) >= settings.logistic_max_pending:
+            raise ClassifierBusy("Logistic queue is full")
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                _detect_sar,
+                raw_text,
+                True,
+                logistic_provider=self.logistic_provider,
+                encoder_provider=self.encoder_provider,
+            )
         )
+        self._gates.add(task)
+        task.add_done_callback(self._gates.discard)
+        result = await asyncio.shield(task)
         if fast or result.status != "complete" or not result.is_sar:
             return result
         try:

@@ -335,6 +335,23 @@ live under `api/`; deployment lifecycle and cloud operations live under
 `deployments/`; reusable execution and resource guards live under `inference/`.
 FOI, SAR and automatic classification each keep their own decisions and schemas.
 
+### Request and inference limits
+
+Requests are limited before JSON parsing or model work. These per-worker settings
+can be adjusted through environment variables:
+
+| Setting | Default | Behaviour |
+| --- | --- | --- |
+| `HTTP_MAX_BODY_BYTES` | 1,048,576 | Oversized requests return 413, including chunked uploads. |
+| `HTTP_MAX_CONCURRENT_REQUESTS` | 64 | Excess concurrent requests return 429 with `Retry-After`. |
+| `HTTP_BODY_TIMEOUT_SECONDS` | 30 | Incomplete uploads return 408. |
+| `LOGISTIC_MAX_PENDING` | 64 | Bounds retained logistic jobs per classifier, including queued or caller-cancelled jobs; overload returns 429. |
+
+Automatic-response text is limited to 100,000 characters. Response-status input
+allows up to 64 sources, 256 questions and 256 additional-text items; individual
+source text is limited to 100,000 characters, and combined model-input text to
+200,000 characters. Model token budgets still apply.
+
 Configured authentication token values must be nonblank ASCII strings. An empty
 `AUTH_TOKENS` mapping retains the existing unauthenticated mode.
 
