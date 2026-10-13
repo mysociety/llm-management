@@ -13,7 +13,7 @@ from llm_management import server
 from llm_management.api import mocks
 from llm_management.foi.examples import ExtractionExpectation, validation_examples
 from llm_management.foi.response_schemas import ExtractionOutput
-from llm_management.foi.schemas import InformationRequestResult, QuestionSliceResult
+from llm_management.foi.schemas import ExtractQuestionsResponse, QuestionSliceResult
 
 
 @pytest.fixture
@@ -51,9 +51,9 @@ def test_mock_extraction_preserves_gold(client, monkeypatch, example, backend):
     """
     monkeypatch.setattr(mocks.random, "choice", lambda pool: example)
     response = client.post(
-        "/mock/agents/foi_structure/extract",
+        "/mock/endpoint/foi/extract_questions/extract",
         params={"backend": backend},
-        json={"request": "Unrelated integration input."},
+        json={"body": "Unrelated integration input."},
     )
     assert response.status_code == 200, response.text
     result = QuestionSliceResult.model_validate(response.json())
@@ -72,14 +72,18 @@ def test_mock_full_result_preserves_gold(client, monkeypatch, example):
     """
     monkeypatch.setattr(mocks.random, "choice", lambda pool: example)
     response = client.post(
-        "/mock/agents/foi_structure", json={"request": "Different submitted request."}
+        "/mock/endpoint/foi/extract_questions",
+        json={"body": "Different submitted request."},
     )
     assert response.status_code == 200, response.text
-    result = InformationRequestResult.model_validate(response.json())
+    result = ExtractQuestionsResponse.model_validate(response.json())
     assert ExtractionExpectation.from_result(result) == example.expected
-    assert result.classification == example.classification
-    assert result.request_text == example.input.request
-    assert result.classification_model == "mock:validation-examples"
+    assert [q.model_dump(exclude={"text"}) for q in result.questions] == [
+        q.model_dump() for q in example.classification.questions
+    ]
+    assert result.request_topics == example.classification.request_topics
+    assert result.request_text == example.input.body
+    assert result.meta.classification_model == "mock:validation-examples"
 
 
 @pytest.mark.parametrize(
@@ -94,7 +98,7 @@ def test_mock_response_returns_unchanged_example(client, monkeypatch, example):
     body.sources[0].id = "unrelated_source"
     monkeypatch.setattr(mocks.random, "choice", lambda pool: example)
     response = client.post(
-        "/mock/agents/foi_response_analysis", json=body.model_dump(mode="json")
+        "/mock/endpoint/foi/response_status", json=body.model_dump(mode="json")
     )
     assert response.status_code == 200, response.text
     output = ExtractionOutput.model_validate(response.json())
@@ -103,13 +107,13 @@ def test_mock_response_returns_unchanged_example(client, monkeypatch, example):
 
 
 @pytest.mark.parametrize(
-    "path", ["foi_structure/extract", "foi_structure", "foi_response_analysis"]
+    "path", ["extract_questions/extract", "extract_questions", "response_status"]
 )
 def test_mock_rejects_invalid_input(client, path):
     """
     Mirror the real endpoints' request validation rather than accept arbitrary JSON.
     """
-    assert client.post("/mock/agents/" + path, json={}).status_code == 422
+    assert client.post("/mock/endpoint/foi/" + path, json={}).status_code == 422
 
 
 def test_mock_rejects_invalid_backend(client):
@@ -118,8 +122,8 @@ def test_mock_rejects_invalid_backend(client):
     """
     assert (
         client.post(
-            "/mock/agents/foi_structure/extract?backend=other",
-            json={"request": "Hello"},
+            "/mock/endpoint/foi/extract_questions/extract?backend=other",
+            json={"body": "Hello"},
         ).status_code
         == 422
     )
@@ -133,16 +137,25 @@ def test_mock_uses_normal_authentication(client, monkeypatch):
         server.settings, "auth_tokens", {"integration": "mock-test-token"}
     )
     bodies = {
-        "foi_structure/extract": {"request": "Hello"},
-        "foi_structure": {"request": "Hello"},
-        "foi_response_analysis": validation_examples()
+        "extract_questions/extract": {"body": "Hello"},
+        "extract_questions": {"body": "Hello"},
+        "response_status": validation_examples()
         .responses[0]
         .input.model_dump(mode="json"),
     }
     for path, body in bodies.items():
-        url = "/mock/agents/" + path
+        url = "/mock/endpoint/foi/" + path
         assert client.post(url, json=body).status_code == 401
         response = client.post(
             url, json=body, headers={"Authorization": "Bearer mock-test-token"}
         )
         assert response.status_code == 200
+
+
+@pytest.mark.parametrize("country", ["France", "Germany", "Atlantis"])
+def test_capital_city_mock_is_fixed_without_inference(client, country):
+    response = client.post(
+        "/mock/endpoint/misc/capital_city", json={"country": country}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"country": country, "city": "Fake Paris"}

@@ -1,7 +1,7 @@
 """
 Integration tests that exercise the FastAPI proxy server.
 
-Tests both the /agents/capital_city endpoint and the proxy endpoint
+Tests both the /endpoint/misc/capital_city endpoint and the proxy endpoint
 via pydantic-ai, using the olmo3_7b deployment.
 """
 
@@ -33,9 +33,9 @@ def client() -> Iterator[TestClient]:
 
 def test_capital_city_agent(client: TestClient):
     """
-    Hit the /agents/capital_city endpoint and check the result.
+    Hit the /endpoint/misc/capital_city endpoint and check the result.
     """
-    resp = client.post("/agents/capital_city", json={"country": "France"})
+    resp = client.post("/endpoint/misc/capital_city", json={"country": "France"})
     resp.raise_for_status()
     data = resp.json()
     assert data["city"].lower() == "paris", f"Expected 'Paris', got '{data['city']}'"

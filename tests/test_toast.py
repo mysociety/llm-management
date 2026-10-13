@@ -39,9 +39,9 @@ def classify_request(client: TestClient, deployment: str, request_text: str) -> 
     Post a request to the immigration_detection endpoint and return the classification.
     """
     resp = client.post(
-        "/agents/immigration_detection",
+        "/endpoint/foi/immigration_detection",
         params={"deployment": deployment},
-        json={"request": request_text},
+        json={"body": request_text},
     )
     resp.raise_for_status()
     return resp.json()["classification"]

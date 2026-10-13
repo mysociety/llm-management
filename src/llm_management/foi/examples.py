@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .response_schemas import ExtractionOutput, ResponseAnalysisInput
 from .schemas import (
     ExtractionBackend,
+    ExtractQuestionsResponse,
     InformationRequestResult,
     QuestionSliceRequest,
     QuestionSliceResult,
@@ -33,12 +34,17 @@ class ExtractionExpectation(BaseModel):
     additional_text: list[str]
 
     @classmethod
-    def from_result(cls, result: QuestionSliceResult) -> Self:
+    def from_result(
+        cls, result: QuestionSliceResult | ExtractQuestionsResponse
+    ) -> Self:
         """
         Select the public fields for which the dataset provides gold labels.
         """
         return cls(
-            questions=result.questions,
+            questions=[
+                ReconstructedQuestion(question_id=q.question_id, text=q.text)
+                for q in result.questions
+            ],
             extraction_status=result.extraction_status,
             additional_text=result.additional_text,
         )
@@ -146,7 +152,7 @@ class RequestExample(BaseModel):
             extraction_model=extraction.extraction_model,
             extraction_revision=extraction.extraction_revision,
             promoted_continuation_index=extraction.promoted_continuation_index,
-            request_text=self.input.request,
+            request_text=self.input.body,
             classification=self.classification.model_copy(deep=True),
             classification_model="mock:validation-examples",
         )

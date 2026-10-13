@@ -68,11 +68,11 @@ def test_proxy_preserves_payload_query_status_and_uses_upstream_auth(clef_client
 
 
 @pytest.mark.parametrize(
-    "path", ["/v1/systemone", "/agents/immigration_detection/clef"]
+    "path", ["/v1/systemone", "/endpoint/foi/immigration_detection/clef"]
 )
 def test_auth_rejects_before_contacting_clef(clef_client, path):
     client, requests, _ = clef_client
-    assert client.post(path, json={"request": "visa"}).status_code == 401
+    assert client.post(path, json={"body": "visa"}).status_code == 401
     assert requests == []
     server.app.state.service.ensure_running.assert_not_awaited()
 
@@ -113,8 +113,8 @@ def test_immigration_choice_contract(clef_client, label):
     )
     response = post(
         client,
-        "/agents/immigration_detection/clef?deployment=clef_flash",
-        json={"request": "My request text"},
+        "/endpoint/foi/immigration_detection/clef?deployment=clef_flash",
+        json={"body": "My request text"},
     )
     assert response.status_code == 200
     assert response.json() == {"classification": label}
@@ -149,14 +149,14 @@ def test_bad_classification_returns_502(clef_client, reply):
     client, _, replies = clef_client
     replies.append(reply)
     response = post(
-        client, "/agents/immigration_detection/clef", json={"request": "visa"}
+        client, "/endpoint/foi/immigration_detection/clef", json={"body": "visa"}
     )
     assert response.status_code == 502
     assert "private" not in response.text
 
 
 @pytest.mark.parametrize(
-    "path", ["/v1/systemone", "/agents/immigration_detection/clef"]
+    "path", ["/v1/systemone", "/endpoint/foi/immigration_detection/clef"]
 )
 @pytest.mark.parametrize(
     "error, status",
@@ -171,20 +171,20 @@ def test_transport_errors(clef_client, path, error, status):
             else httpx2.ConnectError("secret")
         )
     replies.append(error)
-    response = post(client, path, json={"request": "visa"})
+    response = post(client, path, json={"body": "visa"})
     assert response.status_code == status
     assert "secret" not in response.text
 
 
 @pytest.mark.parametrize(
-    "path", ["/v1/systemone", "/agents/immigration_detection/clef"]
+    "path", ["/v1/systemone", "/endpoint/foi/immigration_detection/clef"]
 )
 def test_unknown_deployment_returns_404(clef_client, path):
     client, requests, _ = clef_client
     server.app.state.service.ensure_running.side_effect = HTTPException(
         status_code=404, detail="Unknown deployment"
     )
-    response = post(client, path, json={"request": "visa"})
+    response = post(client, path, json={"body": "visa"})
     assert response.status_code == 404
     assert requests == []
 
@@ -193,7 +193,7 @@ def test_unknown_deployment_returns_404(clef_client, path):
 def test_invalid_immigration_input_does_not_contact_clef(clef_client, text):
     client, requests, _ = clef_client
     response = post(
-        client, "/agents/immigration_detection/clef", json={"request": text}
+        client, "/endpoint/foi/immigration_detection/clef", json={"body": text}
     )
     assert response.status_code == 422
     assert requests == []
@@ -230,7 +230,7 @@ def test_native_model_validates_choices_and_probabilities(
         )
     )
     response = post(
-        client, "/agents/immigration_detection/clef", json={"request": "visa"}
+        client, "/endpoint/foi/immigration_detection/clef", json={"body": "visa"}
     )
     assert response.status_code == 502
     assert response.json() == {"detail": "Clef returned an invalid classification"}

@@ -1,6 +1,13 @@
 # How the information-request pipeline works
 
-This package turns a piece of correspondence into a list of requests for information, then gives each one a subject and an access regime.
+`POST /endpoint/foi/extract_questions` takes an FOI request and returns a structured
+set of questions with FOI/EIR/SAR status and a short description. Relevant deployment
+group: `foi_pipeline_cpu` for the default `backend=cpu`, or
+`foi_pipeline` for `backend=exoscale`.
+
+`POST /endpoint/foi/extract_questions/extract` returns just the question structure,
+primarily for internal debugging. It omits status and topic classification. The
+same groups can warm it, though they also warm the full classification pipeline.
 
 All FOI model inputs first pass through local CPU Presidio sanitization. Extraction results retain original text; see the [sanitization policy and CPU lifecycle](sanitization.md).
 
@@ -76,7 +83,7 @@ If a start exists elsewhere, a continuation before it remains unresolved. The re
 
 The original labels remain in the response, even after recovery. `promoted_continuation_index` records which part was promoted. Orphan-continuation positions are used internally to determine the extraction status, but are not returned.
 
-The extraction stage returns a `QuestionSliceResult`, which is also the response from `/agents/foi_structure/extract`. Its `questions` field is a list of `ReconstructedQuestion` objects (`ExtractedQuestion` in the established wire schema): each has a `question_id` and reconstructed `text`. The result also includes the extraction status, raw `UnitPrediction` objects, additional/ignored text, recovery details and extraction model information.
+The extraction stage returns a `QuestionSliceResult`, which is also the response from `/endpoint/foi/extract_questions/extract`. Its `questions` field is a list of `ReconstructedQuestion` objects (`ExtractedQuestion` in the established wire schema): each has a `question_id` and reconstructed `text`. The result also includes the extraction status, raw `UnitPrediction` objects, additional/ignored text, recovery details and extraction model information.
 
 ## 4. Classify the extracted questions with FOI topic model
 
@@ -93,7 +100,7 @@ FOI topic model is constrained to return the expected JSON structure. We then ch
 
 The classification stage returns a `TopicOutput`. Its `questions` field contains `TopicQuestion` objects with a `question_id`, `regime` and `topic`; its `request_topics` field is a list of topic strings for the whole request. `TopicQuestion` does not repeat the source text: use its ID to find the corresponding `ReconstructedQuestion`.
 
-The full pipeline returns an `InformationRequestResult`. This extends `QuestionSliceResult` with the original `request_text`, the `TopicOutput` in `classification`, and `classification_model`. If there are no extracted questions, those last two fields are null. These Pydantic models are defined in [schemas.py](../src/llm_management/foi/schemas.py); over HTTP they are returned as JSON.
+The internal pipeline returns an `InformationRequestResult`. Over HTTP, the full endpoint returns `ExtractQuestionsResponse`: each question combines `question_id`, `text`, `regime` and `topic`. Whole-request topics are in `request_topics`, and technical details are grouped under `meta`. These models are defined in [schemas.py](../src/llm_management/foi/schemas.py).
 
 ## Limits and waiting
 
@@ -118,16 +125,32 @@ Successful deployments are left running if another member fails, and you can ret
 
 Both are async functions that can also be called from batch code. They receive access to the application's deployment lookup, startup and activity tracking. The HTTP wrappers in [api/foi.py](../src/llm_management/api/foi.py) expose them as:
 
-- `POST /agents/foi_structure/extract?backend=cpu`
-- `POST /agents/foi_structure?backend=cpu`
+- `POST /endpoint/foi/extract_questions/extract?backend=cpu`
+- `POST /endpoint/foi/extract_questions?backend=cpu`
 
-Both accept `{"request": "Your correspondence here"}`. Use `backend=exoscale` for remote extraction.
+Both accept `{"body": "Your correspondence here"}`. Use `backend=exoscale` for remote extraction.
 
-[schemas.py](../src/llm_management/foi/schemas.py) defines the results. The full result contains the original request, reconstructed questions, extraction diagnostics and FOI topic model classification. `extraction_model`, `extraction_revision` and `extraction_backend` describe the extraction stage. `classification_model` identifies the merged model used for classification. When no questions are found, `classification` and `classification_model` are both null.
+The full response contains `request_text`, `questions`, `extraction_status`, `additional_text`, `request_topics` and `meta`. For example, a question is:
+
+```json
+{
+  "question_id": "q1",
+  "text": "Please provide monthly nitrogen dioxide readings near primary schools during 2024.",
+  "regime": "EIR",
+  "topic": "nitrogen dioxide readings near schools"
+}
+```
+
+`meta` contains `extraction_backend`, `extraction_model`, `extraction_revision`, `classification_model`, `ignored_text` and `promoted_continuation_index`. The full response omits `unit_predictions`; use `/extract_questions/extract` for those diagnostics. When no questions are found, `questions` and `request_topics` are empty and `meta.classification_model` is null. The mock uses the same response shape.
 
 ## Response status analysis
 
-`POST /agents/foi_response_analysis` accepts a `request` containing the complete
+Given a structured set of questions and a structured response document,
+`POST /endpoint/foi/response_status` identifies whether questions were answered or
+withheld. Relevant deployment group: `foi_response_pipeline`.
+
+
+`POST /endpoint/foi/response_status` accepts a `request` containing the complete
 output of either request endpoint, or just its `questions`, `extraction_status`
 and `additional_text`. It also requires a nonempty `sources` list describing
 response emails/attachments. Each source has a unique `id`, `kind` (`email` or
@@ -252,17 +275,17 @@ persistent storage to retain downloaded weights across container replacements.
 Example (add the usual bearer header when `AUTH_TOKENS` is configured):
 
 ```bash
-curl -X POST 'http://localhost:8080/agents/foi_structure/extract?backend=cpu' \
+curl -X POST 'http://localhost:8080/endpoint/foi/extract_questions/extract?backend=cpu' \
   -H 'Content-Type: application/json' \
-  -d '{"request":"Please provide the annual expenditure report."}'
+  -d '{"body":"Please provide the annual expenditure report."}'
 ```
 
 Use the same request with `backend=exoscale` for GPU-backed extraction:
 
 ```bash
-curl -X POST 'http://localhost:8080/agents/foi_structure/extract?backend=exoscale' \
+curl -X POST 'http://localhost:8080/endpoint/foi/extract_questions/extract?backend=exoscale' \
   -H 'Content-Type: application/json' \
-  -d '{"request":"Please provide the annual expenditure report."}'
+  -d '{"body":"Please provide the annual expenditure report."}'
 ```
 
 This uses the `question_slice` deployment in `conf/deployments.toml`, with the
@@ -310,7 +333,7 @@ the existing Exoscale cache and idle scaler are process-local.
 
 ## Response model identity and provenance
 
-Responses identify extraction with `extraction_model`, `extraction_revision` and
+Full responses group provenance under `meta`; debugging extraction responses keep it at the top level. These fields identify extraction with `extraction_model`, `extraction_revision` and
 `extraction_backend`. The `backend` query parameter still selects extraction.
 `classification_model` identifies the merged checkpoint used for classification,
 or is null when classification is skipped. No separate adapter is loaded at runtime.
@@ -331,12 +354,12 @@ import os
 
 import httpx2
 
-from llm_management.foi.schemas import InformationRequestResult
+from llm_management.foi.schemas import ExtractQuestionsResponse
 
 
 async def process_batch(
     requests: list[str], *, concurrency: int = 4
-) -> list[InformationRequestResult | BaseException]:
+) -> list[ExtractQuestionsResponse | BaseException]:
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
     if not requests:
@@ -362,15 +385,15 @@ async def process_batch(
 
         slots = asyncio.Semaphore(concurrency)
 
-        async def process_one(text: str) -> InformationRequestResult:
+        async def process_one(text: str) -> ExtractQuestionsResponse:
             async with slots:
                 response = await client.post(
-                    "/agents/foi_structure",
+                    "/endpoint/foi/extract_questions",
                     params={"backend": "exoscale"},
-                    json={"request": text},
+                    json={"body": text},
                 )
                 response.raise_for_status()
-                return InformationRequestResult.model_validate(response.json())
+                return ExtractQuestionsResponse.model_validate(response.json())
 
         # Wait for every item; keep individual errors alongside successful results.
         return await asyncio.gather(
@@ -390,9 +413,8 @@ async def main() -> None:
             print(f"Request {index} failed: {result}")
             continue
         print(f"Request {index}: {result.extraction_status}")
-        if result.classification is not None:
-            for question in result.classification.questions:
-                print(question.question_id, question.regime, question.topic)
+        for question in result.questions:
+            print(question.question_id, question.regime, question.topic)
 
 
 if __name__ == "__main__":
@@ -465,7 +487,7 @@ def process_batch(requests, concurrency: 4)
       while (item = queue.pop)
         index, text = item
         result = begin
-          post_json("/agents/foi_structure?backend=exoscale", body: { request: text })
+          post_json("/endpoint/foi/extract_questions?backend=exoscale", body: { body: text })
         rescue StandardError => error
           error # Keep this item's failure and continue with the queue.
         end
@@ -490,10 +512,7 @@ if $PROGRAM_NAME == __FILE__
       next
     end
     puts "Request #{index}: #{result.fetch('extraction_status')}"
-    classification = result["classification"]
-    next if classification.nil?
-
-    classification.fetch("questions").each do |question|
+    result.fetch("questions").each do |question|
       puts [question.fetch("question_id"), question.fetch("regime"), question.fetch("topic")].join(" | ")
     end
   end
@@ -522,9 +541,9 @@ on this candidate even when transport and schema validation succeed.
 These routes accept the same request bodies, backend query parameter (where
 applicable), and bearer authentication as the real routes:
 
-- `POST /mock/agents/foi_structure/extract?backend=cpu`
-- `POST /mock/agents/foi_structure?backend=cpu`
-- `POST /mock/agents/foi_response_analysis`
+- `POST /mock/endpoint/foi/extract_questions/extract?backend=cpu`
+- `POST /mock/endpoint/foi/extract_questions?backend=cpu`
+- `POST /mock/endpoint/foi/response_status`
 
 Each call selects a random bundled validation example. The mocks do not inspect
 request meaning, load model weights, or start GPU deployments; `backend=exoscale`
@@ -532,7 +551,7 @@ is accepted without contacting Exoscale. Request extraction and classification
 use the gold results from the same selected R1–R5 example. The full result's
 `request_text` is that example's text, rather than the submitted text.
 
-Mock extraction diagnostics (`ignored_text`, `unit_predictions`) are empty and
+Mock debugging extraction diagnostics (`ignored_text`, `unit_predictions`) are empty and
 `extraction_revision` is null. Model fields contain `mock:validation-examples`
 to distinguish these responses from inference. These diagnostics are mock
 placeholders, not dataset gold labels or observed model predictions.

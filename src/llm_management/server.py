@@ -86,13 +86,8 @@ def create_app(application: Application | None = None) -> FastAPI:
         """
         return {"status": "ok"}
 
-    for routes in (deployments, proxies, agents):
-        app.include_router(routes.build_router(service))
-    app.include_router(foi.build_router(service, application.foi))
-    app.include_router(mocks.build_router())
-    app.include_router(
-        classifiers.build_router(service, application.sar, application.automatic)
-    )
+    for routes in (deployments, proxies, agents, foi, mocks, classifiers):
+        app.include_router(routes.router)
     return app
 
 

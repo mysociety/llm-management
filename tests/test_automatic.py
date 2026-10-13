@@ -233,7 +233,7 @@ def test_endpoint_contract_and_auth(chain, monkeypatch):
     monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
     with TestClient(server.app) as client:
         response = client.post(
-            "/agents/automatic_response_detection",
+            "/endpoint/foi/automatic_response_detection",
             json={"body": "receipt", "fast": True},
         )
         assert response.status_code == 200
@@ -248,14 +248,14 @@ def test_endpoint_contract_and_auth(chain, monkeypatch):
         encoder.classify.assert_not_called()
         assert (
             client.post(
-                "/agents/automatic_response_detection", json={"body": ["receipt"]}
+                "/endpoint/foi/automatic_response_detection", json={"body": ["receipt"]}
             ).status_code
             == 422
         )
         monkeypatch.setattr(server.settings, "auth_tokens", {"test": "secret"})
         assert (
             client.post(
-                "/agents/automatic_response_detection", json={"body": "receipt"}
+                "/endpoint/foi/automatic_response_detection", json={"body": "receipt"}
             ).status_code
             == 401
         )
@@ -448,7 +448,7 @@ def test_app_warmup_inference_and_expiry_share_one_logistic_owner(monkeypatch):
         owner = application.automatic.logistic_provider()
         assert owner.resource is service.resources.get(config.logistic)
         result = client.post(
-            "/agents/automatic_response_detection",
+            "/endpoint/foi/automatic_response_detection",
             json={"body": "receipt", "fast": True},
         )
         assert result.json()["is_automatic"]
@@ -456,7 +456,7 @@ def test_app_warmup_inference_and_expiry_share_one_logistic_owner(monkeypatch):
         service.resources.expire(0)
         assert owner.cascade is None
         result = client.post(
-            "/agents/automatic_response_detection",
+            "/endpoint/foi/automatic_response_detection",
             json={"body": "receipt", "fast": True},
         )
         assert result.json()["is_automatic"]

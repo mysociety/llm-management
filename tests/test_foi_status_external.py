@@ -36,7 +36,7 @@ def test_status_model_validation(client, example, record_property):
     """
     response = post_example(
         client,
-        "/agents/foi_response_analysis",
+        "/endpoint/foi/response_status",
         example.id,
         example.input,
         record_property,

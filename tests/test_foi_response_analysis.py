@@ -62,7 +62,7 @@ def test_unconfigured_response_does_not_provision(client, body, monkeypatch):
     monkeypatch.setattr(server.app.state.service, "ensure_running", ensure)
     foi = server.app.state.application.foi.catalog.require_foi()
     monkeypatch.setattr(foi, "response_deployment", None)
-    response = client.post("/agents/foi_response_analysis", json=body)
+    response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 503
     ensure.assert_not_called()
 
@@ -93,7 +93,7 @@ def test_request_output_is_projected_for_model(
         )
     predict = AsyncMock(return_value=ExtractionOutput.model_validate(output))
     monkeypatch.setattr(response_analysis, "predict", predict)
-    response = client.post("/agents/foi_response_analysis", json=body)
+    response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 200, response.text
     assert response.json() == output
     observed = predict.call_args.args[0].value
@@ -137,7 +137,7 @@ def test_invalid_input_precedes_inference(client, body, monkeypatch, invalid):
         body["sources"][0]["id"] = 1
     predict = AsyncMock()
     monkeypatch.setattr(response_analysis, "predict", predict)
-    assert client.post("/agents/foi_response_analysis", json=body).status_code == 422
+    assert client.post("/endpoint/foi/response_status", json=body).status_code == 422
     predict.assert_not_called()
 
 
@@ -193,7 +193,7 @@ def test_model_references_and_invariants_are_validated(
             {"scope": {"kind": "question", "question_id": "q2"}, "references": []}
         ]
     monkeypatch.setattr(response_analysis, "predict", AsyncMock(return_value=output))
-    assert client.post("/agents/foi_response_analysis", json=body).status_code == 502
+    assert client.post("/endpoint/foi/response_status", json=body).status_code == 502
 
 
 @pytest.mark.parametrize(
@@ -205,11 +205,11 @@ def test_no_questions_still_allows_whole_request_analysis(
     body["request"].update(extraction_status=status, questions=questions)
     output["outcomes"][0]["scope"] = {"kind": "whole_request"}
     monkeypatch.setattr(response_analysis, "predict", AsyncMock(return_value=output))
-    assert client.post("/agents/foi_response_analysis", json=body).status_code == 200
+    assert client.post("/endpoint/foi/response_status", json=body).status_code == 200
 
 
 def test_endpoint_exposes_output_contract():
-    operation = server.app.openapi()["paths"]["/agents/foi_response_analysis"]["post"]
+    operation = server.app.openapi()["paths"]["/endpoint/foi/response_status"]["post"]
     assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/ExtractionOutput"
     }
@@ -231,7 +231,7 @@ def test_conflicting_original_request_text_is_rejected(client, body, monkeypatch
     body["request_text"] = "Different"
     predict = AsyncMock()
     monkeypatch.setattr(response_analysis, "predict", predict)
-    assert client.post("/agents/foi_response_analysis", json=body).status_code == 422
+    assert client.post("/endpoint/foi/response_status", json=body).status_code == 422
     predict.assert_not_called()
 
 
@@ -268,6 +268,6 @@ def test_unavailable_attachment_and_event_variants(client, body, output, monkeyp
     ]
     output["process_states"] = []
     monkeypatch.setattr(response_analysis, "predict", AsyncMock(return_value=output))
-    response = client.post("/agents/foi_response_analysis", json=body)
+    response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 200, response.text
     assert response.json() == output

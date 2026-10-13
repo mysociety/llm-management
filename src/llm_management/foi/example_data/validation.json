@@ -5,7 +5,7 @@
       "title": "Multiple prose questions: transport budgets and policing",
       "provenance": "- `case_id` / `group_id`: `e39048d3-3c1a-5d89-9690-13205d79aa4f`\n- Raw-text source: companion topic split line 1, `prompt[1].content.request_text`.\n- Gold-label source: QuestionSlice split lines 1–6.\n\nThree separate questions; budget qualifications remain attached to the first two questions.",
       "input": {
-        "request": "I am writing to request some information about how public funds are allocated and managed in our region, particularly regarding transport and policing. Could you provide a breakdown of how the regional transport budget is allocated to different public transport modes, such as bus, rail, and trams? I am interested in the most recent summary of budget allocations and any available figures for the current financial year. Additionally, I would like to know the annual budgets and expenditure for highway maintenance for each local authority district within the region. Please include winter gritting expenditure figures if available. Finally, I would appreciate details about the legal requirements and process that guide police stop and search procedures in this region."
+        "body": "I am writing to request some information about how public funds are allocated and managed in our region, particularly regarding transport and policing. Could you provide a breakdown of how the regional transport budget is allocated to different public transport modes, such as bus, rail, and trams? I am interested in the most recent summary of budget allocations and any available figures for the current financial year. Additionally, I would like to know the annual budgets and expenditure for highway maintenance for each local authority district within the region. Please include winter gritting expenditure figures if available. Finally, I would appreciate details about the legal requirements and process that guide police stop and search procedures in this region."
       },
       "expected": {
         "questions": [
@@ -87,7 +87,7 @@
       "title": "Wrapped lines and a list item: planning statistics",
       "provenance": "- `case_id` / `group_id`: `e565022d-c595-5bc2-8026-734024b8ab62`\n- Raw-text source: companion topic split line 3, `prompt[1].content.request_text`.\n- Gold-label source: QuestionSlice split lines 12–17.\n\nJoin wrapped lines and keep the requested monthly breakdown within q1. Existing redaction placeholders are literal dataset text.",
       "input": {
-        "request": "I am writing to request a statistical overview of planning\napplications handled by your authority. This request is made\nunder the relevant provisions for access to recorded\ninformation held by public authorities.\nRequester: <PERSON>. Email: <EMAIL_ADDRESS>.\n- Please provide the number of planning applications received and the number determined each month for the period from January 2023 to December 2023.\nThe figures should be broken down by calendar month and\nindicate the number of applications received, the number\napproved, refused, withdrawn, and those still under\nconsideration at year end."
+        "body": "I am writing to request a statistical overview of planning\napplications handled by your authority. This request is made\nunder the relevant provisions for access to recorded\ninformation held by public authorities.\nRequester: <PERSON>. Email: <EMAIL_ADDRESS>.\n- Please provide the number of planning applications received and the number determined each month for the period from January 2023 to December 2023.\nThe figures should be broken down by calendar month and\nindicate the number of applications received, the number\napproved, refused, withdrawn, and those still under\nconsideration at year end."
       },
       "expected": {
         "questions": [
@@ -140,7 +140,7 @@
       "title": "Environmental request with separately labelled context: air monitoring",
       "provenance": "- `case_id` / `group_id`: `bada42e1-214b-53c7-8f4d-a43a618b83e6`\n- Raw-text source: companion topic split line 6, `prompt[1].content.request_text`.\n- Gold-label source: QuestionSlice split lines 27–29.\n\nThe dataset labels the two sentences beginning “Focus on” and “Specify” as ADDITIONAL. Preserve them in additional_text; this is the recorded gold expectation, even though they could plausibly be interpreted as question qualifications.",
       "input": {
-        "request": "• List the geographic locations and operational status of all active sites in the national air quality monitoring network.\nFocus on sites that currently measure PM2.5, NO2, O3, SO2, and CO in line with UK-adopted EU directives. Specify whether each site is urban, rural, or roadside."
+        "body": "• List the geographic locations and operational status of all active sites in the national air quality monitoring network.\nFocus on sites that currently measure PM2.5, NO2, O3, SO2, and CO in line with UK-adopted EU directives. Specify whether each site is urban, rural, or roadside."
       },
       "expected": {
         "questions": [
@@ -207,7 +207,7 @@
       "title": "Personal records: social care correspondence",
       "provenance": "- `case_id` / `group_id`: `ea48f5fc-fa19-595d-bfdd-978cd3e2fe0e`\n- Raw-text source: companion topic split line 14, `prompt[1].content.request_text`.\n- Gold-label source: QuestionSlice split lines 63–67.\n\nThe repeated introductory request is ADDITIONAL. Extract the explicit request and its date qualification as one question.",
       "input": {
-        "request": "I am writing to request copies of all correspondence between\nmyself and my allocated social care support worker.\nThis request is from <PERSON>. Replies can be sent to\n<EMAIL_ADDRESS>.\nPlease provide copies of all emails or letters exchanged\nbetween me and my allocated social care support worker.\nThese records should cover the period from January 2023 to\nthe present."
+        "body": "I am writing to request copies of all correspondence between\nmyself and my allocated social care support worker.\nThis request is from <PERSON>. Replies can be sent to\n<EMAIL_ADDRESS>.\nPlease provide copies of all emails or letters exchanged\nbetween me and my allocated social care support worker.\nThese records should cover the period from January 2023 to\nthe present."
       },
       "expected": {
         "questions": [
@@ -259,7 +259,7 @@
       "title": "Mixed personal and environmental requests with two bullet styles",
       "provenance": "- `case_id` / `group_id`: `4c1f73bf-a4df-57df-81ee-9883956f5b1f`\n- Raw-text source: companion topic split line 17, `prompt[1].content.request_text`.\n- Gold-label source: QuestionSlice split lines 75–85.\n\nKeep care records and land contamination reports as separate questions, with their respective continuations. Contact placeholders and the closing thanks are ADDITIONAL in the gold labels.",
       "input": {
-        "request": "I need some information from Northbridge Borough Council. Please treat this as two separate requests below. I am <PERSON>. Email: <EMAIL_ADDRESS>. My postal address is <ADDRESS>. Telephone: <PHONE_NUMBER>.\n• Can you send me the minutes and notes from my most recent annual care plan review meeting and any earlier review records you hold?\nPlease include any amendments or updates made to my care or support plan in the last three years.\n* Also, could you provide me with preliminary land contamination reports you have for any sites currently under consideration for development by Northbridge Borough Council?\nI am particularly interested in reports that include details on chemicals detected during site surveys and any initial recommendations for further investigation. Thanks for your help."
+        "body": "I need some information from Northbridge Borough Council. Please treat this as two separate requests below. I am <PERSON>. Email: <EMAIL_ADDRESS>. My postal address is <ADDRESS>. Telephone: <PHONE_NUMBER>.\n• Can you send me the minutes and notes from my most recent annual care plan review meeting and any earlier review records you hold?\nPlease include any amendments or updates made to my care or support plan in the last three years.\n* Also, could you provide me with preliminary land contamination reports you have for any sites currently under consideration for development by Northbridge Borough Council?\nI am particularly interested in reports that include details on chemicals detected during site surveys and any initial recommendations for further investigation. Thanks for your help."
       },
       "expected": {
         "questions": [

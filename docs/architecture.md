@@ -41,6 +41,13 @@ registering models, loading weights or constructing cloud backends.
 factories. Each factory constructs a controller on first use. Model weights load
 only during inference or explicit warm-up.
 
+HTTP routers are module-level objects. FastAPI dependencies in
+`api/dependencies.py` retrieve the shared service and feature owners from
+`request.app.state.application`; they do not construct resources per request.
+`create_app()` retains ownership and shutdown wiring, and separate app instances
+can use the same routes with independent assemblies. Tests can override the
+dependency providers using FastAPI's `dependency_overrides`.
+
 An application owns its deployment cache, activity context, backend controllers,
 local-resource registry and automatic-classifier admission capacity. Warm-up and
 inference resolve the same local controller. Idle unloading clears its weights;

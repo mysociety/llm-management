@@ -46,9 +46,9 @@ def test_cpu_exoscale_parity(client, request_text, expected_status):
     results = []
     for backend in ("cpu", "exoscale"):
         response = client.post(
-            "/agents/foi_structure/extract",
+            "/endpoint/foi/extract_questions/extract",
             params={"backend": backend},
-            json={"request": request_text},
+            json={"body": request_text},
         )
         assert response.status_code == 200, response.text
         result = response.json()
@@ -76,9 +76,9 @@ def test_cpu_exoscale_parity(client, request_text, expected_status):
 
 def test_single_question_recovers_without_escalation(client):
     response = client.post(
-        "/agents/foi_structure/extract",
+        "/endpoint/foi/extract_questions/extract",
         json={
-            "request": "Dear Council,\n\nPlease provide the total number of FOI requests "
+            "body": "Dear Council,\n\nPlease provide the total number of FOI requests "
             "received last year.\n\nYours faithfully,\nA resident"
         },
     )
@@ -104,7 +104,7 @@ def test_dataset_extraction(client, backend, example, record_property):
     """
     response = post_example(
         client,
-        "/agents/foi_structure/extract",
+        "/endpoint/foi/extract_questions/extract",
         example.id,
         example.input,
         record_property,
