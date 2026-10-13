@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     )
     server_role: str = "test"
     auth_tokens: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("auth_tokens")
+    @classmethod
+    def nonempty_tokens(cls, values: dict[str, str]) -> dict[str, str]:
+        if any(not value.strip() or not value.isascii() for value in values.values()):
+            raise ValueError("Authentication tokens must be nonblank ASCII strings")
+        return values
+
     question_slice_gpu_enabled: bool = True
     classifier_batch_size: int = Field(default=8, ge=1, le=256)
     classifier_max_units: int = Field(default=256, ge=1, le=4096)

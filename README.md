@@ -335,6 +335,9 @@ live under `api/`; deployment lifecycle and cloud operations live under
 `deployments/`; reusable execution and resource guards live under `inference/`.
 FOI, SAR and automatic classification each keep their own decisions and schemas.
 
+Configured authentication token values must be nonblank ASCII strings. An empty
+`AUTH_TOKENS` mapping retains the existing unauthenticated mode.
+
 Docker builds use a deny-by-default `.dockerignore` that admits application
 source, package metadata and the two deployment configuration files. Supply
 credentials at runtime; local environment files, state, SSH keys and Git history
