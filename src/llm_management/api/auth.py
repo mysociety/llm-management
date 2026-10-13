@@ -28,9 +28,14 @@ async def require_bearer_auth_when_enabled(
 
     auth_header = request.headers.get("authorization", "")
     scheme, _, token = auth_header.partition(" ")
-    token_is_valid = scheme.lower() == "bearer" and any(
-        secrets.compare_digest(token, configured_token)
-        for configured_token in settings.auth_tokens.values()
+    token_is_valid = (
+        scheme.lower() == "bearer"
+        and bool(token.strip())
+        and token.isascii()
+        and any(
+            secrets.compare_digest(token, configured_token)
+            for configured_token in settings.auth_tokens.values()
+        )
     )
     if not token_is_valid:
         return JSONResponse(
