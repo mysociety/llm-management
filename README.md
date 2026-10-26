@@ -203,6 +203,7 @@ Warm a group with `POST /deployments/{group_slug}/warm-up`.
 | `/mock/endpoint/foi/extract_questions` | POST | Example extraction and classification without inference |
 | `/mock/endpoint/foi/extract_questions/extract` | POST | Example extraction without inference |
 | `/mock/endpoint/foi/response_status` | POST | Example response analysis without inference |
+| `/mock/endpoint/foi/find_email` | POST | Fixed fictional FOI email finding with zero external usage |
 | `/mock/endpoint/misc/capital_city` | POST | Always returns `city: "Fake Paris"` and echoes the submitted country, without inference |
 
 The immigration examples (`/endpoint/foi/immigration_detection` and its `/clef`

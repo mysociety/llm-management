@@ -5,10 +5,21 @@ Integration mocks returning example responses without inference.
 from __future__ import annotations
 
 import random
+from datetime import datetime, timezone
 
 from fastapi import APIRouter
+from pydantic import HttpUrl
 
 from ..agents.capital_city import CapitalCityResponse
+from ..foi.email_finder.schemas import (
+    Evidence,
+    FOIFinding,
+    FOIResult,
+    FOIUsage,
+    ModelUsage,
+    PublicAuthority,
+    SearchUsage,
+)
 from ..foi.examples import validation_examples
 from ..foi.response_schemas import ExtractionOutput, ResponseAnalysisInput
 from ..foi.schemas import (
@@ -67,3 +78,46 @@ async def mock_response_status(body: ResponseAnalysisInput) -> ExtractionOutput:
     resolve against submitted input. This route tests response-shape handling.
     """
     return random.choice(validation_examples().responses).expected.model_copy(deep=True)
+
+
+@router.post(
+    "/endpoint/foi/find_email", summary="Mock a public authority's FOI email finding"
+)
+async def mock_find_foi_email(body: PublicAuthority) -> FOIResult:
+    """
+    Echo authority details with a fixed fictional finding and zero external usage.
+
+    No credentials, finder configuration, inference or web requests are needed.
+    The email and evidence are examples, independent of the submitted authority.
+    """
+    return FOIResult(
+        authority=body,
+        finding=FOIFinding(
+            status="found",
+            email="foi@council.example",
+            email_type="foi_eir",
+            evidence=Evidence(
+                source_url=HttpUrl("https://council.example/foi"),
+                quote="For new FOI requests, email foi@council.example.",
+            ),
+            explanation=(
+                "Mock result for integration testing. The address and evidence "
+                "are fictional; no research was performed."
+            ),
+        ),
+        checked_at=datetime.now(timezone.utc),
+        searches=[],
+        pages=[],
+        usage=FOIUsage(
+            model=ModelUsage(
+                provider="mock",
+                model="mock:foi-email-finder",
+                requests=0,
+                input_tokens=0,
+                cached_input_tokens=0,
+                cache_write_tokens=0,
+                output_tokens=0,
+            ),
+            search=SearchUsage(provider=None, requests=0, credits=0),
+        ),
+    )

@@ -20,6 +20,7 @@ def test_documented_route_groups():
         "/mock/endpoint/foi/extract_questions",
         "/mock/endpoint/foi/extract_questions/extract",
         "/mock/endpoint/foi/response_status",
+        "/mock/endpoint/foi/find_email",
     ):
         assert paths[path]["post"]["tags"] == ["Mocks"]
     for action in ("warm-up", "cool-down", "scale-to-zero"):
@@ -59,3 +60,11 @@ def test_documented_operations_declare_bearer_auth():
                     p["name"].lower() == "authorization"
                     for p in operation.get("parameters", [])
                 )
+
+
+def test_email_finder_mock_uses_the_live_input_and_response_contract() -> None:
+    paths = server.app.openapi()["paths"]
+    live = paths["/endpoint/foi/find_email"]["post"]
+    mock = paths["/mock/endpoint/foi/find_email"]["post"]
+    assert mock["requestBody"] == live["requestBody"]
+    assert mock["responses"]["200"] == live["responses"]["200"]

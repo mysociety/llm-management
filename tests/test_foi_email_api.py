@@ -41,7 +41,9 @@ def test_route_errors(
     assert response.status_code == status
 
 
-@pytest.mark.parametrize("path", ["/endpoint/foi/find_email"])
+@pytest.mark.parametrize(
+    "path", ["/endpoint/foi/find_email", "/mock/endpoint/foi/find_email"]
+)
 def test_route_input_and_auth(monkeypatch: pytest.MonkeyPatch, path: str) -> None:
     monkeypatch.setattr(server.settings, "auth_tokens", {})
     method = AsyncMock()
