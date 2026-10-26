@@ -264,3 +264,13 @@ max_tokens = 4096
 [[api.search]]
 slug = "tavily_search"
 service = "tavily"
+
+[foi_email_finder]
+deployment = "gpt_6_1_low"
+search = "tavily_search" # Remove to navigate only from the supplied website.
+request_limit = 20
+tool_limit = 30
+timeout_seconds = 180
+http_timeout_seconds = 30
+max_page_chars = 40000
+max_download_bytes = 5000000

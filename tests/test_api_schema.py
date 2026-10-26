@@ -11,6 +11,7 @@ def test_documented_route_groups():
         "/endpoint/foi/extract_questions",
         "/endpoint/foi/extract_questions/extract",
         "/endpoint/foi/response_status",
+        "/endpoint/foi/find_email",
     ):
         assert paths[path]["post"]["tags"] == ["FOI endpoints"]
     assert paths["/endpoint/misc/capital_city"]["post"]["tags"] == ["Misc endpoints"]

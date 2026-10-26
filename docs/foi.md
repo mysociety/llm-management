@@ -9,7 +9,7 @@ group: `group_foi_pipeline_cpu` for the default `backend=cpu`, or
 primarily for internal debugging. It omits status and topic classification. The
 same groups can warm it, though they also warm the full classification pipeline.
 
-All FOI model inputs first pass through local CPU Presidio sanitization. Extraction results retain original text; see the [sanitization policy and CPU lifecycle](sanitization.md).
+Correspondence-analysis model inputs first pass through local CPU Presidio sanitization. The public-authority email finder described below uses a separate external API policy. Extraction results retain original text; see the [sanitization policy and CPU lifecycle](sanitization.md).
 
 Two fine-tuned models do different jobs: **QuestionSlice finds the questions** and **FOI topic model classifies them**. QuestionSlice is built on ModernBERT; FOI topic model is built on Granite. We use these task-specific names throughout this guide; `foi_topic` is the corresponding deployment name in configuration. A “question” can be an instruction such as “Please provide the report”; it does not need a question mark.
 
@@ -593,3 +593,287 @@ topics, plus case, endpoint/backend, status, latency and complete actual output 
 provenance where the API returns it). Test failures distinguish transport errors,
 schema validation errors, whitespace-only extraction differences and other
 semantic mismatches. These are dataset expectations, not claims of live accuracy.
+
+
+## Find an authority's FOI email
+
+`POST /endpoint/foi/find_email` accepts `name` (1–300 characters), optional
+`website` (an HTTP(S) URL) and optional `context` (up to 1,000 characters of
+public authority details). Unknown fields and blank names are rejected.
+For example:
+
+```json
+{
+  "name": "Example Borough Council",
+  "website": "https://council.example/",
+  "context": "Local authority in England"
+}
+```
+
+Only `name` is required when search is configured.
+
+The `foi/email_finder` package uses the repository's async Pydantic AI
+and `httpx2` stack. Its application-owned service is independent of managed
+compute: it needs no deployment group or warm-up. It searches for official
+guidance, navigates pages, and returns a typed finding, UTC check time, search
+results and page visits. No retrieved content is persisted by this application.
+
+`found` requires an email, `email_type`, and quoted evidence from a successfully
+fetched official page. `email_type: "foi_eir"` identifies an FOI or combined
+FOI/EIR-specific mailbox; `"eir_only"` identifies a route limited to EIR requests;
+`"generic"` identifies a published general contact fallback, such as a
+parish clerk's mailbox. The finder prefers a specific mailbox, but may use the
+general address when specific guidance is unavailable or no specific email can
+be found. A general mailbox remains generic even when FOI guidance also lists it.
+The explanation distinguishes confirmed guidance from fallback contact details.
+If official guidance states that a body is outside FOI coverage but publishes an
+EIR route, the finder returns that route as `found` with `email_type: "eir_only"`
+and explains the published restriction. Scope is judged from the guidance, not
+inferred from an address containing "EIR".
+
+A generic fallback must still be evidenced on an official page; an inaccessible
+policy PDF or a search snippet alone cannot support it. Official instructions
+explicitly ruling out the general mailbox are respected. An unreadable policy
+is recorded as a research gap, rather than forcing `not_found` when a published
+general contact can be fetched.
+
+`form_only` requires a form URL and evidence after checking for both specific
+and usable general email addresses. `not_found` explains insufficient or
+conflicting evidence. Both have `email_type: null`. The validator checks that
+the passage occurs in the fetched text, that the complete email appears in the passage, and that a form
+URL is the source page or one of its links. The model still judges whether the
+site is official, the authority is the right one, and the instructions apply
+to new requests. Delivery is not tested. Search snippets and WhatDoTheyKnow
+are discovery aids, not final evidence. HTML and plain text are supported;
+PDFs, JavaScript rendering and blocked sites may leave gaps.
+
+Percent-encoded addresses in `mailto:` links are decoded before evidence
+validation. Redirect bodies are closed without buffering; the download limit
+applies to the final page, with at most five redirects. Returned text is capped
+by `max_page_chars`. The separate navigation list retains at most 50 unique
+links, with their combined URL lengths also capped by `max_page_chars`.
+`truncated` is true if either text or links were omitted.
+
+### Crawling policy
+
+The shared `llm_management.web` package provides page reading, safe HTTP transport,
+crawl policy, search adapters and their result models. The email finder owns its
+research prompts, evidence validation and FOI response models. Search API calls
+are separate from direct page navigation.
+
+Direct page fetches check `robots.txt` before reading content, including after
+redirects to another origin. Protego handles rule matching, including wildcard
+paths, longest-match precedence and matching user-agent groups. Robots discovery
+follows at most five redirects, keeps rules scoped to the original origin, and
+reads at most 512 KiB without buffering intermediate redirect bodies.
+
+A missing robots file (HTTP 4xx, except 429) permits access. Network failures and
+HTTP 5xx defer crawling and are cached as temporary denials for 60 seconds.
+Successful rules and missing-file responses are cached for an hour by default;
+`Cache-Control` can shorten that, and rules are never reused past 24 hours.
+The cache is in memory and holds at most 256 robots responses, evicting the
+least recently used entry when full. Expired rules are pruned during activity,
+at most once per minute; evicted rules are fetched again before navigation.
+Robots discovery locks are released once their holders and queued callers finish.
+Host records are removed after five idle minutes only when no requests are active
+or queued and all recorded pacing and cooldown deadlines have passed. Long
+cooldowns remain protected even if a host is otherwise idle. Cleanup needs no
+background task; an idle application prunes on its next use.
+No content or robots rules are saved to disk.
+
+Each host has one in-flight request, held until its response is closed, and at
+least two seconds between request starts. A longer advertised `Crawl-delay` is
+honoured. This includes robots discovery and redirects. HTTP 429 and 503 set a
+shared host cooldown using `Retry-After` seconds or an HTTP date; an absent or
+invalid header defaults to 60 seconds. Responses are not automatically retried.
+If a required wait exceeds the remaining lookup budget, the page visit records
+`Deferred` rather than making another request. Robots-disallowed pages record
+`Blocked by robots.txt`. Both are research gaps, not proof that no contact exists.
+
+The application owns a shared `llm_management.web.crawl.CrawlPolicy` and injects
+it into the finder. All readers using that policy share the robots cache, host
+slots and cooldowns, including readers used by other features. Separate workers
+or replicas do not share this state; deployment-wide limits need shared
+coordination or a single crawler process. Direct batch callers should share a
+`CrawlPolicy` between their `llm_management.web.pages.PageReader` instances.
+Callers retaining an application from `assemble_application()` can pass its
+`application.crawl_policy` to those readers.
+
+Each `PageReader` can supply its own `user_agent`. That same identity is used
+for robots discovery, rule matching, `Crawl-delay` and all page requests,
+including redirects. Robots responses are cached per origin and user agent;
+host slots and cooldowns remain shared across identities.
+
+The finder defaults to
+`mySociety-FOIFinder/0.1 (+https://mysociety.org)`.
+Its stable identity is defined in
+[email_finder/service.py](../src/llm_management/foi/email_finder/service.py). Other
+projects can set `PageReader(..., user_agent="ProjectBot/1.0 (+https://example.org/bot)")`
+while passing the shared crawl policy.
+The existing public-IP checks and TLS verification apply to robots requests too.
+These controls cover our direct navigation, not Tavily's independent crawling.
+See [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309.html) and
+[Retry-After semantics](https://www.rfc-editor.org/rfc/rfc9110.html#section-10.2.3).
+
+### External service usage
+
+Each completed lookup returns `usage.model` and `usage.search`, for example:
+
+```json
+{
+  "usage": {
+    "model": {
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "service": "openai",
+      "requests": 3,
+      "input_tokens": 12000,
+      "cached_input_tokens": 2000,
+      "cache_write_tokens": 0,
+      "output_tokens": 1200,
+      "reasoning_tokens": 400
+    },
+    "search": {
+      "provider": "tavily",
+      "requests": 2,
+      "credits": 2
+    }
+  }
+}
+```
+
+These are measured quantities, without currency estimates or hosting costs.
+Model counts are aggregated across every turn and output-validation retry.
+`input_tokens` includes cached input and cache writes; `output_tokens` includes
+reasoning tokens, so those breakdowns must not be charged again separately.
+`reasoning_tokens` is null when the provider does not supply that breakdown.
+`service` identifies the configured API service for price lookup, including
+OpenAI-compatible services; it is null for direct callers without a catalog binding.
+
+Search credits come from Tavily's `include_usage` response. Each entry in
+`searches` also retains its reported `credits`. The aggregate is null if any
+search failed or omitted credit usage; other searches' known credits remain in
+the trail. With no external searches, requests and credits are both zero.
+An error-free `not_found` or `form_only` lookup includes usage in the same way
+as a `found` result. HTTP errors and timeouts still return their existing error
+responses; they do not provide complete billing records. Provider-side retries
+or requests whose responses never arrive may need billing reconciliation.
+
+### Provider configuration
+
+[deployments.toml](../conf/deployments.toml) is the shared catalog for local,
+Exoscale and external API deployments. Its non-secret API configuration separates
+services from named model configurations:
+
+```toml
+[api.service.openai]
+provider = "openai"
+protocol = "responses"
+credential = "openai"
+
+[[api.deployment]]
+slug = "gpt_6_1_low"
+service = "openai"
+model = "gpt-6.1-sol"
+reasoning_effort = "low"
+max_tokens = 4096
+
+[api.service.tavily]
+provider = "tavily"
+credential = "tavily"
+
+[[api.search]]
+slug = "tavily_search"
+service = "tavily"
+
+[foi_email_finder]
+deployment = "gpt_6_1_low"
+search = "tavily_search"
+```
+
+Model services define provider, protocol, optional base URL and credential
+reference. Search services define provider and credential reference, and reject
+model protocol settings. Model deployments define model, reasoning effort and
+output budget. Multiple slugs
+can share a service and model with different settings. Bind the finder to another
+slug by changing `[foi_email_finder].deployment`. Research budgets also live under
+`[foi_email_finder]`. The application's finder uses its owning catalog, including
+when a batch caller supplies a custom catalog. Credentials are resolved only
+when a lookup runs; startup does not contact providers.
+
+The example uses GPT-6.1 Sol with low reasoning and the Responses API.
+Model-specific support for reasoning efforts and protocols is checked by the
+provider when a lookup runs, rather than by catalog validation. Configure a
+separate slug to select different settings; the application does not silently
+substitute a model or reasoning setting. Provider rejection is reported as an
+upstream failure by the finder endpoint.
+Responses requests set `store = false`.
+
+For an OpenAI-compatible provider, add an `[api.service.NAME]` with
+`provider = "openai_compatible"`, `base_url`, `credential`, and
+`protocol = "chat"` or `"responses"` as supported. Point a new API deployment at
+that service. The factory in
+[inference/external.py](../src/llm_management/inference/external.py) owns
+SDK-specific construction. To support another native provider, extend the service
+schema and factory with its Pydantic AI provider and explicit SDK dependency.
+Agents and HTTP contracts do not need to change. Model services must support
+tool calls and structured output; evaluate source-validation cases before switching.
+
+Search has separate service and deployment bindings. Only Tavily is currently
+implemented; another provider needs an async `SearchProvider.search` adapter and
+factory selection. Remove `[foi_email_finder].search` to navigate only from supplied
+websites. A configured search deployment requires its credential even when a
+website is supplied. There is no automatic fallback to another vendor.
+
+Catalog validation checks service references, finder bindings, and unique slugs
+across API, local and Exoscale resources. API models have no compute lifecycle;
+they are excluded from warm-up groups and the managed deployment proxy. A bare
+catalog can omit the email finder entirely; its endpoint then returns `503`.
+
+For direct callers and deterministic offline tests, `find_foi_email` accepts
+an injected Pydantic AI `Model`, `SearchProvider`, and `PageReader`; their
+clients remain caller-owned. The HTTP service owns and closes its per-request
+clients, limits concurrent lookups to four per app instance, and releases its
+concurrency slot on failures and cancellation.
+
+### Credential storage
+
+Set API keys as environment variables in production, or use the ignored `.env`
+file for local development:
+
+```dotenv
+OPENAI_API_KEY=your-model-key
+TAVILY_API_KEY=your-search-key
+```
+
+Keys are held as Pydantic `SecretStr` values and excluded from the settings
+representation. Masking is a guard against accidental display, not encryption.
+Do not commit credentials, put them in deployment TOML, or send them in requests.
+The services' `credential` references `openai` and `tavily` resolve to
+`OPENAI_API_KEY` and `TAVILY_API_KEY` respectively. Another provider can add
+a corresponding secret setting. Secret-file loading is not implemented.
+
+In production, inject these variables through your deployment platform's secret
+configuration. Do not commit keys or bake them into container images. The
+application reads them into settings at startup; restart it after rotating keys.
+
+### Managing external inference
+
+Keep external APIs as a separate execution category from CPU and Exoscale
+compute. Bind each permitted feature to a deployment slug and a data policy;
+availability of a key should never authorize every endpoint to use it. The
+finder is an explicit public-information use case: authority identity and public
+web guidance go to the model provider, and search queries go to the search
+provider. Its free-text fields are not a personal-data detector: callers must
+supply only public authority details. Other pipelines retain their existing
+sanitization and deployment behavior.
+
+As more external features are added, attach retention/region requirements,
+request and token budgets, and provider/model usage metrics to each binding.
+Log provider/deployment slug, timing, token counts and outcome rather than prompts,
+page contents or keys. Consider a durable job queue for long-running lookups,
+and a TTL cache keyed by normalized authority identity with source timestamps
+and manual invalidation. Neither persistence nor automatic vendor failover is
+introduced here: both need explicit freshness and data-sharing decisions.
+Provider abstractions follow the existing
+[Pydantic AI model/provider separation](https://ai.pydantic.dev/models/overview/).

@@ -369,3 +369,7 @@ Docker builds use a deny-by-default `.dockerignore` that admits application
 source, package metadata and the two deployment configuration files. Supply
 credentials at runtime; local environment files, state, SSH keys and Git history
 are excluded from the build context.
+
+The public-authority research endpoint, `POST /endpoint/foi/find_email`, finds
+published FOI submission addresses with source evidence using external APIs.
+See [API deployment configuration, credentials and data policy](docs/foi.md#find-an-authoritys-foi-email).
