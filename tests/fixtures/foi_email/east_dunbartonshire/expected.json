@@ -1,0 +1,13 @@
+{
+  "capture_sha256": "efd46871c6da8a63fdd5b99961fb1fb87f3cb3074976cfa1dba6351368003d3b",
+  "status": "found",
+  "email_type": "foi_eir",
+  "emails": [
+    "foi@eastdunbarton.gov.uk"
+  ],
+  "evidence_urls": [
+    "https://www.eastdunbarton.gov.uk/about/managing-information/freedom-of-information"
+  ],
+  "review_notes": "The saved official guidance instructs new information requesters to send their enquiry to foi@eastdunbarton.gov.uk. The same page also discusses Environmental Information (Scotland) Regulations. The extraction is truncated, but the submission instructions and mailbox are fully present.",
+  "request_form_urls": []
+}

@@ -8,7 +8,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models import Model
 
-from ...web.pages import PageReader
+from ...web.pages import PageSource
 from ...web.schemas import SearchResults, WebPage
 from ...web.search import SearchProvider
 from .schemas import FOIFinding
@@ -89,7 +89,7 @@ class ResearchContext:
     Isolate retrieved evidence and tool budgets to one authority lookup.
     """
 
-    reader: PageReader
+    reader: PageSource
     search_provider: SearchProvider | None
     tool_limit: int
     pages: list[WebPage] = field(default_factory=list)

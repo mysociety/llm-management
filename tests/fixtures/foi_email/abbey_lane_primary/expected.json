@@ -1,0 +1,13 @@
+{
+  "capture_sha256": "e5241a3a4e392864255394bd7c0897e4ac3f09c35d3b964a3232f615290da57a",
+  "status": "found",
+  "email_type": "generic",
+  "emails": [
+    "enquiries@abbeylane.sheffield.sch.uk"
+  ],
+  "evidence_urls": [
+    "https://www.abbeylaneprimaryschool.com/contact-us"
+  ],
+  "review_notes": "The saved official contact page identifies Abbey Lane, Sheffield S8 0BN and publishes the enquiries mailbox for public queries. The FOI policy PDF linked from the Data Protection page could not be read. The published contact is therefore a general fallback, not confirmed FOI guidance.",
+  "request_form_urls": []
+}

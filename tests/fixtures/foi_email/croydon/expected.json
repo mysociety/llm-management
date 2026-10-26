@@ -1,0 +1,13 @@
+{
+  "capture_sha256": "bae775651dcd4714a9513008e342ee0d7ac1ad7153bbe2d86767e10bc7f9299e",
+  "status": "found",
+  "email_type": "generic",
+  "emails": [
+    "contact@croydon.gov.uk"
+  ],
+  "evidence_urls": [
+    "https://www.croydon.gov.uk/council-and-elections/make-comment-or-complaint-and-have-your-say/our-customer-commitment"
+  ],
+  "review_notes": "The captured FOI overview allows written requests including email but does not identify a dedicated mailbox. The customer commitment publishes contact@croydon.gov.uk for general enquiries. This is a generic fallback under the current finder policy, not a confirmed FOI-specific address. The linked policy PDF was unreadable. Do not freeze the original assumption of not_found when the snapshot supports a generic route.",
+  "request_form_urls": []
+}

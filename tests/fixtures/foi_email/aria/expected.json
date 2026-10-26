@@ -1,0 +1,13 @@
+{
+  "capture_sha256": "ca10a8f1dfa66291f4149bb4ad2370f61cac029051ea3dda9e549426cb86ffa1",
+  "status": "found",
+  "email_type": "eir_only",
+  "emails": [
+    "EIR@aria.org.uk"
+  ],
+  "evidence_urls": [
+    "https://aria.org.uk/contact"
+  ],
+  "review_notes": "The saved official contact page explicitly says ARIA is not subject to the Freedom of Information Act 2000 and gives EIR@aria.org.uk under its Environmental Information Regulations instructions. Other mailboxes on the page serve unrelated purposes.",
+  "request_form_urls": []
+}

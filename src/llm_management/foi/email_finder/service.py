@@ -25,7 +25,7 @@ from ...inference.external import (
 )
 from ...settings import Settings
 from ...web.crawl import CrawlPolicy
-from ...web.pages import PageReader
+from ...web.pages import PageReader, PageSource
 from ...web.schemas import PageVisit, SearchResults
 from ...web.search import SearchProvider, build_search
 from ...web.transport import PublicWebTransport
@@ -126,7 +126,7 @@ async def find_foi_email(
     authority: PublicAuthority,
     *,
     model: Model,
-    reader: PageReader,
+    reader: PageSource,
     search_provider: SearchProvider | None = None,
     request_limit: int = 20,
     tool_limit: int = 30,

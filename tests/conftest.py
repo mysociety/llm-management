@@ -79,3 +79,32 @@ def api_catalog() -> DeploymentCatalog:
             "foi_email_finder": {"deployment": "research_test", "search": "web_test"},
         }
     )
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """
+    Select paid model comparisons independently of frozen research fixtures.
+    """
+    group = parser.getgroup("FOI email model evaluations")
+    group.addoption(
+        "--foi-model",
+        action="append",
+        default=[],
+        help="API model deployment slug; repeat to compare models.",
+    )
+    group.addoption(
+        "--foi-eval-output",
+        default=".state/foi-email-evaluations",
+        help="Directory for complete model evaluation reports.",
+    )
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """
+    Run each requested model against each authority, or use the configured model.
+    """
+    if "foi_model_slug" in metafunc.fixturenames:
+        slugs = metafunc.config.getoption("foi_model") or [None]
+        metafunc.parametrize(
+            "foi_model_slug", slugs, ids=[slug or "configured" for slug in slugs]
+        )

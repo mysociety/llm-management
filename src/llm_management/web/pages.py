@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
+from typing import Protocol
 from urllib.parse import unquote, urljoin
 
 import httpx2
@@ -15,6 +16,14 @@ from .crawl import USER_AGENT, CrawlPolicy, CrawlRestricted
 from .schemas import WebPage
 
 MAX_PAGE_LINKS = 50
+
+
+class PageSource(Protocol):
+    """
+    Supply readable pages through live navigation or a recorded research corpus.
+    """
+
+    async def fetch(self, url: HttpUrl) -> WebPage: ...
 
 
 class ReadableHTML(HTMLParser):
