@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,6 +36,9 @@ class Settings(BaseSettings):
         if any(not value.strip() or not value.isascii() for value in values.values()):
             raise ValueError("Authentication tokens must be nonblank ASCII strings")
         return values
+
+    openai_api_key: SecretStr = Field(default=SecretStr(""), repr=False)
+    tavily_api_key: SecretStr = Field(default=SecretStr(""), repr=False)
 
     question_slice_gpu_enabled: bool = True
     classifier_batch_size: int = Field(default=8, ge=1, le=256)
