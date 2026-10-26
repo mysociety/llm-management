@@ -165,6 +165,7 @@ def capture(
     ),
     website: str | None = typer.Option(None, "--website"),
     context: str = typer.Option("", "--context"),
+    previous_email: str | None = typer.Option(None, "--previous-email"),
     model_slug: str | None = typer.Option(None, "--model"),
 ) -> None:
     """
@@ -178,6 +179,7 @@ def capture(
         capture_authority(
             PublicAuthority(
                 name=name,
+                previous_email=previous_email,
                 website=HttpUrl(website) if website else None,
                 context=context,
             ),

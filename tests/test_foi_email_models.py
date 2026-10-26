@@ -24,28 +24,36 @@ from llm_management.settings import settings
 from tests.foi_email_evaluation import (
     EvaluationCase,
     EvaluationReport,
+    EvaluationSelection,
     ModelOnlyTransport,
     assert_finding_matches,
+    evaluation_selections,
 )
 
 pytestmark = [pytest.mark.external, pytest.mark.model_eval]
 FIXTURES = Path(__file__).parent / "fixtures" / "foi_email"
-CASE_IDS = sorted(path.name for path in FIXTURES.iterdir() if path.is_dir())
+SELECTIONS = evaluation_selections(FIXTURES)
 
 
-@pytest.mark.parametrize("case_id", CASE_IDS)
+@pytest.mark.parametrize(
+    "selection", SELECTIONS, ids=lambda item: f"{item.case_id}-{item.variant_id}"
+)
 def test_model_against_recorded_authority(
-    case_id: str,
+    selection: EvaluationSelection,
     foi_model_slug: str | None,
     pytestconfig: pytest.Config,
     record_property: Callable[[str, object], None],
 ) -> None:
+    case_id = selection.case_id
     case_directory = FIXTURES / case_id
     if not (case_directory / "expected.json").exists():
         pytest.skip(
             "A reviewed capture and expectation are required; tests never capture live pages"
         )
     case = EvaluationCase.load(case_directory)
+    variant = case.variant(selection.variant_id)
+    authority = case.capture.authority.model_copy(deep=True)
+    authority.previous_email = variant.previous_email
     catalog = DeploymentCatalog.load()
     config = catalog.foi_email_finder
     assert config is not None
@@ -54,6 +62,8 @@ def test_model_against_recorded_authority(
     replay = ReplayResearch(case.capture)
     report = EvaluationReport(
         case_id=case_id,
+        variant_id=variant.id,
+        previous_email=variant.previous_email,
         model_slug=deployment.slug,
         deployment=deployment.model_copy(deep=True),
         started_at=datetime.now(timezone.utc),
@@ -76,7 +86,7 @@ def test_model_against_recorded_authority(
             )
             async with asyncio.timeout(config.timeout_seconds):
                 report.result = await find_foi_email(
-                    case.capture.authority,
+                    authority,
                     model=model,
                     reader=replay,
                     search_provider=replay,
@@ -89,7 +99,8 @@ def test_model_against_recorded_authority(
     try:
         asyncio.run(run())
         assert report.result is not None
-        assert_finding_matches(report.result, case.expected)
+        assert_finding_matches(report.result, variant.expected)
+        assert report.result.matches_previous_email is variant.matches_previous_email
     except Exception as exc:
         report.error = f"Evaluation failed ({type(exc).__name__})"
         raise
@@ -100,9 +111,10 @@ def test_model_against_recorded_authority(
         directory = Path(output)
         directory.mkdir(parents=True, exist_ok=True)
         safe_slug = re.sub(r"[^A-Za-z0-9_.-]", "_", deployment.slug)
-        artifact = directory / f"{case_id}-{safe_slug}-{uuid4().hex}.json"
+        artifact = directory / f"{case_id}-{variant.id}-{safe_slug}-{uuid4().hex}.json"
         artifact.write_text(report.model_dump_json(indent=2) + "\n")
         record_property("case_id", case_id)
+        record_property("variant_id", variant.id)
         record_property("model_slug", deployment.slug)
         record_property("latency_seconds", report.elapsed_seconds)
         record_property("report_path", str(artifact))

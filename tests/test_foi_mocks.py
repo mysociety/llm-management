@@ -178,8 +178,15 @@ def test_mock_response_status_accepts_minimal_questions(client, monkeypatch, for
     assert response.json() == example.expected.model_dump(mode="json")
 
 
+@pytest.mark.parametrize(
+    "previous_email,expected_match",
+    [(None, None), ("FOI@COUNCIL.EXAMPLE", True), ("old@example.org", False)],
+)
 def test_mock_email_finder_returns_fictional_result_without_external_calls(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    previous_email: str | None,
+    expected_match: bool | None,
 ) -> None:
     finder_call = AsyncMock(side_effect=AssertionError("Mock called the finder"))
     network_call = AsyncMock(
@@ -190,7 +197,11 @@ def test_mock_email_finder_returns_fictional_result_without_external_calls(
     monkeypatch.setattr(
         server.app.state.application.foi_finder.catalog, "foi_email_finder", None
     )
-    authority = PublicAuthority(name="Example Council", context="Public authority")
+    authority = PublicAuthority(
+        name="Example Council",
+        context="Public authority",
+        previous_email=previous_email,
+    )
 
     response = client.post(
         "/mock/endpoint/foi/find_email", json=authority.model_dump(mode="json")
@@ -199,6 +210,7 @@ def test_mock_email_finder_returns_fictional_result_without_external_calls(
     assert response.status_code == 200, response.text
     result = FOIResult.model_validate(response.json())
     assert result.authority == authority
+    assert response.json()["matches_previous_email"] is expected_match
     assert result.finding.status == "found"
     assert result.finding.email == "foi@council.example"
     assert result.finding.email_type == "foi_eir"

@@ -53,6 +53,7 @@ def test_route_input_and_auth(monkeypatch: pytest.MonkeyPatch, path: str) -> Non
         {"name": " "},
         {"name": "x" * 301},
         {"name": "Council", "body": "private correspondence"},
+        {"name": "Council", "previous_email": "not-an-email"},
     ]:
         assert client.post(path, json=body).status_code == 422
     method.assert_not_called()

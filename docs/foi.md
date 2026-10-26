@@ -598,7 +598,8 @@ semantic mismatches. These are dataset expectations, not claims of live accuracy
 ## Find an authority's FOI email
 
 `POST /endpoint/foi/find_email` accepts `name` (1–300 characters), optional
-`website` (an HTTP(S) URL) and optional `context` (up to 1,000 characters of
+`website` (an HTTP(S) URL), optional `previous_email` (a valid email address),
+and optional `context` (up to 1,000 characters of
 public authority details). Unknown fields and blank names are rejected.
 For example:
 
@@ -606,11 +607,30 @@ For example:
 {
   "name": "Example Borough Council",
   "website": "https://council.example/",
+  "previous_email": "former.foi@council.example",
   "context": "Local authority in England"
 }
 ```
 
 Only `name` is required when search is configured.
+
+Supply `previous_email` when looking for an alternative to a former mailbox,
+such as one that has started bouncing. The finder prefers a different suitable
+FOI/EIR mailbox, followed by an evidenced general contact alternative. This
+replacement preference takes priority over returning the previous address merely
+because it is FOI-specific. Unrelated departmental addresses remain unsuitable,
+and the authority's FOI/EIR scope is preserved.
+
+If no suitable alternative can be evidenced, the finder can return the previous
+address only when it is independently published on a fetched page. The explanation
+states that no alternative was established; an evidenced form URL is retained
+when the usual source/link checks allow it. The supplied address itself is never
+evidence. Delivery is not tested for either the previous or alternative address.
+
+The top-level `matches_previous_email` field is calculated in code, independently
+of the model: `true` when the found address matches the supplied address, `false`
+when it differs, and `null` when either address is absent. Comparison ignores
+case, but preserves dots and plus-tags rather than guessing mailbox aliases.
 
 For integration testing, `POST /mock/endpoint/foi/find_email` accepts the same
 input and returns the same response model with a fixed fictional `found` result

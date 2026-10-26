@@ -3,7 +3,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    HttpUrl,
+    computed_field,
+    model_validator,
+)
 
 from ...web.schemas import PageVisit, SearchResults
 
@@ -17,6 +25,10 @@ class PublicAuthority(BaseModel):
 
     name: str = Field(min_length=1, max_length=300)
     website: HttpUrl | None = None
+    previous_email: EmailStr | None = Field(
+        default=None,
+        description="A former mailbox to prefer an evidenced alternative to, for example after bounces.",
+    )
     context: str = Field(default="", max_length=1000)
 
 
@@ -116,3 +128,21 @@ class FOIResult(BaseModel):
     searches: list[SearchResults]
     pages: list[PageVisit]
     usage: FOIUsage
+
+    @computed_field(
+        description=(
+            "Whether the returned email matches previous_email, ignoring case; "
+            "null when either address is absent. This does not verify delivery."
+        )
+    )
+    @property
+    def matches_previous_email(self) -> bool | None:
+        """
+        Compare addresses without treating case-only changes as replacements.
+        """
+        if self.authority.previous_email is None or self.finding.email is None:
+            return None
+        return (
+            str(self.authority.previous_email).casefold()
+            == str(self.finding.email).casefold()
+        )

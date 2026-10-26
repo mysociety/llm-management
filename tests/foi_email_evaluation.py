@@ -8,7 +8,7 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import httpx2
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl
@@ -19,20 +19,69 @@ from llm_management.foi.email_finder.replay import ReplayTrace
 from llm_management.foi.email_finder.schemas import FOIResult
 
 
-class ExpectedFinding(BaseModel):
+class FindingExpectation(BaseModel):
     """
-    Pin reviewed semantic expectations to the exact captured fixture bytes.
+    Review route semantics independently of model wording and fixture metadata.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    capture_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     status: Literal["found", "form_only", "not_found"]
     email_type: Literal["foi_eir", "eir_only", "generic"] | None = None
     emails: list[EmailStr] = Field(default_factory=list)
     evidence_urls: list[HttpUrl] = Field(default_factory=list)
     request_form_urls: list[HttpUrl] = Field(default_factory=list)
     review_notes: str = Field(min_length=1)
+
+
+class EvaluationVariant(BaseModel):
+    """
+    Change the previous-email input while keeping the research corpus frozen.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    previous_email: EmailStr | None = None
+    expected: FindingExpectation
+    matches_previous_email: bool | None = None
+
+
+class ExpectedFinding(FindingExpectation):
+    """
+    Pin baseline and optional replacement scenarios to reviewed capture bytes.
+    """
+
+    capture_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    variants: list[EvaluationVariant] = Field(default_factory=list)
+
+
+class EvaluationSelection(NamedTuple):
+    """
+    Name a reviewed authority and input variant for test parametrization.
+    """
+
+    case_id: str
+    variant_id: str
+
+
+def evaluation_selections(root: Path) -> list[EvaluationSelection]:
+    """
+    Collect baseline cases and reviewed variants without any live research.
+    """
+    selections: list[EvaluationSelection] = []
+    for directory in sorted(root.iterdir()):
+        if not directory.is_dir():
+            continue
+        selections.append(EvaluationSelection(directory.name, "baseline"))
+        expected_file = directory / "expected.json"
+        if expected_file.exists():
+            expected = ExpectedFinding.model_validate_json(expected_file.read_text())
+            selections.extend(
+                EvaluationSelection(directory.name, variant.id)
+                for variant in expected.variants
+            )
+    return selections
 
 
 @dataclass
@@ -57,17 +106,32 @@ class EvaluationCase:
         )
         readable = [page for page in capture.pages if page.error is None]
         assert readable, "No successfully captured pages are available"
-        for email in expected.emails:
-            assert any(
-                str(email).casefold() in page.content.casefold()
-                and page.url in expected.evidence_urls
-                for page in readable
-            ), f"Expected email lacks captured evidence: {email}"
-        if expected.status == "found":
-            assert expected.emails and expected.email_type and expected.evidence_urls
-        if expected.status == "form_only":
-            assert expected.request_form_urls and expected.evidence_urls
+        variant_ids = [variant.id for variant in expected.variants]
+        assert "baseline" not in variant_ids and len(variant_ids) == len(
+            set(variant_ids)
+        ), "Variant IDs must be unique and distinct from baseline"
+        for route in [expected, *(variant.expected for variant in expected.variants)]:
+            for email in route.emails:
+                assert any(
+                    str(email).casefold() in page.content.casefold()
+                    and page.url in route.evidence_urls
+                    for page in readable
+                ), f"Expected email lacks captured evidence: {email}"
+            if route.status == "found":
+                assert route.emails and route.email_type and route.evidence_urls
+            if route.status == "form_only":
+                assert route.request_form_urls and route.evidence_urls
         return cls(directory.name, capture, expected)
+
+    def variant(self, variant_id: str) -> EvaluationVariant:
+        """
+        Resolve a reviewed input variant or the original baseline expectation.
+        """
+        if variant_id == "baseline":
+            return EvaluationVariant(id="baseline", expected=self.expected)
+        return next(
+            variant for variant in self.expected.variants if variant.id == variant_id
+        )
 
 
 class EvaluationReport(BaseModel):
@@ -76,6 +140,8 @@ class EvaluationReport(BaseModel):
     """
 
     case_id: str
+    variant_id: str = "baseline"
+    previous_email: EmailStr | None = None
     model_slug: str
     deployment: APIModelDeployment
     started_at: datetime
@@ -119,7 +185,7 @@ class ModelOnlyTransport(httpx2.AsyncBaseTransport):
         await self.transport.aclose()
 
 
-def assert_finding_matches(result: FOIResult, expected: ExpectedFinding) -> None:
+def assert_finding_matches(result: FOIResult, expected: FindingExpectation) -> None:
     """
     Compare route semantics while permitting different supported evidence quotes.
     """
