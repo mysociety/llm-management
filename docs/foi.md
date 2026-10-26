@@ -612,6 +612,14 @@ For example:
 
 Only `name` is required when search is configured.
 
+For integration testing, `POST /mock/endpoint/foi/find_email` accepts the same
+input and returns the same response model with a fixed fictional `found` result
+(`email_type: "foi_eir"`, `email: "foi@council.example"`). It echoes the authority,
+labels the finding and model as mock, and reports zero external requests, tokens
+and search credits. Search results and page visits are empty. The mock needs no
+API keys or finder configuration and performs no inference or web requests.
+It uses normal bearer authentication when enabled.
+
 The `foi/email_finder` package uses the repository's async Pydantic AI
 and `httpx2` stack. Its application-owned service is independent of managed
 compute: it needs no deployment group or warm-up. It searches for official

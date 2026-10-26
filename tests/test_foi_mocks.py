@@ -6,11 +6,14 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, Mock
 
+import httpx2
 import pytest
 from starlette.testclient import TestClient
 
 from llm_management import server
 from llm_management.api import mocks
+from llm_management.foi.email_finder.schemas import FOIResult, PublicAuthority
+from llm_management.foi.email_finder.service import FOIFinder
 from llm_management.foi.examples import ExtractionExpectation, validation_examples
 from llm_management.foi.response_schemas import ExtractionOutput
 from llm_management.foi.schemas import ExtractQuestionsResponse, QuestionSliceResult
@@ -107,7 +110,8 @@ def test_mock_response_returns_unchanged_example(client, monkeypatch, example):
 
 
 @pytest.mark.parametrize(
-    "path", ["extract_questions/extract", "extract_questions", "response_status"]
+    "path",
+    ["extract_questions/extract", "extract_questions", "response_status", "find_email"],
 )
 def test_mock_rejects_invalid_input(client, path):
     """
@@ -131,7 +135,7 @@ def test_mock_rejects_invalid_backend(client):
 
 def test_mock_uses_normal_authentication(client, monkeypatch):
     """
-    Require configured bearer authentication for all three mock routes.
+    Require configured bearer authentication for the FOI mock routes.
     """
     monkeypatch.setattr(
         server.settings, "auth_tokens", {"integration": "mock-test-token"}
@@ -139,6 +143,7 @@ def test_mock_uses_normal_authentication(client, monkeypatch):
     bodies = {
         "extract_questions/extract": {"body": "Hello"},
         "extract_questions": {"body": "Hello"},
+        "find_email": {"name": "Example Council"},
         "response_status": validation_examples()
         .responses[0]
         .input.model_dump(mode="json"),
@@ -171,3 +176,47 @@ def test_mock_response_status_accepts_minimal_questions(client, monkeypatch, for
     response = client.post("/mock/endpoint/foi/response_status", json=body)
     assert response.status_code == 200, response.text
     assert response.json() == example.expected.model_dump(mode="json")
+
+
+def test_mock_email_finder_returns_fictional_result_without_external_calls(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    finder_call = AsyncMock(side_effect=AssertionError("Mock called the finder"))
+    network_call = AsyncMock(
+        side_effect=AssertionError("Mock made an external request")
+    )
+    monkeypatch.setattr(FOIFinder, "find", finder_call)
+    monkeypatch.setattr(httpx2.AsyncClient, "send", network_call)
+    monkeypatch.setattr(
+        server.app.state.application.foi_finder.catalog, "foi_email_finder", None
+    )
+    authority = PublicAuthority(name="Example Council", context="Public authority")
+
+    response = client.post(
+        "/mock/endpoint/foi/find_email", json=authority.model_dump(mode="json")
+    )
+
+    assert response.status_code == 200, response.text
+    result = FOIResult.model_validate(response.json())
+    assert result.authority == authority
+    assert result.finding.status == "found"
+    assert result.finding.email == "foi@council.example"
+    assert result.finding.email_type == "foi_eir"
+    assert result.finding.evidence is not None
+    assert str(result.finding.evidence.source_url) == "https://council.example/foi"
+    assert "fictional" in result.finding.explanation
+    assert result.checked_at.utcoffset() is not None
+    assert result.searches == result.pages == []
+    assert result.usage.model.provider == "mock"
+    assert result.usage.model.model == "mock:foi-email-finder"
+    assert result.usage.model.requests == 0
+    assert result.usage.model.input_tokens == result.usage.model.output_tokens == 0
+    assert (
+        result.usage.model.cached_input_tokens
+        == result.usage.model.cache_write_tokens
+        == 0
+    )
+    assert result.usage.search.provider is None
+    assert result.usage.search.requests == result.usage.search.credits == 0
+    finder_call.assert_not_called()
+    network_call.assert_not_called()
