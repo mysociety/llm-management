@@ -1718,6 +1718,18 @@ stanza = ["stanza (>=1.11.1,<2.0.0)"]
 transformers = ["accelerate (>=0.20.0,<2.0.0)", "huggingface_hub (>=0.20.0,<2.0.0)", "spacy_huggingface_pipelines (>=0.0.4,<1.0.0)", "transformers (>=4.0.0,<6.0.0)"]
 
 [[package]]
+name = "protego"
+version = "0.7.0"
+description = "Pure-Python robots.txt parser with support for modern conventions"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "protego-0.7.0-py3-none-any.whl", hash = "sha256:944638aaee608f6c83fcad442695f3f9381a60be8d5007248f46b00f201fa5fc"},
+    {file = "protego-0.7.0.tar.gz", hash = "sha256:2c032d9736a1f4f0c4318f3558353ae34da5cd038f1a5e064ded7548df315e5a"},
+]
+
+[[package]]
 name = "pydantic"
 version = "2.12.5"
 description = "Data validation using Python type hints"
@@ -3426,4 +3438,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "73df01da7305f816b5675cb16e6120b0dcd9962666e46adea3a9f220f499f6b1"
+content-hash = "c1aeb1172f6ed0fa0eea9f0ab27bc1af2154c4c7879b6d183ae61fc30cb1fce4"
