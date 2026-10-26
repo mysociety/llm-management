@@ -36,7 +36,13 @@ configured deployment. Ordinary `script/test` excludes these paid tests through
 the `external` marker. Only the selected model service is contacted; no Tavily
 key is needed for replay.
 
-The normal agent and evidence validator run unchanged. A `ReplayResearch`
+The normal agent and evidence validator run unchanged. Reviewed variants in
+`expected.json` can change `previous_email` without changing the captured pages:
+Croydon includes an obsolete caller-supplied address with a generic replacement;
+ARIA includes its still-published EIR mailbox with case differences and no
+appropriate alternative. The variant inputs are controlled test inputs, not
+claims that the invented former address was ever published. Reports retain the
+variant ID, previous address and computed comparison flag. A `ReplayResearch`
 instance supplies both tool dependencies: every search receives the same
 URL-deduplicated captured discovery set, regardless of wording, and page reads
 return saved material by requested or final URL. An absent URL returns a fixture
@@ -65,7 +71,7 @@ poetry run python -m llm_management.foi.email_finder.capture \
 ```
 
 Optional `--website URL` supplies an initial site; `--model SLUG` selects a capture
-model. The capture uses the configured tool, request, timeout and download limits,
+model, and `--previous-email ADDRESS` requests research for an alternative mailbox. The capture uses the configured tool, request, timeout and download limits,
 public-address transport, robots checks, user agent and host pacing. Existing
 output files are protected before any paid calls. A partial failed run saves its
 available material and exits unsuccessfully.

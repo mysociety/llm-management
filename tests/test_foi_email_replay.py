@@ -22,19 +22,26 @@ from llm_management.web.pages import PageReader
 from llm_management.web.search import TavilySearch
 from tests.foi_email_evaluation import (
     EvaluationCase,
+    EvaluationSelection,
     ModelOnlyTransport,
     assert_finding_matches,
+    evaluation_selections,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "foi_email"
-CASE_IDS = ["croydon", "abbey_lane_primary", "aria", "east_dunbartonshire"]
+SELECTIONS = evaluation_selections(FIXTURES)
 
 
-@pytest.mark.parametrize("case_id", CASE_IDS)
+@pytest.mark.parametrize(
+    "selection", SELECTIONS, ids=lambda item: f"{item.case_id}-{item.variant_id}"
+)
 def test_recorded_tools_use_the_normal_agent_without_live_fetches(
-    case_id: str, monkeypatch: pytest.MonkeyPatch
+    selection: EvaluationSelection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    case = EvaluationCase.load(FIXTURES / case_id)
+    case = EvaluationCase.load(FIXTURES / selection.case_id)
+    variant = case.variant(selection.variant_id)
+    authority = case.capture.authority.model_copy(deep=True)
+    authority.previous_email = variant.previous_email
     replay = ReplayResearch(case.capture)
     network = AsyncMock(side_effect=AssertionError("Replay accessed the network"))
     monkeypatch.setattr(httpx2.AsyncClient, "send", network)
@@ -53,7 +60,7 @@ def test_recorded_tools_use_the_normal_agent_without_live_fetches(
                         {"query": "A differently phrased authority search"},
                     ),
                     ToolCallPart(
-                        "read_page", {"url": str(case.expected.evidence_urls[0])}
+                        "read_page", {"url": str(variant.expected.evidence_urls[0])}
                     ),
                 ]
             )
@@ -69,18 +76,19 @@ def test_recorded_tools_use_the_normal_agent_without_live_fetches(
 
     result = asyncio.run(
         find_foi_email(
-            case.capture.authority,
+            authority,
             model=FunctionModel(respond),
             reader=replay,
             search_provider=replay,
         )
     )
-    assert_finding_matches(result, case.expected)
+    assert_finding_matches(result, variant.expected)
+    assert result.matches_previous_email is variant.matches_previous_email
     assert result.usage.search.provider == "replay"
     assert result.usage.search.requests == 1
     assert result.usage.search.credits == 0
     assert replay.trace.queries == ["A differently phrased authority search"]
-    assert replay.trace.page_urls == [case.expected.evidence_urls[0]]
+    assert replay.trace.page_urls == [variant.expected.evidence_urls[0]]
     network.assert_not_called()
 
 
@@ -150,3 +158,59 @@ def test_capture_cli_protects_existing_fixtures_before_making_paid_calls(
     assert result.exit_code != 0
     assert existing.read_text() == "preserved capture"
     live.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "previous_email,expected_match",
+    [
+        (None, None),
+        ("EIR@aria.org.uk", True),
+        ("eir@ARIA.ORG.UK", True),
+        ("e.ir@aria.org.uk", False),
+        ("EIR+requests@aria.org.uk", False),
+        ("old@aria.org.uk", False),
+    ],
+)
+def test_previous_email_comparison_is_computed_from_validated_addresses(
+    previous_email: str | None, expected_match: bool | None
+) -> None:
+    from llm_management.foi.email_finder.schemas import FOIResult, PublicAuthority
+
+    case = EvaluationCase.load(FIXTURES / "aria")
+    assert case.capture.result is not None
+    result = case.capture.result.model_copy(deep=True)
+    result.authority = PublicAuthority(name="ARIA", previous_email=previous_email)
+    assert result.matches_previous_email is expected_match
+    payload = result.model_dump(mode="json")
+    assert payload["matches_previous_email"] is expected_match
+    payload["matches_previous_email"] = "an untrusted supplied flag"
+    assert FOIResult.model_validate(payload).matches_previous_email is expected_match
+
+
+@pytest.mark.parametrize("status", ["form_only", "not_found"])
+def test_previous_email_comparison_is_null_without_a_returned_email(
+    status: str,
+) -> None:
+    from llm_management.foi.email_finder.schemas import FOIFinding, PublicAuthority
+
+    case = EvaluationCase.load(FIXTURES / "aria")
+    assert case.capture.result is not None
+    result = case.capture.result.model_copy(deep=True)
+    result.authority = PublicAuthority(name="ARIA", previous_email="EIR@aria.org.uk")
+    result.finding = FOIFinding.model_validate(
+        {
+            "status": status,
+            "request_form_url": "https://aria.org.uk/contact"
+            if status == "form_only"
+            else None,
+            "evidence": {
+                "source_url": "https://aria.org.uk/contact",
+                "quote": "Use this form",
+            }
+            if status == "form_only"
+            else None,
+            "explanation": "No email returned",
+        }
+    )
+    assert result.matches_previous_email is None
+    assert result.model_dump(mode="json")["matches_previous_email"] is None

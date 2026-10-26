@@ -9,5 +9,24 @@
     "https://aria.org.uk/contact"
   ],
   "review_notes": "The saved official contact page explicitly says ARIA is not subject to the Freedom of Information Act 2000 and gives EIR@aria.org.uk under its Environmental Information Regulations instructions. Other mailboxes on the page serve unrelated purposes.",
-  "request_form_urls": []
+  "request_form_urls": [],
+  "variants": [
+    {
+      "id": "previous_email_still_published",
+      "previous_email": "eir@ARIA.ORG.UK",
+      "expected": {
+        "status": "found",
+        "email_type": "eir_only",
+        "emails": [
+          "EIR@aria.org.uk"
+        ],
+        "evidence_urls": [
+          "https://aria.org.uk/contact"
+        ],
+        "review_notes": "The supplied previous mailbox matches the published EIR route despite case differences. Other captured mailboxes are for complaints, press, funding questions, data protection or whistleblowing, so none is an appropriate evidenced replacement. Preserve the EIR-only scope and explain that no alternative was established.",
+        "request_form_urls": []
+      },
+      "matches_previous_email": true
+    }
+  ]
 }
