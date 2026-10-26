@@ -12,6 +12,7 @@ import tomllib
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from ..settings import settings
+from .api_config import APIDeployments, EmailFinderConfig
 from .config import (
     ComputeDeploymentConfig,
     DeploymentConfig,
@@ -194,8 +195,10 @@ class DeploymentCatalog(CatalogModel):
     model: dict[str, ModelCheckpoint] = Field(default_factory=dict)
     exoscale: ExoscaleDeployments = Field(default_factory=ExoscaleDeployments)
     local: LocalDeployments = Field(default_factory=LocalDeployments)
+    api: APIDeployments = Field(default_factory=APIDeployments)
     deployment_group: list[DeploymentGroupConfig] = Field(default_factory=list)
     foi: FOIPipeline | None = None
+    foi_email_finder: EmailFinderConfig | None = None
     sar: BinaryCascadePipeline | None = None
     automatic: BinaryCascadePipeline | None = None
     sanitization: SanitizationConfig | None = None
@@ -234,6 +237,14 @@ class DeploymentCatalog(CatalogModel):
 
     @model_validator(mode="after")
     def validate_references(self) -> Self:
+        """
+        Check that configuration references resolve to compatible resources.
+
+        Require unique deployment and group names, valid model and group member
+        references, and correctly typed pipeline bindings. Paired resources must
+        share checkpoints where the pipeline requires it. Validation does not
+        load models, provision compute, or contact external providers.
+        """
         remote_names = [d.slug for d in self.exoscale.deployment]
         local_names = [d.slug for d in self.local.deployment]
         if len(set(remote_names)) != len(remote_names) or len(set(local_names)) != len(
@@ -244,6 +255,13 @@ class DeploymentCatalog(CatalogModel):
             raise ValueError(
                 "Remote deployments and local resources must have distinct names"
             )
+        api_names = [d.slug for d in [*self.api.deployment, *self.api.search]]
+        if (set(remote_names) | set(local_names)) & set(api_names):
+            raise ValueError(
+                "API, remote and local deployments must have distinct names"
+            )
+        if any(name.startswith("group_") for name in api_names):
+            raise ValueError("The group_ prefix is reserved for deployment groups")
         for deployment in [*self.exoscale.deployment, *self.local.deployment]:
             ref = getattr(deployment, "model_ref", None)
             if ref is not None:
@@ -315,6 +333,10 @@ class DeploymentCatalog(CatalogModel):
                     raise ValueError(
                         "Topic deployment and tokenizer must share a checkpoint"
                     )
+            if self.foi_email_finder:
+                self.api.get(self.foi_email_finder.deployment)
+                if self.foi_email_finder.search:
+                    self.api.get_search(self.foi_email_finder.search)
             if self.sanitization:
                 self.local.get(self.sanitization.deployment, PresidioDeployment)
             if self.automatic:

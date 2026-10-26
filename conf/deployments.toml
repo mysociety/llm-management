@@ -241,3 +241,26 @@ deployments = ["presidio", "foi_status_tokenizer", "foi_status"]
 slug = "foi_status_tokenizer"
 loader = "response_tokenizer"
 model_ref = "foi_status"
+
+
+# External API services have server-owned credential references, no VM lifecycle.
+[api.service.openai]
+provider = "openai"
+protocol = "responses"
+credential = "openai"
+
+[api.service.tavily]
+provider = "tavily"
+credential = "tavily"
+
+[[api.deployment]]
+slug = "gpt_6_1_low"
+service = "openai"
+model = "gpt-6.1-sol"
+# GPT-6.1 does not support "none"; "low" is its lowest reasoning effort.
+reasoning_effort = "low"
+max_tokens = 4096
+
+[[api.search]]
+slug = "tavily_search"
+service = "tavily"

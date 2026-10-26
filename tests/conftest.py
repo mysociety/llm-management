@@ -1,9 +1,15 @@
 """Unit tests use deterministic recognizers without downloading NLP weights."""
 
+from __future__ import annotations
+
 import re
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from llm_management.deployments.catalog import DeploymentCatalog
 
 
 class FakeAnalyzer:
@@ -43,3 +49,33 @@ def isolated_application(monkeypatch, request):
     monkeypatch.setattr(server, "app", server.create_app())
     sanitizer = server.app.state.application.sanitizer()
     monkeypatch.setattr(sanitizer, "_analyzer", FakeAnalyzer())
+
+
+@pytest.fixture
+def api_catalog() -> DeploymentCatalog:
+    """
+    Small API catalog independent of operational provider/model choices.
+    """
+    from llm_management.deployments.catalog import DeploymentCatalog
+
+    return DeploymentCatalog.model_validate(
+        {
+            "api": {
+                "service": {
+                    "openai": {"provider": "openai", "credential": "openai"},
+                    "tavily": {"provider": "tavily", "credential": "tavily"},
+                },
+                "deployment": [
+                    {
+                        "slug": "research_test",
+                        "service": "openai",
+                        "model": "gpt-6.1-sol",
+                        "reasoning_effort": "low",
+                        "max_tokens": 1536,
+                    }
+                ],
+                "search": [{"slug": "web_test", "service": "tavily"}],
+            },
+            "foi_email_finder": {"deployment": "research_test", "search": "web_test"},
+        }
+    )
