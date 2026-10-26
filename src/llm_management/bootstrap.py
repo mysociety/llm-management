@@ -15,8 +15,10 @@ from pydantic import BaseModel, ConfigDict
 from .deployments.cache import DeploymentCache
 from .deployments.catalog import DeploymentCatalog, LocalDeploymentConfig, get_catalog
 from .deployments.service import DeploymentService
+from .foi.email_finder.service import FOIFinder
 from .inference.resources import LocalResource, ResourceRegistry
 from .settings import settings
+from .web.crawl import CrawlPolicy
 
 if TYPE_CHECKING:
     from .automatic.pipeline import AutomaticClassifier
@@ -131,6 +133,8 @@ class Application(BaseModel):
     foi: FOIResources
     sar: SARClassifier
     automatic: AutomaticClassifier
+    crawl_policy: CrawlPolicy
+    foi_finder: FOIFinder
 
 
 def response_tokenizer_slug(catalog: DeploymentCatalog) -> str:
@@ -236,8 +240,15 @@ def assemble_application(
             "PresidioSanitizer": PresidioSanitizer,
         }
     )
+    crawl_policy = CrawlPolicy()
     return Application(
-        deployments=service, sanitizer=sanitizer, foi=foi, sar=sar, automatic=automatic
+        deployments=service,
+        sanitizer=sanitizer,
+        foi=foi,
+        sar=sar,
+        automatic=automatic,
+        crawl_policy=crawl_policy,
+        foi_finder=FOIFinder(settings, catalog, crawl_policy=crawl_policy),
     )
 
 

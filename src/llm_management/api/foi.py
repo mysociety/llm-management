@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from fastapi import APIRouter, HTTPException
 
 from ..foi import backends, pipeline, response_analysis
+from ..foi.email_finder.schemas import FOIResult, PublicAuthority
+from ..foi.email_finder.service import FinderInputError
 from ..foi.response_schemas import ExtractionOutput, ResponseAnalysisInput
 from ..foi.schemas import (
     ExtractionBackend,
@@ -18,7 +20,8 @@ from ..foi.schemas import (
     QuestionSliceResult,
 )
 from ..inference.errors import ClassifierBusy
-from .dependencies import FOIResourcesDependency, ServiceDependency
+from ..inference.external import ExternalFailure, ExternalUnavailable
+from .dependencies import DependencyFOIFinder, FOIResourcesDependency, ServiceDependency
 
 router = APIRouter(tags=["FOI endpoints"])
 
@@ -123,3 +126,26 @@ async def foi_response_status_endpoint(
         return await response_analysis.analyze_response(
             body, deployments=foi_deployments(service), resources=resources
         )
+
+
+@router.post("/endpoint/foi/find_email", summary="Find a public authority's FOI email")
+async def find_foi_email_endpoint(
+    body: PublicAuthority,
+    finder: DependencyFOIFinder,
+) -> FOIResult:
+    """Research published FOI contact details using external model/search APIs.
+
+    Supply only public authority details; context must contain public information.
+    Returns evidence and a research trail. A not_found result is inconclusive.
+    No managed deployment or model warm-up is needed.
+    """
+    try:
+        return await finder.find(body)
+    except ExternalUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ExternalFailure as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="FOI research timed out") from exc
+    except FinderInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

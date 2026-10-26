@@ -111,3 +111,12 @@ def test_http_dependencies_use_the_serving_application(monkeypatch):
     assert calls[1].await_count == 3
     for client in clients:
         client.close()
+
+
+def test_application_owns_shared_crawl_policy(api_catalog: DeploymentCatalog) -> None:
+    first = assemble_application(api_catalog)
+    second = assemble_application(api_catalog)
+
+    assert first.foi_finder.crawl_policy is first.crawl_policy
+    assert second.foi_finder.crawl_policy is second.crawl_policy
+    assert first.crawl_policy is not second.crawl_policy

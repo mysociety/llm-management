@@ -26,6 +26,8 @@ typer = "^0.24.1"
 pydantic-store = "^0.1.0"
 exoscale = "^0.16.3"
 pydantic-settings = "^2.13.1"
+# Validate published contact addresses in FOI finder outputs.
+email-validator = "^2.3.0"
 fastapi = "^0.135.3"
 uvicorn = "^0.44.0"
 # Starlette's TestClient still uses httpx internally.

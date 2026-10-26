@@ -224,3 +224,58 @@ def test_api_slugs_cannot_overlap_local_resources(
     with pytest.raises(ValidationError, match="distinct names"):
         DeploymentCatalog.model_validate(data)
 
+
+@pytest.mark.parametrize("protocol", ["responses", "chat"])
+@pytest.mark.parametrize("reasoning_effort", ["none", "minimal"])
+def test_model_settings_are_validated_by_provider(
+    api_catalog: DeploymentCatalog, protocol: str, reasoning_effort: str
+) -> None:
+    import json
+
+    from llm_management.foi.email_finder.schemas import PublicAuthority
+    from llm_management.foi.email_finder.service import find_foi_email
+    from llm_management.inference.external import ExternalFailure
+    from llm_management.web.pages import PageReader
+
+    data = api_catalog.model_dump(mode="json")
+    data["api"]["service"]["openai"]["protocol"] = protocol
+    data["api"]["deployment"][0]["reasoning_effort"] = reasoning_effort
+    catalog = DeploymentCatalog.model_validate(data)
+    deployment = catalog.api.deployment[0]
+    service = catalog.api.model_service(deployment.service)
+    seen: list[httpx2.Request] = []
+
+    def reject(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        payload = json.loads(request.content)
+        assert request.url.path == (
+            "/v1/responses" if protocol == "responses" else "/v1/chat/completions"
+        )
+        effort = (
+            payload["reasoning"]["effort"]
+            if protocol == "responses"
+            else payload["reasoning_effort"]
+        )
+        assert effort == reasoning_effort
+        return httpx2.Response(
+            400,
+            json={"error": {"message": "Unsupported model settings: secret-value"}},
+        )
+
+    async def run() -> None:
+        async with httpx2.AsyncClient(
+            transport=httpx2.MockTransport(reject), trust_env=False
+        ) as client:
+            model = build_model(deployment, service, api_key="test", client=client)
+            with pytest.raises(ExternalFailure) as error:
+                await find_foi_email(
+                    PublicAuthority(
+                        name="Council", website=HttpUrl("https://council.example")
+                    ),
+                    model=model,
+                    reader=PageReader(client),
+                )
+            assert "secret-value" not in str(error.value)
+
+    asyncio.run(run())
+    assert len(seen) == 1
