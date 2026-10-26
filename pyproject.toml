@@ -67,7 +67,8 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.pytest.ini_options]
 markers = [
-    "external: tests that create or connect to external Exoscale deployments",
+    "external: tests that call paid APIs or external compute services",
+    "model_eval: paid model evaluations using frozen research fixtures",
 ]
 
 [tool.pyright]

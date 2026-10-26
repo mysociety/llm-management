@@ -885,3 +885,29 @@ and manual invalidation. Neither persistence nor automatic vendor failover is
 introduced here: both need explicit freshness and data-sharing decisions.
 Provider abstractions follow the existing
 [Pydantic AI model/provider separation](https://ai.pydantic.dev/models/overview/).
+
+
+### Model evaluations with frozen research
+
+The opt-in `model_eval` suite runs the normal finder agent with replayed search
+and page dependencies. Only the chosen model API is live; it never scrapes an
+authority website or calls Tavily. This permits comparison of deployment slugs
+against the same reviewed research material:
+
+```bash
+script/test --all -m model_eval tests/test_foi_email_models.py --foi-model gpt_6_1_low
+```
+
+Repeat `--foi-model` to compare models. Ordinary `script/test` excludes these paid
+cases. Complete result, usage and replay diagnostics are saved under
+`.state/foi-email-evaluations/`. Captures and reviewed expectations cover Croydon,
+Abbey Lane Primary School in Sheffield, ARIA and East Dunbartonshire. The Croydon
+snapshot supports a general contact fallback, despite no dedicated FOI mailbox
+being established.
+
+Live capture is a separate explicit function, `capture_authority`, also available
+through `python -m llm_management.foi.email_finder.capture`. It preserves extracted
+page contents, discovery results and operational gaps for future reviewed cases.
+Tests never refresh captures or fetch missing URLs. See the
+[fixture guide](../tests/fixtures/foi_email/README.md) for capture commands,
+expectation review, network isolation and report interpretation.
