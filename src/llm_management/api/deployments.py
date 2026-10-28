@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from ..deployments.types import GroupActionOutcome
 from ..inference.resources import ResourceStatus
-from .dependencies import ServiceDependency
+from .dependencies import DependencyService
 
 
 class DeploymentStatusResponse(BaseModel):
@@ -79,7 +79,7 @@ router = APIRouter(tags=["Deployments"])
 
 @router.get("/deployments/{slug}/status")
 def deployment_status(
-    service: ServiceDependency, slug: str
+    service: DependencyService, slug: str
 ) -> DeploymentStatusResponse:
     """Check whether a specific deployment exists on Exoscale and return
     its current replica count.
@@ -93,7 +93,7 @@ def deployment_status(
 
 @router.post("/deployments/{slug}/warm-up")
 async def warm_up_deployment(
-    service: ServiceDependency,
+    service: DependencyService,
     slug: str,
     replicas: Annotated[int | None, Query(ge=1)] = None,
 ) -> WarmUpResponse | GroupWarmUpResponse:
@@ -116,7 +116,7 @@ async def warm_up_deployment(
 
 @router.post("/deployments/{slug}/scale-to-zero")
 async def scale_to_zero(
-    service: ServiceDependency, slug: str
+    service: DependencyService, slug: str
 ) -> ScaleToZeroResponse | GroupActionOutcome:
     """
     Stop one resource or every member of a group_ prefixed group.
@@ -129,7 +129,7 @@ async def scale_to_zero(
 
 @router.post("/deployments/{slug}/cool-down")
 async def cool_down_deployment(
-    service: ServiceDependency, slug: str
+    service: DependencyService, slug: str
 ) -> CoolDownResponse | GroupActionOutcome:
     """
     Shorten idle timers for one resource or a group_ prefixed group.
@@ -146,7 +146,7 @@ async def cool_down_deployment(
 
 
 @router.get("/deployments")
-def all_deployments_overview(service: ServiceDependency) -> AllDeploymentsResponse:
+def all_deployments_overview(service: DependencyService) -> AllDeploymentsResponse:
     """Return the current status of every configured deployment, including
     how long each has been idle and how many seconds remain before it
     will be automatically scaled to zero.
@@ -177,7 +177,7 @@ def all_deployments_overview(service: ServiceDependency) -> AllDeploymentsRespon
 
 
 @router.get("/local-deployments")
-async def local_deployment_status(service: ServiceDependency) -> list[ResourceStatus]:
+async def local_deployment_status(service: DependencyService) -> list[ResourceStatus]:
     """
     CPU readiness and idle timers in this API worker.
     """

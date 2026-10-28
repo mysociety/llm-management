@@ -23,7 +23,7 @@ from ..agents.immigration_detection import (
     immigration_decision_agent,
     immigration_detection_agent,
 )
-from .dependencies import ServiceDependency
+from .dependencies import DependencyService
 
 
 class CapitalCityRequest(BaseModel):
@@ -42,7 +42,7 @@ router = APIRouter()
 
 
 async def chat_model_from_slug(
-    slug: str, service: ServiceDependency
+    slug: str, service: DependencyService
 ) -> OpenAIChatModel:
     """
     Return an OpenAI-compatible chat model backed by the given deployment.
@@ -65,7 +65,7 @@ async def chat_model_from_slug(
 
 @router.post("/endpoint/misc/capital_city", tags=["Misc endpoints"])
 async def capital_city_endpoint(
-    service: ServiceDependency, body: CapitalCityRequest, deployment: str = "olmo3_7b"
+    service: DependencyService, body: CapitalCityRequest, deployment: str = "olmo3_7b"
 ) -> CapitalCityResponse:
     """
     Example agent endpoint. Takes a country name and returns its capital
@@ -78,7 +78,7 @@ async def capital_city_endpoint(
 
 @router.post("/endpoint/foi/immigration_detection", include_in_schema=False)
 async def immigration_detection_endpoint(
-    service: ServiceDependency,
+    service: DependencyService,
     body: FOIRequestContainer,
     deployment: str = "toast_llama",
 ) -> ClassificationResponse:
@@ -93,7 +93,7 @@ async def immigration_detection_endpoint(
 
 @router.post("/endpoint/foi/immigration_detection/clef", include_in_schema=False)
 async def clef_immigration_detection_endpoint(
-    service: ServiceDependency,
+    service: DependencyService,
     body: ClefImmigrationRequest,
     deployment: str = "clef",
 ) -> ClassificationResponse:

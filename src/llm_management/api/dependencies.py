@@ -16,35 +16,35 @@ async def get_application(request: Request) -> Application:
     return request.app.state.application
 
 
-ApplicationDependency = Annotated[Application, Depends(get_application)]
+DependencyApplication = Annotated[Application, Depends(get_application)]
 
 
-async def get_service(application: ApplicationDependency) -> DeploymentService:
+async def get_service(application: DependencyApplication) -> DeploymentService:
     return application.deployments
 
 
-async def get_foi_resources(application: ApplicationDependency) -> FOIResources:
+async def get_foi_resources(application: DependencyApplication) -> FOIResources:
     return application.foi
 
 
-async def get_foi_finder(application: ApplicationDependency) -> FOIFinder:
+async def get_foi_finder(application: DependencyApplication) -> FOIFinder:
     return application.foi_finder
 
 
-async def get_sar_classifier(application: ApplicationDependency) -> SARClassifier:
+async def get_sar_classifier(application: DependencyApplication) -> SARClassifier:
     return application.sar
 
 
 async def get_automatic_classifier(
-    application: ApplicationDependency,
+    application: DependencyApplication,
 ) -> AutomaticClassifier:
     return application.automatic
 
 
-ServiceDependency = Annotated[DeploymentService, Depends(get_service)]
-FOIResourcesDependency = Annotated[FOIResources, Depends(get_foi_resources)]
+DependencyService = Annotated[DeploymentService, Depends(get_service)]
+DependencyFOIResources = Annotated[FOIResources, Depends(get_foi_resources)]
 DependencyFOIFinder = Annotated[FOIFinder, Depends(get_foi_finder)]
-SARClassifierDependency = Annotated[SARClassifier, Depends(get_sar_classifier)]
-AutomaticClassifierDependency = Annotated[
+DependencySARClassifier = Annotated[SARClassifier, Depends(get_sar_classifier)]
+DependencyAutomaticClassifier = Annotated[
     AutomaticClassifier, Depends(get_automatic_classifier)
 ]

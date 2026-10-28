@@ -8,7 +8,7 @@ import httpx2
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from ..settings import settings
-from .dependencies import ServiceDependency
+from .dependencies import DependencyService
 
 router = APIRouter(tags=["Inference proxy"])
 
@@ -18,7 +18,7 @@ router = APIRouter(tags=["Inference proxy"])
     methods=["POST"],
 )
 async def proxy_to_deployment(
-    service: ServiceDependency, slug: str, path: str, request: Request
+    service: DependencyService, slug: str, path: str, request: Request
 ) -> Response:
     """
     Forward any request under /deployments/{slug}/v1/... to the
