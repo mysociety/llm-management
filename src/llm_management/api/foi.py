@@ -21,12 +21,12 @@ from ..foi.schemas import (
 )
 from ..inference.errors import ClassifierBusy
 from ..inference.external import ExternalFailure, ExternalUnavailable
-from .dependencies import DependencyFOIFinder, FOIResourcesDependency, ServiceDependency
+from .dependencies import DependencyFOIFinder, DependencyFOIResources, DependencyService
 
 router = APIRouter(tags=["FOI endpoints"])
 
 
-def foi_deployments(service: ServiceDependency) -> backends.DeploymentAccess:
+def foi_deployments(service: DependencyService) -> backends.DeploymentAccess:
     """
     Bind the shared deployment lifecycle to the HTTP-independent FOI pipeline.
     """
@@ -59,8 +59,8 @@ def foi_http_errors() -> Iterator[None]:
     summary="Extract question structure (debugging)",
 )
 async def question_slice_endpoint(
-    service: ServiceDependency,
-    resources: FOIResourcesDependency,
+    service: DependencyService,
+    resources: DependencyFOIResources,
     body: QuestionSliceRequest,
     backend: ExtractionBackend = "cpu",
 ) -> QuestionSliceResult:
@@ -83,8 +83,8 @@ async def question_slice_endpoint(
 
 @router.post("/endpoint/foi/extract_questions", summary="Extract questions")
 async def information_request_endpoint(
-    service: ServiceDependency,
-    resources: FOIResourcesDependency,
+    service: DependencyService,
+    resources: DependencyFOIResources,
     body: QuestionSliceRequest,
     backend: ExtractionBackend = "cpu",
 ) -> ExtractQuestionsResponse:
@@ -112,8 +112,8 @@ async def information_request_endpoint(
     summary="Response status",
 )
 async def foi_response_status_endpoint(
-    service: ServiceDependency,
-    resources: FOIResourcesDependency,
+    service: DependencyService,
+    resources: DependencyFOIResources,
     body: ResponseAnalysisInput,
 ) -> ExtractionOutput:
     """
