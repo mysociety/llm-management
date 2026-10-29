@@ -5,9 +5,9 @@ Ten copied validation examples for an agent testing the application API: five ra
 ## How to run and compare
 
 - Use the app’s base URL and configured authentication, with `Content-Type: application/json`. Send only the **Input** JSON block for each case; case metadata is not part of the HTTP body.
-- For R1–R5, POST to `/endpoint/foi/extract_questions/extract?backend=cpu` (or `backend=exoscale` for remote extraction). To test extraction plus topic classification, send the same body to `/endpoint/foi/extract_questions?backend=cpu` (or `backend=exoscale`) and also compare the **Expected full-endpoint fields** block for that case. That block shows the merged public question fields and request topics. It is not another input payload.
+- For R1–R5, POST to `/endpoint/foi/extract_questions/extract?backend=cpu` (or `backend=exoscale` for remote extraction). To test extraction plus topic classification, send the same body to `/endpoint/foi/extract_questions?backend=cpu` (or `backend=exoscale`) and also compare the **Expected full-endpoint fields** block for that case. That block shows the merged public question fields. It is not another input payload.
 - For S1–S5, POST to `/endpoint/foi/response_status`. Each input already includes its own gold request context; do not replace it with R1–R5 or with fresh model predictions when testing response analysis in isolation.
-- Require HTTP 200, then compare parsed JSON. R1–R5 expectations are a subset of the full response: compare `questions`, `extraction_status` and `additional_text`, retaining question order and IDs. For the full `/endpoint/foi/extract_questions` endpoint, compare each question’s `regime` and `topic` against the full-endpoint block, and compare top-level `request_topics`. Ignore other diagnostic/provenance fields. S1–S5 expectations are the complete public output, including `process_states: null`.
+- Require HTTP 200, then compare parsed JSON. R1–R5 expectations are a subset of the full response: compare `questions`, `extraction_status` and `additional_text`, retaining question order and IDs. For the full `/endpoint/foi/extract_questions` endpoint, compare each question’s `regime` and `topic` against the full-endpoint block. Question categories are enriched separately and are not part of these gold labels. Ignore other diagnostic/provenance fields. S1–S5 expectations are the complete public output, including `process_states: null`.
 - Start with exact field comparisons; report whitespace-only text differences separately from changed wording, missing content or different question grouping. JSON object key order does not matter. For response semantic comparison, outcomes/events may be matched by their full contents irrespective of array order; retain scope IDs, acts, visibility, source references and legal references, and reject missing or extra items.
 - For topic classification, require exact question IDs, order and regimes. Record exact topic-string matches against the dataset separately from semantically equivalent wording; changed subject matter is a semantic mismatch. If extracted question text or grouping differs, flag the extraction mismatch first because classification depends on those questions.
 - JSON `\n` escapes represent the original newlines: parse the JSON once and send the resulting strings without rewriting bullets, line breaks, placeholders or relative dates.
@@ -98,11 +98,6 @@ Source: companion topic split line 1, `completion[0].content`. Question text and
   "extraction_status": "questions_found",
   "additional_text": [
     "I am writing to request some information about how public funds are allocated and managed in our region, particularly regarding transport and policing."
-  ],
-  "request_topics": [
-    "regional transport budget allocation by public transport mode",
-    "highway maintenance budgets and expenditure by local authority district",
-    "police stop and search legal requirements"
   ]
 }
 ```
@@ -163,9 +158,6 @@ Source: companion topic split line 3, `completion[0].content`. Question text and
     "This request is made under the relevant provisions for access to recorded information held by public authorities.",
     "Requester: <PERSON>.",
     "Email: <EMAIL_ADDRESS>."
-  ],
-  "request_topics": [
-    "planning application statistics"
   ]
 }
 ```
@@ -222,9 +214,6 @@ Source: companion topic split line 6, `completion[0].content`. Question text and
   "additional_text": [
     "Focus on sites that currently measure PM2.5, NO2, O3, SO2, and CO in line with UK-adopted EU directives.",
     "Specify whether each site is urban, rural, or roadside."
-  ],
-  "request_topics": [
-    "national air quality monitoring network sites"
   ]
 }
 ```
@@ -283,9 +272,6 @@ Source: companion topic split line 14, `completion[0].content`. Question text an
     "I am writing to request copies of all correspondence between myself and my allocated social care support worker.",
     "This request is from <PERSON>.",
     "Replies can be sent to <EMAIL_ADDRESS>."
-  ],
-  "request_topics": [
-    "communications with allocated social care support worker"
   ]
 }
 ```
@@ -362,10 +348,6 @@ Source: companion topic split line 17, `completion[0].content`. Question text an
     "My postal address is <ADDRESS>.",
     "Telephone: <PHONE_NUMBER>.",
     "Thanks for your help."
-  ],
-  "request_topics": [
-    "care plan review records",
-    "preliminary land contamination reports for development sites"
   ]
 }
 ```
