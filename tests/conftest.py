@@ -52,6 +52,14 @@ def isolated_application(monkeypatch, request):
 
 
 @pytest.fixture
+def foi_resources():
+    """Explicit FOI providers with the unit-test sanitizer and categories disabled."""
+    from llm_management.bootstrap import default_application
+
+    return default_application().foi.model_copy(update={"category_matcher": None})
+
+
+@pytest.fixture
 def api_catalog() -> DeploymentCatalog:
     """
     Small API catalog independent of operational provider/model choices.

@@ -221,6 +221,7 @@ def test_shipped_foi_group_includes_registered_local_resources():
         "question_extractor_tokenizer",
         "question_slice",
         "foi_topic",
+        "foi_categories_cpu",
     ]
 
 

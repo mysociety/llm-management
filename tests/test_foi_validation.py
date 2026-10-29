@@ -103,7 +103,9 @@ def test_reviewed_r3_reconstruction_passes_and_records_gold_difference():
     assert properties["extraction_match"] == "gold"
 
 
-@pytest.mark.parametrize("change", ["subject", "regime", "question_id", "extra_topic"])
+@pytest.mark.parametrize(
+    "change", ["subject", "regime", "question_id", "extra_question"]
+)
 def test_reviewed_topics_still_reject_unapproved_changes(change):
     """
     Approval of one wording variant does not permit other subjects or contract changes.
@@ -117,7 +119,9 @@ def test_reviewed_topics_still_reject_unapproved_changes(change):
     elif change == "question_id":
         actual.questions[0].question_id = "q9"
     else:
-        actual.request_topics.append("school admissions")
+        actual.questions.append(
+            actual.questions[0].model_copy(update={"question_id": "q99"})
+        )
     with pytest.raises(AssertionError):
         assert_topics_match(
             actual,
