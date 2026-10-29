@@ -33,7 +33,14 @@ def client(monkeypatch):
         AsyncMock(side_effect=AssertionError("Mock started a deployment")),
     )
     resources = server.app.state.application.foi
-    for name in ("classifier", "head", "sanitizer", "tokenizer", "response_tokenizer"):
+    for name in (
+        "classifier",
+        "head",
+        "sanitizer",
+        "tokenizer",
+        "response_tokenizer",
+        "category_matcher",
+    ):
         if hasattr(resources, name):
             monkeypatch.setattr(
                 resources,
@@ -81,12 +88,13 @@ def test_mock_full_result_preserves_gold(client, monkeypatch, example):
     assert response.status_code == 200, response.text
     result = ExtractQuestionsResponse.model_validate(response.json())
     assert ExtractionExpectation.from_result(result) == example.expected
-    assert [q.model_dump(exclude={"text"}) for q in result.questions] == [
+    assert [q.model_dump(exclude={"text", "category"}) for q in result.questions] == [
         q.model_dump() for q in example.classification.questions
     ]
-    assert result.request_topics == example.classification.request_topics
+    assert all(q.category is None for q in result.questions)
     assert result.request_text == example.input.body
     assert result.meta.classification_model == "mock:validation-examples"
+    assert result.meta.category_classification.status == "not_configured"
 
 
 @pytest.mark.parametrize(

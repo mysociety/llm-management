@@ -60,6 +60,9 @@ def register_configured_resources(
     from importlib import import_module
 
     owners = {
+        "foi_category_matcher": FactoryLocation(
+            "foi.category_classification", "category_matcher"
+        ),
         "modernbert_classifier": FactoryLocation("foi.backends", "question_classifier"),
         "modernbert_head": FactoryLocation(
             "foi.backends", "question_classification_head"
@@ -147,6 +150,16 @@ def response_tokenizer_slug(catalog: DeploymentCatalog) -> str:
     return slug
 
 
+def category_matcher_slug(catalog: DeploymentCatalog) -> str:
+    """
+    Resolve the optional category matcher only when its provider is used.
+    """
+    slug = catalog.require_foi().category_matcher
+    if slug is None:
+        raise ValueError("FOI category matcher is not configured")
+    return slug
+
+
 def assemble_application(
     catalog: DeploymentCatalog | None = None,
     registry: ResourceRegistry | None = None,
@@ -166,6 +179,7 @@ def assemble_application(
     from .automatic.pipeline import AutomaticClassifier
     from .automatic.resources import LogisticDetector as AutomaticLogisticDetector
     from .foi.backends import FOIResources, ModernBertClassificationHead
+    from .foi.category_classification import CategoryMatcher
     from .inference.classifiers import (
         AuthenticatedSequenceClassifier,
         LocalSequenceClassifier,
@@ -202,6 +216,15 @@ def assemble_application(
         ),
         response_tokenizer=typed_provider(
             providers, lambda: response_tokenizer_slug(catalog), LocalResource
+        ),
+        category_matcher=(
+            typed_provider(
+                providers,
+                lambda: category_matcher_slug(catalog),
+                CategoryMatcher,
+            )
+            if catalog.foi is not None and catalog.foi.category_matcher is not None
+            else None
         ),
     )
     sar = SARClassifier(

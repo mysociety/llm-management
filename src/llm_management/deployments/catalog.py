@@ -55,6 +55,16 @@ class TopicTokenizerDeployment(LocalModelDeployment):
     max_tokens: int = Field(gt=0)
 
 
+class CategoryMatcherDeployment(LocalModelDeployment):
+    """
+    Data-only category index paired with a pinned local embedding encoder.
+    """
+
+    loader: Literal["foi_category_matcher"]
+    encoder_ref: str = Field(min_length=1)
+    index_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class ResponseTokenizerDeployment(LocalModelDeployment):
     """
     Pinned tokenizer for the trained FOI status chat template.
@@ -96,6 +106,7 @@ LocalDeploymentConfig = Annotated[
     SequenceClassifierDeployment
     | QuestionSliceHeadDeployment
     | TopicTokenizerDeployment
+    | CategoryMatcherDeployment
     | ResponseTokenizerDeployment
     | SARLogisticDeployment
     | SARClassifierDeployment
@@ -168,6 +179,7 @@ class FOIPipeline(CatalogModel):
     tokenizer: str
     extraction_deployment: str
     topic_deployment: str
+    category_matcher: str | None = None
     response_deployment: str | None = Field(
         default=None,
         description="Remote FOI response/status checkpoint paired with its local tokenizer.",
@@ -263,6 +275,11 @@ class DeploymentCatalog(CatalogModel):
         if any(name.startswith("group_") for name in api_names):
             raise ValueError("The group_ prefix is reserved for deployment groups")
         for deployment in [*self.exoscale.deployment, *self.local.deployment]:
+            if isinstance(deployment, CategoryMatcherDeployment):
+                if deployment.encoder_ref not in self.model:
+                    raise ValueError(
+                        f"Unknown encoder reference: {deployment.encoder_ref}"
+                    )
             ref = getattr(deployment, "model_ref", None)
             if ref is not None:
                 if ref not in self.model:
@@ -292,6 +309,8 @@ class DeploymentCatalog(CatalogModel):
                 )
         try:
             if self.foi:
+                if self.foi.category_matcher is not None:
+                    self.local.get(self.foi.category_matcher, CategoryMatcherDeployment)
                 classifier = self.local.get(
                     self.foi.classifier, SequenceClassifierDeployment
                 )

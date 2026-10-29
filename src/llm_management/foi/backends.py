@@ -28,6 +28,7 @@ from ..inference.remote import classify_remote
 from ..inference.resources import LocalResource, ResourceRegistry
 from ..sanitization import PresidioSanitizer, Sanitized, require_sanitized
 from ..settings import settings
+from .category_classification import CategoryMatcher
 from .schemas import UNIT_LABELS, ExtractionBackend
 
 
@@ -303,6 +304,7 @@ class FOIResources(BaseModel):
     head: Callable[[], ModernBertClassificationHead]
     tokenizer: Callable[[], LocalResource[Any]]
     response_tokenizer: Callable[[], LocalResource[Any]] | None = None
+    category_matcher: Callable[[], CategoryMatcher] | None = None
 
 
 class ClassificationRows(NamedTuple):

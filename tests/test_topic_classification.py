@@ -66,6 +66,7 @@ def test_prompt_uses_training_payload_and_exact_chat_tokenization(monkeypatch):
         tokenize=True, add_generation_prompt=True, truncation=False
     )
     assert payload["response_format"]["json_schema"]["strict"] is True
+    assert "category" not in json.dumps(payload["response_format"])
     monkeypatch.setattr(
         foi_topic,
         "question_extractor_tokenizer",
@@ -88,6 +89,7 @@ def test_prompt_uses_training_payload_and_exact_chat_tokenization(monkeypatch):
         "count",
         "ids",
         "duplicate_topics",
+        "generated_category",
         "blank",
         "no_finish_reason",
         "http_error",
@@ -108,6 +110,11 @@ def test_remote_output_validation(monkeypatch, case):
         data["questions"][0]["question_id"] = "q2"
     if case == "duplicate_topics":
         data["request_topics"] = ["Reports", " reports "]
+    if case == "generated_category":
+        data["questions"][0]["category"] = {
+            "category_type": "foi_v1",
+            "category_slug": "air_quality",
+        }
     if case == "blank":
         data["questions"][0]["topic"] = "  "
     content = "not json" if case == "malformed" else json.dumps(data)
@@ -167,7 +174,10 @@ def test_remote_output_validation(monkeypatch, case):
         )
 
     if case == "valid":
-        assert asyncio.run(call()).model_dump() == data
+        output = asyncio.run(call())
+        assert output.model_dump() == {
+            "questions": [{**q, "category": None} for q in data["questions"]]
+        }
     else:
         with pytest.raises(foi_topic.TopicOutputError):
             asyncio.run(call())

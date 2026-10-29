@@ -74,7 +74,6 @@ def test_waiting_topic_model_does_not_block_other_extractions(
             await release.wait()
             return TopicOutput(
                 questions=[{"question_id": "q1", "regime": "FOI", "topic": "Reports"}],
-                request_topics=["Reports"],
             )
 
         monkeypatch.setattr(topic_classification, "classify_topics", classify_topics)

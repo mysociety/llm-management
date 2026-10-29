@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from starlette.testclient import TestClient
@@ -19,6 +19,19 @@ from llm_management.inference.classifiers import (
     ClassifierBusy,
 )
 from llm_management.sanitization import presidio
+
+
+@pytest.fixture(autouse=True)
+def category_inference_offline(monkeypatch):
+    from llm_management.foi.category_classification import CategoryMatcher
+
+    # Route tests inject their own category predictions when needed. Never load
+    # Hub artifacts as a side effect of testing extraction or HTTP errors.
+    monkeypatch.setattr(
+        CategoryMatcher,
+        "predict",
+        Mock(side_effect=RuntimeError("offline test")),
+    )
 
 
 @pytest.fixture
@@ -180,7 +193,6 @@ def extraction(labels=(3,)):
 def topic_data():
     return {
         "questions": [{"question_id": "q1", "regime": "FOI", "topic": "Reports"}],
-        "request_topics": ["Reports"],
     }
 
 
@@ -237,9 +249,10 @@ def test_full_route_merges_questions_and_groups_metadata(pipeline):
     assert response.status_code == 200, response.text
     result = response.json()
     assert [
-        {k: v for k, v in q.items() if k != "text"} for q in result["questions"]
+        {k: v for k, v in q.items() if k not in {"text", "category"}}
+        for q in result["questions"]
     ] == topic_data()["questions"]
-    assert result["request_topics"] == topic_data()["request_topics"]
+    assert "request_topics" not in result
     assert result["questions"][0]["text"] == "Please provide report 0."
     assert result["meta"]["promoted_continuation_index"] == 0
     assert "unit_predictions" not in result
@@ -274,10 +287,98 @@ def test_no_questions_never_starts_topic_model(pipeline):
     )
     assert response.status_code == 200
     assert response.json()["questions"] == []
-    assert response.json()["request_topics"] == []
+    assert "request_topics" not in response.json()
     assert response.json()["meta"]["classification_model"] is None
+    assert (
+        response.json()["meta"]["category_classification"]["status"] == "no_questions"
+    )
     pipeline.ensure.assert_not_called()
     pipeline.classify.assert_not_called()
+
+
+def test_category_results_survive_http_and_response_analysis(pipeline, monkeypatch):
+    from llm_management.foi.category_schemas import QuestionCategory
+    from llm_management.foi.response_schemas import ResponseAnalysisInput
+
+    matcher = server.app.state.application.foi.category_matcher()
+    predict = Mock(
+        side_effect=lambda texts: [
+            QuestionCategory(category_slug="air_quality") for _ in texts
+        ]
+    )
+    monkeypatch.setattr(matcher, "predict", predict)
+    response = pipeline.client.post(
+        "/endpoint/foi/extract_questions", json={"body": "Please provide report 0."}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    result = body["meta"]["category_classification"]
+    assert result["status"] == "completed"
+    assert body["questions"][0]["category"] == {
+        "category_type": "foi_v1",
+        "category_slug": "air_quality",
+    }
+    assert "categories" not in body
+    assert "request_topics" not in body
+    assert result["provenance"]["revision"] == matcher.checkpoint.revision
+    predict.assert_called_once_with(["Reports"])
+    observed = ResponseAnalysisInput.model_validate(
+        {
+            "request": body,
+            "sources": [
+                {
+                    "id": "email1",
+                    "kind": "email",
+                    "role": "current",
+                    "sender": "authority",
+                    "filename": None,
+                    "availability": "visible",
+                    "text": "Report attached.",
+                }
+            ],
+        }
+    ).model_input()
+    assert observed.request.questions[0].question_id == "q1"
+    assert "category" not in observed.model_dump_json()
+
+
+def test_category_failure_keeps_successful_summary(pipeline):
+    response = pipeline.client.post(
+        "/endpoint/foi/extract_questions", json={"body": "Please provide report 0."}
+    )
+    assert response.status_code == 200
+    assert response.json()["meta"]["category_classification"]["status"] == "unavailable"
+    assert response.json()["questions"][0]["topic"] == "Reports"
+    assert response.json()["questions"][0]["category"] is None
+
+
+def test_sar_only_never_calls_category_provider(pipeline, monkeypatch):
+    data = topic_data()
+    data["questions"][0]["regime"] = "SAR"
+    pipeline.classify.return_value = foi_topic.TopicOutput.model_validate(data)
+    provider = Mock(
+        side_effect=AssertionError("SAR must not load the category matcher")
+    )
+    monkeypatch.setattr(server.app.state.application.foi, "category_matcher", provider)
+    response = pipeline.client.post(
+        "/endpoint/foi/extract_questions", json={"body": "Please provide report 0."}
+    )
+    assert response.status_code == 200
+    assert (
+        response.json()["meta"]["category_classification"]["status"] == "not_applicable"
+    )
+    provider.assert_not_called()
+
+
+def test_category_matching_can_be_disabled(pipeline, monkeypatch):
+    monkeypatch.setattr(server.app.state.application.foi, "category_matcher", None)
+    response = pipeline.client.post(
+        "/endpoint/foi/extract_questions", json={"body": "Please provide report 0."}
+    )
+    assert response.status_code == 200
+    assert (
+        response.json()["meta"]["category_classification"]["status"] == "not_configured"
+    )
 
 
 def test_partial_uncertainty_is_retained(pipeline):
@@ -288,9 +389,10 @@ def test_partial_uncertainty_is_retained(pipeline):
     assert result["extraction_status"] == "uncertain"
     assert "orphan_continuation_indices" not in result
     assert [
-        {k: v for k, v in q.items() if k != "text"} for q in result["questions"]
+        {k: v for k, v in q.items() if k not in {"text", "category"}}
+        for q in result["questions"]
     ] == topic_data()["questions"]
-    assert result["request_topics"] == topic_data()["request_topics"]
+    assert "request_topics" not in result
 
 
 def test_base_model_cannot_be_substituted(pipeline):
