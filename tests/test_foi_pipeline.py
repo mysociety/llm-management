@@ -12,7 +12,9 @@ from llm_management.foi.schemas import TopicOutput
 from llm_management.sanitization import presidio
 
 
-def test_pipeline_can_run_without_http_and_skip_empty_classification(monkeypatch):
+def test_pipeline_can_run_without_http_and_skip_empty_classification(
+    monkeypatch, foi_resources
+):
     classify = AsyncMock(
         return_value=ClassificationRows([[1, 0, 0, 0]], "test", "pinned")
     )
@@ -21,15 +23,20 @@ def test_pipeline_can_run_without_http_and_skip_empty_classification(monkeypatch
         Mock(side_effect=AssertionError("No deployment needed")), AsyncMock(), Mock()
     )
     result = asyncio.run(
-        pipeline.process_information_request("Thank you.", deployments=deployments)
+        pipeline.process_information_request(
+            "Thank you.", deployments=deployments, resources=foi_resources
+        )
     )
     assert result.classification is None
     assert result.extraction_status == "no_questions_found"
     assert classify.call_args.kwargs["backend"] == "cpu"
+    assert classify.call_args.kwargs["resources"] is foi_resources
     deployments.ensure_running.assert_not_called()
 
 
-def test_waiting_topic_model_does_not_block_other_extractions(monkeypatch):
+def test_waiting_topic_model_does_not_block_other_extractions(
+    monkeypatch, foi_resources
+):
     calls = 0
 
     async def classify_units(texts, **kwargs):
@@ -43,7 +50,7 @@ def test_waiting_topic_model_does_not_block_other_extractions(monkeypatch):
     monkeypatch.setattr(
         topic_classification,
         "prepare_topic_request",
-        lambda *args: presidio.sanitize_payload({"messages": []}),
+        lambda *args, **kwargs: presidio.sanitize_payload({"messages": []}),
     )
     cfg = SimpleNamespace(
         model=get_catalog().get(get_catalog().require_foi().topic_deployment).model
@@ -73,13 +80,18 @@ def test_waiting_topic_model_does_not_block_other_extractions(monkeypatch):
         monkeypatch.setattr(topic_classification, "classify_topics", classify_topics)
         waiting = asyncio.create_task(
             pipeline.process_information_request(
-                "Please provide reports.", deployments=deployments
+                "Please provide reports.",
+                deployments=deployments,
+                resources=foi_resources,
             )
         )
         try:
             await asyncio.wait_for(entered.wait(), 2)
             other = await asyncio.wait_for(
-                pipeline.extract_questions("Thank you.", deployments=deployments), 2
+                pipeline.extract_questions(
+                    "Thank you.", deployments=deployments, resources=foi_resources
+                ),
+                2,
             )
             assert other.extraction_status == "no_questions_found"
         finally:

@@ -91,14 +91,18 @@ def test_existing_placeholders_and_request_scoped_mapping():
     assert presidio.sanitize_text("Alice Smith").value == "<PERSON_1>"
 
 
-def test_request_model_inputs_clean_results_original(monkeypatch):
+def test_request_model_inputs_clean_results_original(monkeypatch, foi_resources):
     classifier = AsyncMock(
         return_value=ClassificationRows([[0, 0, 1, 0]], "test", "pin")
     )
     monkeypatch.setattr(backends, "classify_question_units", classifier)
     deployments = DeploymentAccess(Mock(), AsyncMock(), Mock())
     original = "Please provide records about Alice Smith at alice@example.org."
-    result = asyncio.run(pipeline.extract_questions(original, deployments=deployments))
+    result = asyncio.run(
+        pipeline.extract_questions(
+            original, deployments=deployments, resources=foi_resources
+        )
+    )
     submitted = require_sanitized(classifier.call_args.args[0])
     assert all(
         "Alice Smith" not in text and "alice@example.org" not in text
@@ -107,7 +111,7 @@ def test_request_model_inputs_clean_results_original(monkeypatch):
     assert result.questions[0].text == original
 
 
-def test_topic_payload_is_sanitized_before_provisioning(monkeypatch):
+def test_topic_payload_is_sanitized_before_provisioning(monkeypatch, foi_resources):
     monkeypatch.setattr(
         backends,
         "classify_question_units",
@@ -115,7 +119,7 @@ def test_topic_payload_is_sanitized_before_provisioning(monkeypatch):
     )
     seen = []
 
-    def prepare(text, questions):
+    def prepare(text, questions, **kwargs):
         seen.extend([text, questions[0].text])
         return presidio.sanitize_payload(
             {"messages": [{"role": "user", "content": text}]}
@@ -139,7 +143,9 @@ def test_topic_payload_is_sanitized_before_provisioning(monkeypatch):
     )
     result = asyncio.run(
         pipeline.process_information_request(
-            "Please provide Alice Smith's records.", deployments=deployments
+            "Please provide Alice Smith's records.",
+            deployments=deployments,
+            resources=foi_resources,
         )
     )
     assert all("Alice Smith" not in value for value in seen)
@@ -149,19 +155,25 @@ def test_topic_payload_is_sanitized_before_provisioning(monkeypatch):
     assert "Alice Smith" in result.request_text
 
 
-def test_sanitizer_failure_prevents_request_and_response_inference(monkeypatch):
+def test_sanitizer_failure_prevents_request_and_response_inference(
+    monkeypatch, foi_resources
+):
+    failure = Mock(side_effect=ClassifierUnavailable("unavailable"))
     monkeypatch.setattr(
         presidio,
         "sanitize_strings",
-        Mock(side_effect=ClassifierUnavailable("unavailable")),
+        failure,
     )
+    monkeypatch.setattr(foi_resources.sanitizer(), "sanitize_strings", failure)
     classify = AsyncMock()
     monkeypatch.setattr(backends, "classify_question_units", classify)
     deployments = DeploymentAccess(Mock(), AsyncMock(), Mock())
     with pytest.raises(pipeline.PipelineUnavailable):
         asyncio.run(
             pipeline.extract_questions(
-                "Please provide records.", deployments=deployments
+                "Please provide records.",
+                deployments=deployments,
+                resources=foi_resources,
             )
         )
     classify.assert_not_called()
