@@ -12,6 +12,14 @@ revision = "c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79"
 repo = "mySociety/foi-status-3b-2026-10-12-1"
 revision = "fde4ea32e68755ef6c08d2bd73cb804c3890b2df"
 
+[model.foi_categories]
+repo = "mySociety/foi-summary-to-topic-2026-10-29-1"
+revision = "a0b5db98996ea90e44ad6bc08d44a88a7fea28bb"
+
+[model.foi_category_encoder]
+repo = "sentence-transformers/all-MiniLM-L6-v2"
+revision = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+
 [model.sar_logistic]
 repo = "mySociety/sar-detect-logistic-2026-10-09-1"
 revision = "ade6333a06995cbde835648d758d8b092900bc52"
@@ -36,6 +44,13 @@ slug = "question_extractor_tokenizer"
 loader = "topic_tokenizer"
 model_ref = "foi_topic"
 max_tokens = 2048
+
+[[local.deployment]]
+slug = "foi_categories_cpu"
+loader = "foi_category_matcher"
+model_ref = "foi_categories"
+encoder_ref = "foi_category_encoder"
+index_sha256 = "6f81d5f8b364b566b7cb5a090028a98d83169b0aa32afd39d4bf4f0d219b18bc"
 
 
 [[local.deployment]]
@@ -62,6 +77,7 @@ head = "question_slice_head_cpu"
 tokenizer = "question_extractor_tokenizer"
 extraction_deployment = "question_slice"
 topic_deployment = "foi_topic"
+category_matcher = "foi_categories_cpu"
 response_deployment = "foi_status"
 response_tokenizer = "foi_status_tokenizer"
 
@@ -192,12 +208,13 @@ deployments = [
     "question_extractor_tokenizer",
     "question_slice",
     "foi_topic",
+    "foi_categories_cpu",
 ]
 
 
 [[deployment_group]]
 slug = "group_foi_pipeline_cpu"
-deployments = ["presidio", "question_slice_cpu", "question_extractor_tokenizer", "foi_topic"]
+deployments = ["presidio", "question_slice_cpu", "question_extractor_tokenizer", "foi_topic", "foi_categories_cpu"]
 
 
 [[deployment_group]]

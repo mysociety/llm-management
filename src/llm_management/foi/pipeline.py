@@ -1,7 +1,7 @@
 """Public async FOI operations, usable from HTTP routes or batch callers.
 
 extract_questions: segmentation -> backend inference -> reconstruction.
-process_information_request: extraction -> bounded topic classification.
+process_information_request: extraction -> topic classification -> category matching.
 Deployment access is injected so this module never imports the HTTP server.
 """
 
@@ -16,8 +16,9 @@ import httpx2
 from ..deployments import TopicTokenizerDeployment
 from ..deployments.errors import LLMManagementError
 from ..inference.errors import ClassifierOutputError, ClassifierUnavailable
-from . import backends, topic_classification
+from . import backends, category_classification, topic_classification
 from .backends import DeploymentAccess
+from .category_schemas import CategoryMetadata
 from .question_slice import build_extraction_result, contextual_inputs, segment_request
 from .sanitization import sanitize_request
 from .schemas import ExtractionBackend, InformationRequestResult, QuestionSliceResult
@@ -153,7 +154,7 @@ async def process_information_request(
     backend: ExtractionBackend = "cpu",
 ) -> InformationRequestResult:
     """
-    Extract questions, then classify their topics and access regimes.
+    Extract questions, classify topics/regimes, then match FOI/EIR categories locally.
 
     Retain original text and extraction diagnostics in the result. Send only the
     sanitized request and questions to the topic model, after checking the
@@ -177,6 +178,8 @@ async def process_information_request(
         classification_model=None,
     )
     if not extraction.questions:
+        # Nothing remains to classify, so skip both topic and category models.
+        result.category_classification = CategoryMetadata(status="no_questions")
         return result
 
     # Build the topic model's chat payload, sanitize the assembled messages and
@@ -243,4 +246,13 @@ async def process_information_request(
         # Refresh the deployment's idle timer even if inference or validation fails.
         deployments.touch(slug)
 
+    # Fill each FOI/EIR question's nullable category using its generated description.
+    # SAR questions stay uncategorized. Shared status/provenance goes into metadata;
+    # failures preserve question descriptions, and an absent provider disables matching.
+    if result.classification is not None and resources.category_matcher is not None:
+        result.category_classification = (
+            await category_classification.classify_categories(
+                result.classification, resources.category_matcher
+            )
+        )
     return result

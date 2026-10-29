@@ -90,7 +90,7 @@ async def information_request_endpoint(
 ) -> ExtractQuestionsResponse:
     """
     Given an FOI request, returns a structured set of questions with
-    FOI/EIR/SAR status and a short description.
+    FOI/EIR/SAR status, short descriptions and local category matches.
 
     Relevant deployment group: `group_foi_pipeline_cpu` for `backend=cpu`
     (the default), or `group_foi_pipeline` for `backend=exoscale`.

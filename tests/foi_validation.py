@@ -19,7 +19,7 @@ from llm_management.foi.examples import (
     ExtractionExpectation,
 )
 from llm_management.foi.response_schemas import ExtractionOutput
-from llm_management.foi.schemas import TopicOutput
+from llm_management.foi.schemas import GeneratedTopicOutput, TopicOutput
 
 
 def post_example(
@@ -117,8 +117,8 @@ def assert_response_matches(
 
 
 def assert_topics_match(
-    actual: TopicOutput,
-    expected: TopicOutput,
+    actual: TopicOutput | GeneratedTopicOutput,
+    expected: GeneratedTopicOutput,
     record_property: Callable[[str, object], None],
     *,
     accepted: list[AcceptedClassification] | None = None,
@@ -132,17 +132,31 @@ def assert_topics_match(
     assert [q.regime for q in actual.questions] == [
         q.regime for q in expected.questions
     ]
-    record_property("exact_topic_match", actual == expected)
+
+    # Category enrichment and legacy request summaries are outside the gold
+    # question-description evaluation; compare IDs, regimes and topics only.
+    def questions(output: TopicOutput | GeneratedTopicOutput) -> list[dict]:
+        return [q.model_dump(exclude={"category"}) for q in output.questions]
+
+    exact = questions(actual) == questions(expected)
+    record_property("exact_topic_match", exact)
     record_property("expected_classification", expected.model_dump_json())
-    alternative = next((item for item in accepted or [] if actual == item.output), None)
+    alternative = next(
+        (
+            item
+            for item in accepted or []
+            if questions(actual) == questions(item.output)
+        ),
+        None,
+    )
     record_property(
         "topic_match",
-        "gold" if actual == expected else "reviewed" if alternative else "unrecognized",
+        "gold" if exact else "reviewed" if alternative else "unrecognized",
     )
     if alternative:
         record_property("topic_review_reason", alternative.reason)
         return
-    assert actual == expected, (
+    assert exact, (
         "Topic wording mismatch; review for equivalent wording versus changed subject matter."
         f"\nExpected: {expected}\nActual: {actual}"
     )
