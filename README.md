@@ -169,7 +169,7 @@ and `/cool-down`; the former `/ensure` and `/cooldown` routes are removed.
 
 | Endpoint | Method | Description | Relevant deployment group |
 |---|---|---|---|
-| `/endpoint/foi/extract_questions` | POST | Given an FOI request, returns a structured set of questions with FOI/EIR/SAR status and a short description | `group_foi_pipeline_cpu` (default CPU extraction), or `group_foi_pipeline` (`backend=exoscale`) |
+| `/endpoint/foi/extract_questions` | POST | Given an FOI request, returns questions with FOI/EIR/SAR status, short descriptions and local predefined category matches | `group_foi_pipeline_cpu` (default CPU extraction), or `group_foi_pipeline` (`backend=exoscale`) |
 | `/endpoint/foi/extract_questions/extract` | POST | Just the question structure, primarily for internal debugging; omits status and topic classification | Same groups as above; these warm the full pipeline |
 | `/endpoint/foi/response_status` | POST | Given a structured set of questions and a structured response document, identifies whether questions were answered or withheld | `group_foi_response_pipeline` |
 | `/endpoint/foi/sar_detection` | POST | Given an FOI request text, indicates whether it is likely to be a SAR, IMM, or other personal information request; `fast=true` uses only logistic inference rather than cascading to the larger model | `group_sar_pipeline_cpu` |
