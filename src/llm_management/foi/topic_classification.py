@@ -23,7 +23,7 @@ from ..inference.resources import LocalResource, ResourceRegistry
 from ..sanitization import Sanitized, presidio, require_sanitized
 from ..sanitization.contracts import ChatSanitizer
 from ..settings import settings
-from .schemas import ReconstructedQuestion, TopicOutput
+from .schemas import GeneratedTopicOutput, ReconstructedQuestion, TopicOutput
 
 if TYPE_CHECKING:
     from transformers import PreTrainedTokenizerBase
@@ -70,7 +70,7 @@ class TopicDependencies(NamedTuple):
 
 topic_agent = Agent(
     deps_type=TopicDependencies,
-    output_type=NativeOutput(TopicOutput, strict=True, template=False),
+    output_type=NativeOutput(GeneratedTopicOutput, strict=True, template=False),
     retries=0,
     model_settings={"timeout": 120},
 )
@@ -83,8 +83,8 @@ def topic_system_prompt(ctx: RunContext[TopicDependencies]) -> str:
 
 @topic_agent.output_validator
 def validate_question_ids(
-    ctx: RunContext[TopicDependencies], output: TopicOutput
-) -> TopicOutput:
+    ctx: RunContext[TopicDependencies], output: GeneratedTopicOutput
+) -> GeneratedTopicOutput:
     """
     Require output question IDs to match the prepared extraction exactly and in order.
     """
@@ -238,7 +238,7 @@ def prepare_topic_request(
     catalog = catalog if catalog is not None else get_catalog()
     sanitizer = sanitizer if sanitizer is not None else presidio
     budget = completion_budget(len(questions), catalog=catalog)
-    schema = TopicOutput.model_json_schema()
+    schema = GeneratedTopicOutput.model_json_schema()
     messages = [
         {
             "role": "system",
@@ -337,4 +337,6 @@ async def classify_topics(
             raise TopicOutputError(
                 "Topic classification failed or returned invalid topic output"
             ) from exc
-        return result.output
+        # The checkpoint still generates request_topics, but the application uses
+        # only question descriptions. Category assignment happens locally afterward.
+        return TopicOutput.from_generated(result.output)

@@ -60,7 +60,6 @@ def test_full_pipeline_validation(client, backend, example, record_property):
         TopicOutput.model_validate(
             {
                 "questions": [q.model_dump(exclude={"text"}) for q in result.questions],
-                "request_topics": result.request_topics,
             }
         ),
         example.classification,
@@ -85,5 +84,4 @@ def test_no_questions_skips_classification(client, backend):
     result = ExtractQuestionsResponse.model_validate(response.json())
     assert result.extraction_status == "no_questions_found"
     assert result.questions == []
-    assert result.request_topics == []
     assert result.meta.classification_model is None
