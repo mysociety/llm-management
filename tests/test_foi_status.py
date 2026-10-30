@@ -92,9 +92,7 @@ def serving(monkeypatch, output):
             ),
         )
     )
-    monkeypatch.setattr(
-        server.app.state.application.deployments, "ensure_running", ensure
-    )
+    monkeypatch.setattr(server.app.state.application.deployments, "prepare", ensure)
     touch = []
     from contextlib import asynccontextmanager
 

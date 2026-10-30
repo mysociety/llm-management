@@ -266,8 +266,8 @@ def test_server_ensure_dispatches_compute_once_and_pauses_by_deletion(
 
     async def run():
         results = await asyncio.gather(
-            server.app.state.application.deployments.ensure_running("clef"),
-            server.app.state.application.deployments.ensure_running("clef"),
+            server.app.state.application.deployments.prepare("clef"),
+            server.app.state.application.deployments.prepare("clef"),
         )
         assert all(result.state.replicas == 1 for result in results)
         assert len(cloud.created) == 1
@@ -352,7 +352,7 @@ def test_cancelled_startup_is_tracked_for_idle_cleanup(monkeypatch):
 
     async def run():
         task = asyncio.create_task(
-            server.app.state.application.deployments.ensure_running("clef")
+            server.app.state.application.deployments.prepare("clef")
         )
         assert await asyncio.to_thread(entered.wait, 5)
         task.cancel()

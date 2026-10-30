@@ -31,7 +31,7 @@ def test_activity_lease_prevents_scaling_and_releases_after_failure():
     async def run():
         with pytest.raises(ValueError, match="caller failed"):
             async with service.use("model"):
-                await service.ensure_running("model")
+                await service.prepare("model")
                 assert service.activity.get("model").requests_in_flight == 1
                 with pytest.raises(DeploymentServiceError) as failure:
                     await service.scale_to_zero("model")

@@ -15,7 +15,7 @@ from llm_management.deployments.types import (
     RunningDeployment,
 )
 from llm_management.foi import backends, pipeline, topic_classification
-from llm_management.foi.backends import ClassificationRows, DeploymentAccess
+from llm_management.foi.backends import ClassificationRows
 from llm_management.foi.schemas import TopicOutput
 
 
@@ -26,9 +26,7 @@ def test_pipeline_can_run_without_http_and_skip_empty_classification(
         return_value=ClassificationRows([[1, 0, 0, 0]], "test", "pinned")
     )
     monkeypatch.setattr(backends, "classify_question_units", classify)
-    deployments = DeploymentAccess(
-        Mock(side_effect=AssertionError("No deployment needed")), AsyncMock(), Mock()
-    )
+    deployments = Mock()
     result = asyncio.run(
         pipeline.process_information_request(
             "Thank you.", deployments=deployments, resources=foi_resources
@@ -38,7 +36,7 @@ def test_pipeline_can_run_without_http_and_skip_empty_classification(
     assert result.extraction_status == "no_questions_found"
     assert classify.call_args.kwargs["backend"] == "cpu"
     assert classify.call_args.kwargs["resources"] is foi_resources
-    deployments.ensure_running.assert_not_called()
+    deployments.use.assert_not_called()
 
 
 def test_waiting_topic_model_does_not_block_other_extractions(

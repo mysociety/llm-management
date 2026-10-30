@@ -123,7 +123,7 @@ def test_compute_rejects_multiple_replicas(monkeypatch):
     )
     with pytest.raises(DeploymentServiceError) as error:
         asyncio.run(
-            server.app.state.application.deployments.ensure_running(
+            server.app.state.application.deployments.prepare(
                 "compute", allow_start=True, replicas=2
             )
         )

@@ -4,8 +4,7 @@ Results of deployment lifecycle operations.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager
 from enum import StrEnum
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
@@ -99,7 +98,7 @@ class DeploymentInference(Protocol):
     The remote operations a feature needs: validate configuration and lease inference.
 
     DeploymentService implements this directly. Features can accept small test doubles
-    or the legacy DeploymentAccess adapter without depending on management or caching.
+    without depending on management or caching.
     """
 
     def get_config(self, slug: str, /) -> DeploymentConfig:
@@ -113,53 +112,6 @@ class DeploymentInference(Protocol):
         Prepare a deployment and protect it until the inference block exits.
         """
         ...
-
-
-class DeploymentConfigLookup(Protocol):
-    """
-    A configuration callback stored as data by the legacy NamedTuple adapter.
-
-    A callable protocol lets type checkers distinguish this field from a method
-    bound to the adapter itself when checking DeploymentInference compatibility.
-    """
-
-    def __call__(self, slug: str, /) -> DeploymentConfig:
-        """
-        Resolve one configured deployment through the supplied callback.
-        """
-        ...
-
-
-class DeploymentAccess(NamedTuple):
-    """
-    Legacy callback adapter implementing the feature inference protocol.
-
-    Retained for callers constructing dependencies from individual functions.
-    Normal application assembly supplies DeploymentService directly.
-    """
-
-    get_config: DeploymentConfigLookup
-    ensure_running: Callable[[str], Awaitable[RunningDeployment]]
-    touch: Callable[[str], None]
-    lease: Callable[[str], AbstractAsyncContextManager[RunningDeployment]] | None = None
-
-    @asynccontextmanager
-    async def use(self, slug: str) -> AsyncGenerator[RunningDeployment, None]:
-        """
-        Hold the supplied application's lease throughout remote inference.
-
-        Older three-callback constructions retain their ensure/touch behaviour.
-        An optional lease callback forwards explicit lifetime protection. New
-        integrations should pass the service directly rather than assembling callbacks.
-        """
-        if self.lease is not None:
-            async with self.lease(slug) as running:
-                yield running
-            return
-        try:
-            yield await self.ensure_running(slug)
-        finally:
-            self.touch(slug)
 
 
 class DeploymentQueryResult(BaseModel):

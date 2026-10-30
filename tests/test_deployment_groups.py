@@ -70,9 +70,7 @@ def test_group_runs_concurrently_and_reports_each_result(monkeypatch, fail):
                 state=DeploymentSnapshot(slug=slug, exists=True, replicas=1),
             )
 
-        monkeypatch.setattr(
-            server.app.state.application.deployments, "ensure_running", ensure
-        )
+        monkeypatch.setattr(server.app.state.application.deployments, "prepare", ensure)
         return await server.app.state.application.deployments.ensure_group(
             "group_foi_pipeline"
         )
@@ -89,9 +87,7 @@ def test_group_runs_concurrently_and_reports_each_result(monkeypatch, fail):
 def test_unknown_group_starts_nothing(monkeypatch):
     monkeypatch.setattr(server.app.state.application.deployments, "catalog", config())
     ensure = AsyncMock()
-    monkeypatch.setattr(
-        server.app.state.application.deployments, "ensure_running", ensure
-    )
+    monkeypatch.setattr(server.app.state.application.deployments, "prepare", ensure)
     with pytest.raises(DeploymentServiceError) as exc:
         asyncio.run(
             server.app.state.application.deployments.ensure_group("group_missing")
@@ -125,10 +121,10 @@ def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(monkeypatch):
 
     async def run():
         with pytest.raises(DeploymentServiceError):
-            await server.app.state.application.deployments.ensure_running(state.slug)
+            await server.app.state.application.deployments.prepare(state.slug)
         return await asyncio.gather(
             *(
-                server.app.state.application.deployments.ensure_running(
+                server.app.state.application.deployments.prepare(
                     state.slug, allow_start=True
                 )
                 for _ in range(2)
@@ -154,9 +150,7 @@ def test_group_endpoint_contract_and_auth(monkeypatch):
             config=None, state=DeploymentSnapshot(slug="unused", replicas=1)
         )
     )
-    monkeypatch.setattr(
-        server.app.state.application.deployments, "ensure_running", ensure
-    )
+    monkeypatch.setattr(server.app.state.application.deployments, "prepare", ensure)
     # No lifespan: these HTTP contract checks must not touch real deployments.
     client = TestClient(server.app)
     url = "/deployments/group_foi_pipeline/warm-up"
@@ -199,9 +193,7 @@ def test_mixed_group_resolves_arbitrary_registered_local_resource(
             config=None, state=DeploymentSnapshot(slug="foi_topic", replicas=1)
         )
     )
-    monkeypatch.setattr(
-        server.app.state.application.deployments, "ensure_running", remote
-    )
+    monkeypatch.setattr(server.app.state.application.deployments, "prepare", remote)
     result = asyncio.run(
         server.app.state.application.deployments.ensure_group("group_mixed")
     )
@@ -224,9 +216,7 @@ def test_single_ensure_resolves_registry_without_remote_calls(monkeypatch):
     resource = registry.register(LocalResource("custom_cpu", load, Mock()))
     monkeypatch.setattr(server.app.state.application.deployments, "resources", registry)
     remote = AsyncMock(side_effect=AssertionError("No remote startup"))
-    monkeypatch.setattr(
-        server.app.state.application.deployments, "ensure_running", remote
-    )
+    monkeypatch.setattr(server.app.state.application.deployments, "prepare", remote)
     result = asyncio.run(
         server.app.state.application.deployments.ensure_deployment("custom_cpu")
     )
@@ -426,9 +416,7 @@ def test_group_warmup_replica_override_rejected_before_work(monkeypatch):
 def test_merged_warmup_unknown_group_returns_404_without_startup(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
     ensure = AsyncMock()
-    monkeypatch.setattr(
-        server.app.state.application.deployments, "ensure_running", ensure
-    )
+    monkeypatch.setattr(server.app.state.application.deployments, "prepare", ensure)
     response = TestClient(server.app).post("/deployments/group_missing/warm-up")
     assert response.status_code == 404
     assert "group" in response.json()["detail"].lower()
