@@ -12,15 +12,13 @@ def test_catalog_loading_does_not_register_resources(monkeypatch):
 
     from llm_management.deployments.catalog import get_catalog
 
-    register = Mock(
+    providers = Mock(
         side_effect=AssertionError("Configuration must not assemble runtime resources")
     )
-    monkeypatch.setattr(
-        "llm_management.bootstrap.register_configured_resources", register
-    )
+    monkeypatch.setattr("llm_management.bootstrap.ResourceProviders", providers)
     get_catalog.cache_clear()
     get_catalog()
-    register.assert_not_called()
+    providers.assert_not_called()
 
 
 def test_catalog_loading_does_not_construct_compute_runtime(tmp_path, monkeypatch):

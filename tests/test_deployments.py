@@ -5,9 +5,9 @@ from unittest.mock import Mock
 import pytest
 from pydantic import ValidationError
 
-from llm_management.bootstrap import register_configured_resources
 from llm_management.deployments import DeploymentCatalog, get_catalog
 from llm_management.deployments.local_config import SARClassifierDeployment
+from llm_management.inference.providers import ResourceProviders
 from llm_management.inference.resources import (
     LocalResource,
     ResourceRegistry,
@@ -71,7 +71,7 @@ def test_loading_and_registration_do_not_import_or_load_owners(monkeypatch):
     monkeypatch.setattr(importlib, "import_module", imported)
     catalog = DeploymentCatalog.load()
     registry = ResourceRegistry()
-    register_configured_resources(catalog, registry)
+    ResourceProviders(catalog, registry)
     assert registry.names() == {d.slug for d in catalog.local.deployment}
     assert registry.all() == []
     imported.assert_not_called()
