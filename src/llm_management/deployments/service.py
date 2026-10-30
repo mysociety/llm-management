@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from ..inference.errors import ClassifierBusy, ClassifierUnavailable
-from ..inference.resources import LocalResource, ResourceRegistry, ResourceStatus
+from ..inference.resources import LocalResource, ResourceRegistry
 from .activity import DeploymentActivityTracker
 from .backends import DeploymentBackend, backend_for
 from .catalog import DeploymentCatalog
@@ -264,21 +264,6 @@ class DeploymentService:
         resource = self.resources.get(slug)
         return resource if resource is not None else self.get_config(slug)
 
-    async def warmup_resource(self, name: str) -> int | None:
-        """
-        Warm a local guard or explicitly ensure a remote deployment.
-
-        Return None for local resources and the ready replica count for remote ones.
-        Local loading runs in a worker thread under the owner's guard. Translate loading
-        failures to 503 service errors without exposing arbitrary exception messages.
-        """
-        target = self.resolve_resource(name)
-        if isinstance(target, LocalResource):
-            await self.warmup_local(target)
-            return None
-        running = await self.prepare(target.slug, allow_start=True)
-        return running.state.replicas
-
     async def warmup_local(self, resource: LocalResource[Any]) -> None:
         """
         Load a resolved guard with the shared public warm-up error contract.
@@ -365,16 +350,3 @@ class DeploymentService:
                 await asyncio.to_thread(backend.scale_to_zero)
             except Exception:
                 logger.exception("Failed to scale %s to zero on shutdown.", state.slug)
-
-    async def ensure_local(self, name: str) -> ResourceStatus:
-        """
-        Warm a registered local guard and return its readiness snapshot.
-
-        Unknown local names raise a 404 service error; loading failures follow the shared
-        warm-up error translation. This operation never falls back to a remote deployment.
-        """
-        resource = self.resources.get(name)
-        if resource is None:
-            raise DeploymentServiceError(status_code=404, detail="Unknown local model")
-        await self.warmup_resource(name)
-        return resource.status()

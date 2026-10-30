@@ -52,7 +52,7 @@ def test_explicit_local_warmup_needs_no_remote_lookup():
         catalog, status=DeploymentStatusCache(), resources=registry
     )
 
-    assert asyncio.run(service.warmup_resource("tokenizer")) is None
+    assert asyncio.run(service.warmup_local(resource)) is None
     assert resource.status().ready
     loader.assert_called_once()
     catalog.get.assert_not_called()

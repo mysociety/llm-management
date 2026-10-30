@@ -209,8 +209,10 @@ class DeploymentManagement:
             Capture one member's failure without cancelling its successful peers.
             """
             try:
-                replicas = await self.service.warmup_resource(member)
-                return GroupMemberResult(slug=member, success=True, replicas=replicas)
+                result = await self.warm_up_resource(member)
+                return GroupMemberResult(
+                    slug=member, success=True, replicas=result.replicas
+                )
             except Exception as exc:
                 logger.warning(
                     "Group ensure failed for %s: %s", member, type(exc).__name__
