@@ -238,3 +238,13 @@ Explicit warm-up reaches the same matcher through
 `ResourceRegistry.get(slug).warmup()`, which invokes its `load()` callback. Idle
 cleanup invokes `unload()` only after the guard excludes active inference. Neither
 operation runs the feature's question-selection or result-assignment logic.
+
+Configured local instances are available through `catalog.local.deployment`, a
+slug-keyed dictionary. Use `.values()` when iterating all instances. TOML entries
+and serialized catalog exports remain arrays; collection validation rejects duplicate
+slugs before indexing them. Keep slug identities stable after construction.
+
+Use `SlugMappedList[ConfigType] = Field(default_factory=dict)` for new collections
+with this contract. The annotation in `deployments/collections.py` handles list or
+keyed input, slug validation, typed JSON schemas and ordered list serialization.
+The field supplies its empty default; no field-specific serializer is needed.

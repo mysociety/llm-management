@@ -46,7 +46,7 @@ def test_invalid_groups_rejected(groups):
 def test_groups_optional():
     data = config().model_dump()
     data.pop("deployment_group")
-    assert DeploymentCatalog.model_validate(data).deployment_group == []
+    assert DeploymentCatalog.model_validate(data).deployment_group == {}
 
 
 @pytest.mark.parametrize("fail", [False, True])

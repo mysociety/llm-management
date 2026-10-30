@@ -34,17 +34,13 @@ def validate_namespaces(catalog: DeploymentCatalog) -> None:
     """
     Require distinct deployment namespaces and reserve API group names.
     """
-    remote_names = [d.slug for d in catalog.exoscale.deployment]
-    local_names = [d.slug for d in catalog.local.deployment]
-    if len(set(remote_names)) != len(remote_names) or len(set(local_names)) != len(
-        local_names
-    ):
-        raise ValueError("Deployment slugs must be unique")
+    remote_names = catalog.exoscale.deployment.keys()
+    local_names = catalog.local.deployment.keys()
     if set(remote_names) & set(local_names):
         raise ValueError(
             "Remote deployments and local resources must have distinct names"
         )
-    api_names = [d.slug for d in [*catalog.api.deployment, *catalog.api.search]]
+    api_names = catalog.api.deployment.keys() | catalog.api.search.keys()
     if (set(remote_names) | set(local_names)) & set(api_names):
         raise ValueError("API, remote and local deployments must have distinct names")
     if any(is_group_slug(name) for name in api_names):
@@ -56,8 +52,8 @@ def validate_checkpoints(catalog: DeploymentCatalog) -> None:
     Resolve local and remote checkpoint references and verify remote identities.
     """
     for deployment in [
-        *catalog.exoscale.deployment,
-        *catalog.local.deployment,
+        *catalog.exoscale.deployment.values(),
+        *catalog.local.deployment.values(),
     ]:
         if isinstance(deployment, CategoryMatcherDeployment):
             if deployment.encoder_ref not in catalog.model:
@@ -80,16 +76,10 @@ def validate_groups(catalog: DeploymentCatalog) -> None:
     """
     Require unique warm-up groups with known, non-repeated resource members.
     """
-    remote_names = [d.slug for d in catalog.exoscale.deployment]
-    local_names = [d.slug for d in catalog.local.deployment]
-    known = set(remote_names) | set(local_names)
+    known = catalog.exoscale.deployment.keys() | catalog.local.deployment.keys()
     if any(is_group_slug(name) for name in known):
         raise ValueError("The group_ prefix is reserved for deployment groups")
-    groups: set[str] = set()
-    for group in catalog.deployment_group:
-        if group.slug in groups:
-            raise ValueError(f"Duplicate deployment group: {group.slug}")
-        groups.add(group.slug)
+    for group in catalog.deployment_group.values():
         if len(set(group.deployments)) != len(group.deployments):
             raise ValueError(f"Duplicate members in deployment group: {group.slug}")
         unknown = set(group.deployments) - known

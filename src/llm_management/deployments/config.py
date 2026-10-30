@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal, Optional
 from pydantic import BaseModel, Field
 
 from ..settings import settings
+from .collections import SlugMappedList
 from .errors import LLMManagementError
 
 if TYPE_CHECKING:
@@ -20,7 +21,7 @@ class ExoscaleDeploymentConfig(BaseModel):
     model_config = {"extra": "forbid"}
     backend: Literal["exoscale_managed"] = "exoscale_managed"
     protocol: Literal["openai"] = "openai"
-    slug: str
+    slug: str = Field(frozen=True)
     model: str
     model_ref: str | None = None
     gpu_type: str
@@ -48,13 +49,19 @@ class ComputeDeploymentConfig(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-    slug: str = Field(pattern=r"^[a-zA-Z0-9_-]+$")
+    slug: str = Field(pattern=r"^[a-zA-Z0-9_-]+$", frozen=True)
     backend: Literal["exoscale_compute"]
     protocol: Literal["systemone"] = "systemone"
     template: str
 
     @cached_property
     def recipe(self) -> TemplateRecipe:
+        """
+        Resolve and cache the referenced recipe from local template configuration.
+
+        First access validates the reference and may raise LLMManagementError.
+        It does not contact a provider or provision compute.
+        """
         from ..templates.config import TemplateConfig
 
         return TemplateConfig.load().get(self.template)
@@ -88,17 +95,19 @@ class ExoscaleDeployments(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    deployment: list[DeploymentConfig] = Field(default_factory=list)
+    deployment: SlugMappedList[DeploymentConfig] = Field(default_factory=dict)
 
     def get(self, slug: str) -> DeploymentConfig:
-        for d in self.deployment:
-            if d.slug == slug:
-                return d
-        raise LLMManagementError(f"No deployment config found with slug '{slug}'.")
+        try:
+            return self.deployment[slug]
+        except KeyError as exc:
+            raise LLMManagementError(
+                f"No deployment config found with slug '{slug}'."
+            ) from exc
 
     def resolve(self, slug: Optional[str], all_: bool) -> list[DeploymentConfig]:
         if all_:
-            return self.deployment
+            return list(self.deployment.values())
         if slug is None:
             raise LLMManagementError("Provide a slug or use --all.")
         return [self.get(slug)]

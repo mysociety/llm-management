@@ -301,3 +301,18 @@ owns execution, locks, leases and shutdown. HTTP state stores only the applicati
 An optional sanitizer overrides the resource container's sanitizer. The internal
 `predict()` operation also requires explicit dependencies and retains the
 sanitized-input check, checkpoint validation, remote lease and output validation.
+
+### Catalog collections
+
+Remote and local deployments, API model/search deployments and deployment groups
+are stored in typed dictionaries keyed by slug. Lookup methods retain their typed
+results and useful missing-entry errors. Iterate `.values()` to visit entries in
+configuration order; a group's member slugs remain an ordered list.
+
+The configuration boundary accepts the existing TOML arrays and validates every
+entry before building a dictionary, rejecting duplicate slugs. Keyed input is also
+accepted, provided each key matches its entry's slug. Catalog exports retain the
+existing array format, so configuration round trips do not change file structure.
+There is no second cached index to synchronize. Slug fields are immutable after
+construction: to rename an entry, create its replacement under the new key and
+revalidate the catalog, including feature and group references.

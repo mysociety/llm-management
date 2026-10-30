@@ -241,7 +241,7 @@ def test_model_settings_are_validated_by_provider(
     data["api"]["service"]["openai"]["protocol"] = protocol
     data["api"]["deployment"][0]["reasoning_effort"] = reasoning_effort
     catalog = DeploymentCatalog.model_validate(data)
-    deployment = catalog.api.deployment[0]
+    deployment = next(iter(catalog.api.deployment.values()))
     service = catalog.api.model_service(deployment.service)
     seen: list[httpx2.Request] = []
 

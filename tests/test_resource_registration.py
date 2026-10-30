@@ -30,10 +30,10 @@ def test_catalog_schema_serialization_and_all_registrations_agree():
     schema = adapter.json_schema()
     tags = {item.loader for item in resource_types.RESOURCE_TYPES.values()}
     assert set(schema["discriminator"]["mapping"]) == tags
-    assert {type(item) for item in catalog.local.deployment} <= set(
+    assert {type(item) for item in catalog.local.deployment.values()} <= set(
         resource_types.RESOURCE_TYPES
     )
-    for config in catalog.local.deployment:
+    for config in catalog.local.deployment.values():
         assert adapter.validate_json(adapter.dump_json(config)) == config
     assert DeploymentCatalog.model_validate_json(catalog.model_dump_json()) == catalog
     with pytest.raises(ValidationError, match="union_tag_invalid"):
@@ -75,7 +75,7 @@ assert registry.all() == []
 # All real registered factories must also construct cold owners.
 other_registry = ResourceRegistry()
 providers = ResourceProviders(catalog, other_registry)
-for config in catalog.local.deployment:
+for config in catalog.local.deployment.values():
     owner = providers.provider(RESOURCE_TYPES[type(config)], lambda: config.slug)()
     assert not other_registry.get(config.slug).status().ready
 """
