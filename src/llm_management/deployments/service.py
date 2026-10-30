@@ -11,19 +11,20 @@ import asyncio
 import logging
 import threading
 import time
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import Literal
+from typing import Any, Literal, TypeVar
 
 from ..inference.errors import ClassifierBusy, ClassifierUnavailable
-from ..inference.resources import ResourceRegistry, ResourceStatus
+from ..inference.resources import LocalResource, ResourceRegistry, ResourceStatus
 from .activity import DeploymentActivityTracker
 from .backends import DeploymentBackend, backend_for
 from .cache import DeploymentCache
 from .catalog import DeploymentCatalog
 from .config import DeploymentConfig
 from .errors import DeploymentServiceError, LLMManagementError
+from .management import DeploymentManagement
 from .status import DeploymentStatusCache
 from .types import (
     DeploymentInference,
@@ -37,6 +38,8 @@ from .types import (
 )
 
 logger = logging.getLogger(__name__)
+
+MemberOutcome = TypeVar("MemberOutcome")
 
 
 class DeploymentService:
@@ -71,6 +74,7 @@ class DeploymentService:
         and activity independently. The positional cache argument is retained for
         older callers; mixing it with separate state dependencies is rejected.
         """
+        self.management = DeploymentManagement(self)
         self.catalog = catalog
         self.backends: dict[str, DeploymentBackend] = {}
         self._backend_lock = threading.Lock()
@@ -328,6 +332,17 @@ class DeploymentService:
             except Exception:
                 logger.exception("Error in idle scaler loop.")
 
+    def resolve_resource(self, slug: str) -> LocalResource[Any] | DeploymentConfig:
+        """
+        Resolve an individual management target to its local guard or remote config.
+
+        Registry lookup may construct a cold local owner, but never loads it. Unknown
+        names retain the shared remote-deployment 404 error. Group addresses are
+        expanded before individual operations reach this method.
+        """
+        resource = self.resources.get(slug)
+        return resource if resource is not None else self.get_config(slug)
+
     async def warmup_resource(self, name: str) -> int | None:
         """
         Warm a local guard or explicitly ensure a remote deployment.
@@ -336,17 +351,24 @@ class DeploymentService:
         Local loading runs in a worker thread under the owner's guard. Translate loading
         failures to 503 service errors without exposing arbitrary exception messages.
         """
-        resource = self.resources.get(name)
-        if resource is None:
-            running = await self.ensure_running(name, allow_start=True)
-            return running.state.replicas
+        target = self.resolve_resource(name)
+        if isinstance(target, LocalResource):
+            await self._warmup_local(target)
+            return None
+        running = await self.ensure_running(target.slug, allow_start=True)
+        return running.state.replicas
+
+    async def _warmup_local(self, resource: LocalResource[Any]) -> None:
+        """
+        Load a resolved guard with the shared public warm-up error contract.
+        """
         try:
             await asyncio.to_thread(resource.warmup)
         except ClassifierUnavailable as exc:
             raise DeploymentServiceError(status_code=503, detail=str(exc)) from exc
         except Exception as exc:
             logger.warning(
-                "Local resource %s unavailable: %s", name, type(exc).__name__
+                "Local resource %s unavailable: %s", resource.name, type(exc).__name__
             )
             raise DeploymentServiceError(
                 status_code=503, detail="Local resource unavailable"
@@ -360,18 +382,16 @@ class DeploymentService:
         Reject deployments with in-flight requests using a 409 service error. Refresh
         cached status after the backend operation; Compute scaling deletes its VM.
         """
-        resource = self.resources.get(slug)
-        if resource is not None:
+        target = self.resolve_resource(slug)
+        if isinstance(target, LocalResource):
             try:
-                await asyncio.to_thread(resource.stop)
+                await asyncio.to_thread(target.stop)
             except ClassifierBusy as exc:
                 raise DeploymentServiceError(status_code=409, detail=str(exc)) from exc
             return
-        self.get_config(slug)
         async with self.activity.ensure_lock(slug):
             backend = self.get_backend(slug)
-            state = self.activity.get(slug)
-            if state.requests_in_flight:
+            if self.activity.get(slug).requests_in_flight:
                 raise DeploymentServiceError(
                     status_code=409, detail="Deployment has requests in flight."
                 )
@@ -386,13 +406,12 @@ class DeploymentService:
         managed deployment. Existing Compute VMs remain eligible even before a tunnel is
         ready. New requests reset the activity timestamp and cancel the shortened window.
         """
-        resource = self.resources.get(slug)
-        if resource is not None:
+        target = self.resolve_resource(slug)
+        if isinstance(target, LocalResource):
             try:
-                return await asyncio.to_thread(resource.cooldown, self.cpu_idle_seconds)
+                return await asyncio.to_thread(target.cooldown, self.cpu_idle_seconds)
             except ClassifierBusy as exc:
                 raise DeploymentServiceError(status_code=409, detail=str(exc)) from exc
-        self.get_config(slug)
         async with self.activity.ensure_lock(slug):
             backend = self.get_backend(slug)
             state = await asyncio.to_thread(self.status.ensure, backend)
@@ -436,22 +455,18 @@ class DeploymentService:
         replicas. Remote outcomes distinguish creation, resumption, resizing and an
         already-running deployment using its prior cached status.
         """
-        if self.resources.get(slug) is not None:
+        target = self.resolve_resource(slug)
+        if isinstance(target, LocalResource):
             if replicas is not None:
                 raise DeploymentServiceError(
                     status_code=422, detail="Local resources do not support replicas."
                 )
-            await self.warmup_resource(slug)
+            await self._warmup_local(target)
             return EnsureOutcome(slug=slug, action="warmed", replicas=None)
         backend = self.get_backend(slug)
         previous = await asyncio.to_thread(self.status.ensure, backend)
-        if replicas is None:
-            actual = await self.warmup_resource(slug)
-        else:
-            running = await self.ensure_running(
-                slug, allow_start=True, replicas=replicas
-            )
-            actual = running.state.replicas
+        running = await self.ensure_running(slug, allow_start=True, replicas=replicas)
+        actual = running.state.replicas
         action = (
             "scaled"
             if previous.replicas > 0
@@ -465,6 +480,25 @@ class DeploymentService:
         )
         return EnsureOutcome(slug=slug, action=action, replicas=actual)
 
+    async def run_group(
+        self, slug: str, operation: Callable[[str], Awaitable[MemberOutcome]]
+    ) -> list[MemberOutcome]:
+        """
+        Resolve a group once and execute members concurrently in configured order.
+
+        Each operation defines its own public failure result. Keeping that policy
+        in the operation preserves the distinct warm-up and lifecycle error contracts.
+        """
+        try:
+            group = self.catalog.get_group(slug)
+        except LLMManagementError as exc:
+            raise DeploymentServiceError(
+                status_code=404, detail=f"Deployment group '{slug}' not found"
+            ) from exc
+        return list(
+            await asyncio.gather(*(operation(member) for member in group.deployments))
+        )
+
     async def ensure_group(self, slug: str) -> GroupOutcome:
         """
         Warm all group members concurrently and report their individual outcomes.
@@ -473,12 +507,6 @@ class DeploymentService:
         report failures without rolling back successful members. Hide arbitrary loading
         exception messages; overall success requires every member to succeed.
         """
-        try:
-            group = self.catalog.get_group(slug)
-        except LLMManagementError as exc:
-            raise DeploymentServiceError(
-                status_code=404, detail=f"Deployment group '{slug}' not found"
-            ) from exc
 
         async def ensure_member(member: str) -> GroupMemberOutcome:
             """
@@ -495,9 +523,7 @@ class DeploymentService:
                     slug=member, success=False, error="Resource could not be warmed"
                 )
 
-        members = await asyncio.gather(
-            *(ensure_member(member) for member in group.deployments)
-        )
+        members = await self.run_group(slug, ensure_member)
         return GroupOutcome(
             slug=slug,
             success=all(member.success for member in members),
@@ -507,13 +533,9 @@ class DeploymentService:
     async def change_group(
         self, slug: str, action: Literal["cool-down", "scale-to-zero"]
     ) -> GroupActionOutcome:
-        """Apply a lifecycle action concurrently, preserving per-member failures."""
-        try:
-            group = self.catalog.get_group(slug)
-        except LLMManagementError as exc:
-            raise DeploymentServiceError(
-                status_code=404, detail=f"Deployment group '{slug}' not found"
-            ) from exc
+        """
+        Apply a lifecycle action concurrently, preserving per-member failures.
+        """
 
         async def change_member(member: str) -> GroupActionMemberOutcome:
             try:
@@ -543,9 +565,7 @@ class DeploymentService:
                     slug=member, success=False, error="Resource lifecycle action failed"
                 )
 
-        members = await asyncio.gather(
-            *(change_member(member) for member in group.deployments)
-        )
+        members = await self.run_group(slug, change_member)
         return GroupActionOutcome(
             slug=slug,
             success=all(member.success for member in members),
