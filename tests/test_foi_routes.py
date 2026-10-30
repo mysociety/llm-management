@@ -36,7 +36,9 @@ def category_inference_offline(monkeypatch):
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.app.state.service, "active_deployments", lambda: [])
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "active_deployments", lambda: []
+    )
     # The app lifespan must never manage real deployments in these tests.
     with TestClient(server.app, raise_server_exceptions=True) as test_client:
         yield test_client
@@ -62,7 +64,9 @@ def classifier(monkeypatch):
 
 def test_no_questions_skips_all_remote_work(client, classifier, monkeypatch):
     ensure = AsyncMock(side_effect=AssertionError("CPU must not provision a GPU"))
-    monkeypatch.setattr(server.app.state.service, "_prepare_locked", ensure)
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "_prepare_locked", ensure
+    )
     response = client.post(
         "/endpoint/foi/extract_questions/extract", json={"body": "Thank you."}
     )
@@ -92,7 +96,9 @@ def test_orphan_keeps_indices_and_does_not_invent_start(client, classifier):
 def test_gpu_disabled_does_not_provision(client, classifier, monkeypatch):
     monkeypatch.setattr(server.settings, "question_slice_gpu_enabled", False)
     ensure = AsyncMock()
-    monkeypatch.setattr(server.app.state.service, "_prepare_locked", ensure)
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "_prepare_locked", ensure
+    )
     response = client.post(
         "/endpoint/foi/extract_questions/extract?backend=exoscale",
         json={"body": "Please provide the report."},
@@ -107,9 +113,11 @@ def test_backend_switch_shares_reconstruction(client, classifier, monkeypatch):
     monkeypatch.setattr(server.settings, "question_slice_gpu_enabled", True)
     cfg = SimpleNamespace(model=classifier.model_name)
     state = SimpleNamespace(deployment_url="https://example.test/v1", api_key="secret")
-    monkeypatch.setattr(server.app.state.service, "get_config", lambda slug: cfg)
     monkeypatch.setattr(
-        server.app.state.service,
+        server.app.state.application.deployments, "get_config", lambda slug: cfg
+    )
+    monkeypatch.setattr(
+        server.app.state.application.deployments,
         "_prepare_locked",
         AsyncMock(return_value=RunningDeployment(config=cfg, state=state)),
     )
@@ -141,7 +149,9 @@ def test_overlength_rejected_before_gpu_start(client, classifier, monkeypatch):
 
     classifier.validate_inputs = reject
     ensure = AsyncMock()
-    monkeypatch.setattr(server.app.state.service, "_prepare_locked", ensure)
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "_prepare_locked", ensure
+    )
     response = client.post(
         "/endpoint/foi/extract_questions/extract?backend=exoscale",
         json={"body": "Long request."},
@@ -198,7 +208,9 @@ def topic_data():
 @pytest.fixture
 def pipeline(sanitizer, monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.app.state.service, "active_deployments", lambda: [])
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "active_deployments", lambda: []
+    )
     extractor = AsyncMock(return_value=extraction())
 
     async def extracted(request_text, **kwargs):
@@ -218,7 +230,9 @@ def pipeline(sanitizer, monkeypatch):
     cfg = SimpleNamespace(
         model=get_catalog().get(get_catalog().require_foi().topic_deployment).model
     )
-    monkeypatch.setattr(server.app.state.service, "get_config", lambda slug: cfg)
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "get_config", lambda slug: cfg
+    )
     ensure = AsyncMock(
         return_value=RunningDeployment(
             config=cfg,
@@ -228,7 +242,9 @@ def pipeline(sanitizer, monkeypatch):
     classify = AsyncMock(
         return_value=foi_topic.TopicOutput.model_validate(topic_data())
     )
-    monkeypatch.setattr(server.app.state.service, "_prepare_locked", ensure)
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "_prepare_locked", ensure
+    )
     monkeypatch.setattr(foi_topic, "classify_topics", classify)
     with TestClient(server.app) as client:
         yield SimpleNamespace(

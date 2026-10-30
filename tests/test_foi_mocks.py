@@ -25,7 +25,7 @@ def client(monkeypatch):
     Fail if any mock route starts deployments or loads a local model.
     """
     monkeypatch.setattr(server.settings, "auth_tokens", {})
-    service = server.app.state.service
+    service = server.app.state.application.deployments
     monkeypatch.setattr(service, "active_deployments", lambda: [])
     monkeypatch.setattr(
         service,

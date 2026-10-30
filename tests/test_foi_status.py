@@ -80,7 +80,7 @@ def serving(monkeypatch, output):
     monkeypatch.setattr(
         server.app.state.application.foi, "response_tokenizer", lambda: guard
     )
-    cfg = server.app.state.service.catalog.get("foi_status")
+    cfg = server.app.state.application.deployments.catalog.get("foi_status")
     ensure = AsyncMock(
         return_value=RunningDeployment(
             config=cfg,
@@ -92,7 +92,9 @@ def serving(monkeypatch, output):
             ),
         )
     )
-    monkeypatch.setattr(server.app.state.service, "ensure_running", ensure)
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "ensure_running", ensure
+    )
     touch = []
     from contextlib import asynccontextmanager
 
@@ -103,7 +105,7 @@ def serving(monkeypatch, output):
         finally:
             touch.append(slug)
 
-    monkeypatch.setattr(server.app.state.service, "use", use)
+    monkeypatch.setattr(server.app.state.application.deployments, "use", use)
     real_client = httpx2.AsyncClient
 
     def handle(request):
