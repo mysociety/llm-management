@@ -41,7 +41,11 @@ class DeploymentStatusCache:
 
     def set(self, snapshot: DeploymentSnapshot) -> None:
         """
-        Store only cloud fields, including when given a legacy combined-state model.
+        Store a detached snapshot containing only cloud status fields.
+
+        DeploymentState subclasses DeploymentSnapshot but also carries activity
+        fields. Reconstructing the base model drops those fields; model_copy()
+        would preserve the subclass and its activity data.
         """
         value = DeploymentSnapshot.model_validate(snapshot.model_dump())
         with self._lock:
