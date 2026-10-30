@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from ..inference.resources import ResourceStatus
 from .errors import DeploymentServiceError
 from .slugs import is_group_slug
-from .types import GroupActionOutcome
+from .types import GroupActionOutcome, GroupWarmUpResponse, WarmUpResponse
 
 if TYPE_CHECKING:
     from .service import DeploymentService
@@ -26,25 +26,6 @@ class DeploymentStatusResponse(BaseModel):
     slug: str
     exists: bool
     replicas: int
-
-
-class WarmUpResponse(BaseModel):
-    slug: str
-    action: str
-    replicas: int | None
-
-
-class GroupMemberResult(BaseModel):
-    slug: str
-    success: bool
-    replicas: int | None = None
-    error: str | None = None
-
-
-class GroupWarmUpResponse(BaseModel):
-    slug: str
-    success: bool
-    deployments: list[GroupMemberResult]
 
 
 class ScaleToZeroResponse(BaseModel):
@@ -107,24 +88,8 @@ class DeploymentManagement:
                 raise DeploymentServiceError(
                     status_code=422, detail="Groups do not support replica overrides."
                 )
-            outcome = await self.service.ensure_group(slug)
-            return GroupWarmUpResponse(
-                slug=outcome.slug,
-                success=outcome.success,
-                deployments=[
-                    GroupMemberResult(
-                        slug=member.slug,
-                        success=member.success,
-                        replicas=member.replicas,
-                        error=member.error,
-                    )
-                    for member in outcome.deployments
-                ],
-            )
-        single = await self.service.ensure_deployment(slug, replicas)
-        return WarmUpResponse(
-            slug=single.slug, action=single.action, replicas=single.replicas
-        )
+            return await self.service.ensure_group(slug)
+        return await self.service.ensure_deployment(slug, replicas)
 
     async def stop(self, slug: str) -> ScaleToZeroResponse | GroupActionOutcome:
         """

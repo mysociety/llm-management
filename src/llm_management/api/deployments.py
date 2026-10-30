@@ -13,12 +13,14 @@ from ..deployments.management import (
     CoolDownResponse,
     DeploymentOverview,
     DeploymentStatusResponse,
+    ScaleToZeroResponse,
+)
+from ..deployments.types import (
+    GroupActionOutcome,
     GroupMemberResult,
     GroupWarmUpResponse,
-    ScaleToZeroResponse,
     WarmUpResponse,
 )
-from ..deployments.types import GroupActionOutcome
 from ..inference.resources import ResourceStatus
 from . import DependencyApplication
 

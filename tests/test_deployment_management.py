@@ -11,23 +11,22 @@ import pytest
 
 from llm_management.bootstrap import assemble_service
 from llm_management.deployments.errors import DeploymentServiceError
-from llm_management.deployments.management import GroupWarmUpResponse
 from llm_management.deployments.types import (
     GroupActionMemberOutcome,
     GroupActionOutcome,
-    GroupMemberOutcome,
-    GroupOutcome,
+    GroupMemberResult,
+    GroupWarmUpResponse,
 )
 
 
 def test_direct_group_warmup_preserves_order_and_partial_failure(monkeypatch):
     service = assemble_service()
-    outcome = GroupOutcome(
+    outcome = GroupWarmUpResponse(
         slug="group_example",
         success=False,
         deployments=[
-            GroupMemberOutcome(slug="second", success=True, replicas=1),
-            GroupMemberOutcome(
+            GroupMemberResult(slug="second", success=True, replicas=1),
+            GroupMemberResult(
                 slug="first", success=False, error="Resource could not be warmed"
             ),
         ],
