@@ -16,7 +16,7 @@ class LocalDeployment(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    slug: str = Field(min_length=1)
+    slug: str = Field(min_length=1, frozen=True)
 
 
 class PresidioDeployment(LocalDeployment):

@@ -286,7 +286,7 @@ class DeploymentManagement:
         """
         now = time.time()
         overviews: list[DeploymentOverview] = []
-        for config in self.service.catalog.exoscale.deployment:
+        for config in self.service.catalog.exoscale.deployment.values():
             state = self.service.status.ensure(self.service.get_backend(config.slug))
             activity = self.service.activity.get(config.slug)
             idle = (

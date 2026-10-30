@@ -72,11 +72,11 @@ def test_loading_and_registration_do_not_import_or_load_owners(monkeypatch):
     catalog = DeploymentCatalog.load()
     registry = ResourceRegistry()
     ResourceProviders(catalog, registry)
-    assert registry.names() == {d.slug for d in catalog.local.deployment}
+    assert registry.names() == {d.slug for d in catalog.local.deployment.values()}
     assert registry.all() == []
     imported.assert_not_called()
 
-    config = catalog.local.deployment[0]
+    config = next(iter(catalog.local.deployment.values()))
     load = Mock()
     resource = LocalResource(config.slug, load, Mock())
     from llm_management.inference.classifiers import LocalSequenceClassifier
@@ -145,7 +145,7 @@ def test_environment_selects_catalog_path_without_overriding_identity(
 def test_shared_checkpoint_references_resolve_to_same_identity():
     catalog = get_catalog()
     foi = catalog.require_foi()
-    local = {d.slug: d for d in catalog.local.deployment}
+    local = {d.slug: d for d in catalog.local.deployment.values()}
     assert local[foi.classifier].model_ref == local[foi.head].model_ref
     assert (
         catalog.get(foi.extraction_deployment).model_ref

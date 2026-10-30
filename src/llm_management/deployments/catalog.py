@@ -26,6 +26,7 @@ from .catalog_validation import (
     validate_groups,
     validate_namespaces,
 )
+from .collections import SlugMappedList
 from .config import (
     ComputeDeploymentConfig,
     DeploymentConfig,
@@ -96,17 +97,20 @@ L = TypeVar("L", bound=LocalDeployment)
 
 
 class LocalDeployments(CatalogModel):
-    deployment: list[LocalDeploymentConfig] = Field(default_factory=list)
+    deployment: SlugMappedList[LocalDeploymentConfig] = Field(default_factory=dict)
 
     def get(self, slug: str, kind: type[L]) -> L:
-        for deployment in self.deployment:
-            if deployment.slug == slug:
-                if not isinstance(deployment, kind):
-                    raise LLMManagementError(
-                        f"Local deployment {slug!r} requires {kind.__name__}"
-                    )
-                return deployment
-        raise LLMManagementError(f"No local deployment found with slug {slug!r}")
+        try:
+            deployment = self.deployment[slug]
+        except KeyError as exc:
+            raise LLMManagementError(
+                f"No local deployment found with slug {slug!r}"
+            ) from exc
+        if not isinstance(deployment, kind):
+            raise LLMManagementError(
+                f"Local deployment {slug!r} requires {kind.__name__}"
+            )
+        return deployment
 
 
 class TopicBudget(CatalogModel):
@@ -183,7 +187,7 @@ class BinaryCascadePipeline(CatalogModel):
 
 
 class DeploymentGroupConfig(CatalogModel):
-    slug: str = Field(pattern=r"^group_.+$")
+    slug: str = Field(pattern=r"^group_.+$", frozen=True)
     deployments: list[str] = Field(min_length=1)
 
 
@@ -196,7 +200,9 @@ class DeploymentCatalog(CatalogModel):
     exoscale: ExoscaleDeployments = Field(default_factory=ExoscaleDeployments)
     local: LocalDeployments = Field(default_factory=LocalDeployments)
     api: APIDeployments = Field(default_factory=APIDeployments)
-    deployment_group: list[DeploymentGroupConfig] = Field(default_factory=list)
+    deployment_group: SlugMappedList[DeploymentGroupConfig] = Field(
+        default_factory=dict
+    )
     foi: FOIPipeline | None = None
     foi_email_finder: EmailFinderConfig | None = None
     sar: BinaryCascadePipeline | None = None
@@ -216,8 +222,13 @@ class DeploymentCatalog(CatalogModel):
         remote = value.get("exoscale", {})
         if isinstance(remote, dict):
             remote = dict(remote)
+            raw_deployments = remote.get("deployment", [])
+            if not isinstance(raw_deployments, (list, dict)):
+                return value  # Let the collection schema report an invalid input shape.
+            is_mapping = isinstance(raw_deployments, dict)
+            entries = raw_deployments.values() if is_mapping else raw_deployments
             deployments = []
-            for entry in remote.get("deployment", []):
+            for entry in entries:
                 if isinstance(entry, dict) and entry.get("model_ref") is not None:
                     entry = dict(entry)
                     ref = entry["model_ref"]
@@ -231,7 +242,11 @@ class DeploymentCatalog(CatalogModel):
                         )
                     entry["model"] = repo
                 deployments.append(entry)
-            remote["deployment"] = deployments
+            remote["deployment"] = (
+                dict(zip(raw_deployments, deployments, strict=True))
+                if is_mapping
+                else deployments
+            )
             value["exoscale"] = remote
         return value
 
@@ -264,19 +279,23 @@ class DeploymentCatalog(CatalogModel):
             raise LLMManagementError(
                 f"Cannot load deployment configuration {path}: {exc}"
             ) from exc
-        for deployment in config.exoscale.deployment:
+        for deployment in config.exoscale.deployment.values():
             if isinstance(deployment, ComputeDeploymentConfig):
-                deployment.recipe  # Check template references without provisioning.
+                # Resolve and cache the referenced recipe now, so missing or invalid
+                # templates fail during catalog loading. This only reads local config.
+                _ = deployment.recipe
         return config
 
     def get(self, slug: str) -> DeploymentConfig:
         return self.exoscale.get(slug)
 
     def get_group(self, slug: str) -> DeploymentGroupConfig:
-        for group in self.deployment_group:
-            if group.slug == slug:
-                return group
-        raise LLMManagementError(f"No deployment group found with slug {slug!r}")
+        try:
+            return self.deployment_group[slug]
+        except KeyError as exc:
+            raise LLMManagementError(
+                f"No deployment group found with slug {slug!r}"
+            ) from exc
 
     def require_foi(self) -> FOIPipeline:
         if self.foi is None:

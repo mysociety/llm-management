@@ -6,8 +6,15 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    model_validator,
+)
 
+from .collections import SlugMappedList
 from .errors import LLMManagementError
 
 
@@ -54,7 +61,7 @@ class APIModelDeployment(APIConfigModel):
     A reproducible model configuration, selected by slug.
     """
 
-    slug: str = Field(min_length=1)
+    slug: str = Field(min_length=1, frozen=True)
     service: str = Field(min_length=1)
     model: str = Field(min_length=1)
     reasoning_effort: (
@@ -64,27 +71,27 @@ class APIModelDeployment(APIConfigModel):
 
 
 class APISearchDeployment(APIConfigModel):
-    slug: str = Field(min_length=1)
+    slug: str = Field(min_length=1, frozen=True)
     service: str = Field(min_length=1)
 
 
 class APIDeployments(APIConfigModel):
     service: dict[str, APIService] = Field(default_factory=dict)
-    deployment: list[APIModelDeployment] = Field(default_factory=list)
-    search: list[APISearchDeployment] = Field(default_factory=list)
+    deployment: SlugMappedList[APIModelDeployment] = Field(default_factory=dict)
+    search: SlugMappedList[APISearchDeployment] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_services(self) -> Self:
-        slugs = [entry.slug for entry in [*self.deployment, *self.search]]
+        slugs = [*self.deployment, *self.search]
         if len(slugs) != len(set(slugs)):
             raise ValueError("API deployment and search slugs must be unique")
-        for deployment in self.deployment:
+        for deployment in self.deployment.values():
             service = self.service.get(deployment.service)
             if service is None:
                 raise ValueError(f"Unknown API service: {deployment.service}")
             if not isinstance(service, APIModelService):
                 raise ValueError("Model deployments require a model service")
-        for search in self.search:
+        for search in self.search.values():
             service = self.service.get(search.service)
             if service is None:
                 raise ValueError(f"Unknown API service: {search.service}")
@@ -105,16 +112,26 @@ class APIDeployments(APIConfigModel):
         return service
 
     def get(self, slug: str) -> APIModelDeployment:
-        for deployment in self.deployment:
-            if deployment.slug == slug:
-                return deployment
-        raise LLMManagementError(f"No API model deployment found with slug {slug!r}")
+        """
+        Resolve one API model deployment by its configured identity.
+        """
+        try:
+            return self.deployment[slug]
+        except KeyError as exc:
+            raise LLMManagementError(
+                f"No API model deployment found with slug {slug!r}"
+            ) from exc
 
     def get_search(self, slug: str) -> APISearchDeployment:
-        for search in self.search:
-            if search.slug == slug:
-                return search
-        raise LLMManagementError(f"No API search deployment found with slug {slug!r}")
+        """
+        Resolve one search deployment by its configured identity.
+        """
+        try:
+            return self.search[slug]
+        except KeyError as exc:
+            raise LLMManagementError(
+                f"No API search deployment found with slug {slug!r}"
+            ) from exc
 
 
 class EmailFinderConfig(APIConfigModel):

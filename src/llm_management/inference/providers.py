@@ -81,7 +81,7 @@ class ResourceProviders:
         self.catalog = catalog
         self.registry = registry
         self._owners: dict[str, ResourceOwner] = {}
-        for config in catalog.local.deployment:
+        for config in catalog.local.deployment.values():
             resource_type = RESOURCE_TYPES[type(config)]
             registry.register_factory(
                 config.slug, partial(self._create_owner, config, resource_type)
