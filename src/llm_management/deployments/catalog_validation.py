@@ -23,6 +23,7 @@ from .local_config import (
     SequenceClassifierDeployment,
     TopicTokenizerDeployment,
 )
+from .slugs import is_group_slug
 
 if TYPE_CHECKING:
     from .catalog import DeploymentCatalog
@@ -45,7 +46,7 @@ def validate_namespaces(catalog: DeploymentCatalog) -> None:
     api_names = [d.slug for d in [*catalog.api.deployment, *catalog.api.search]]
     if (set(remote_names) | set(local_names)) & set(api_names):
         raise ValueError("API, remote and local deployments must have distinct names")
-    if any(name.startswith("group_") for name in api_names):
+    if any(is_group_slug(name) for name in api_names):
         raise ValueError("The group_ prefix is reserved for deployment groups")
 
 
@@ -78,7 +79,7 @@ def validate_groups(catalog: DeploymentCatalog) -> None:
     remote_names = [d.slug for d in catalog.exoscale.deployment]
     local_names = [d.slug for d in catalog.local.deployment]
     known = set(remote_names) | set(local_names)
-    if any(name.startswith("group_") for name in known):
+    if any(is_group_slug(name) for name in known):
         raise ValueError("The group_ prefix is reserved for deployment groups")
     groups: set[str] = set()
     for group in catalog.deployment_group:

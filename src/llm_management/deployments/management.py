@@ -9,36 +9,17 @@ warms a local model or starts a remote deployment.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Literal, NamedTuple
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
 from ..inference.resources import ResourceStatus
 from .errors import DeploymentServiceError
+from .slugs import is_group_slug
 from .types import GroupActionOutcome
 
 if TYPE_CHECKING:
     from .service import DeploymentService
-
-
-class ManagementTarget(NamedTuple):
-    """
-    A command address; individual resource existence is checked during execution.
-
-    Groups retain their historical prefix convention. A resource may be a local
-    guard or remote deployment; the service resolves that distinction without
-    making HTTP callers understand ownership or backend details.
-    """
-
-    slug: str
-    kind: Literal["group", "resource"]
-
-
-def resolve_target(slug: str) -> ManagementTarget:
-    """
-    Interpret a management address consistently for every lifecycle command.
-    """
-    return ManagementTarget(slug, "group" if slug.startswith("group_") else "resource")
 
 
 class DeploymentStatusResponse(BaseModel):
@@ -121,13 +102,12 @@ class DeploymentManagement:
         """
         Warm a resource or group; only remote resources accept replica overrides.
         """
-        target = resolve_target(slug)
-        if target.kind == "group":
+        if is_group_slug(slug):
             if replicas is not None:
                 raise DeploymentServiceError(
                     status_code=422, detail="Groups do not support replica overrides."
                 )
-            outcome = await self.service.ensure_group(target.slug)
+            outcome = await self.service.ensure_group(slug)
             return GroupWarmUpResponse(
                 slug=outcome.slug,
                 success=outcome.success,
@@ -141,7 +121,7 @@ class DeploymentManagement:
                     for member in outcome.deployments
                 ],
             )
-        single = await self.service.ensure_deployment(target.slug, replicas)
+        single = await self.service.ensure_deployment(slug, replicas)
         return WarmUpResponse(
             slug=single.slug, action=single.action, replicas=single.replicas
         )
@@ -150,22 +130,20 @@ class DeploymentManagement:
         """
         Stop one resource or all group members, preserving per-member failures.
         """
-        target = resolve_target(slug)
-        if target.kind == "group":
-            return await self.service.change_group(target.slug, "scale-to-zero")
-        await self.service.scale_to_zero(target.slug)
-        return ScaleToZeroResponse(slug=target.slug, action="scaled_to_zero")
+        if is_group_slug(slug):
+            return await self.service.change_group(slug, "scale-to-zero")
+        await self.service.scale_to_zero(slug)
+        return ScaleToZeroResponse(slug=slug, action="scaled_to_zero")
 
     async def cool_down(self, slug: str) -> CoolDownResponse | GroupActionOutcome:
         """
         Shorten idle timers without interrupting work or immediately stopping models.
         """
-        target = resolve_target(slug)
-        if target.kind == "group":
-            return await self.service.change_group(target.slug, "cool-down")
-        remaining = await self.service.cooldown(target.slug)
+        if is_group_slug(slug):
+            return await self.service.change_group(slug, "cool-down")
+        remaining = await self.service.cooldown(slug)
         return CoolDownResponse(
-            slug=target.slug,
+            slug=slug,
             action="already_stopped" if remaining is None else "cooling_down",
             seconds_until_scale_to_zero=remaining,
         )
