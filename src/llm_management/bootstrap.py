@@ -7,11 +7,12 @@ ownership without loading model weights or creating cloud deployments.
 
 from __future__ import annotations
 
+import asyncio
+from builtins import BaseExceptionGroup
 from collections.abc import Callable
 from functools import lru_cache
-from typing import TYPE_CHECKING, NamedTuple
-
-from pydantic import BaseModel, ConfigDict
+from types import TracebackType
+from typing import TYPE_CHECKING, NamedTuple, Self
 
 from .deployments import resource_types
 from .deployments.activity import DeploymentActivityTracker
@@ -72,20 +73,107 @@ def assemble_deployments(
     return DeploymentAssembly(service=service, providers=providers)
 
 
-class Application(BaseModel):
+class Application:
     """
-    Explicit runtime dependencies shared by HTTP and direct batch callers.
+    Runtime dependencies and lifecycle shared by HTTP and direct batch callers.
+
+    Assembly is cold. Enter ``async with application`` to start idle cleanup;
+    exiting drains classifier work before releasing local and remote resources.
+    Call ``close()`` when using the application without a context manager.
+    Shutdown is terminal: assemble a new application for a new runtime lifetime.
+    Remote inference holds explicit leases through deployments.use(slug).
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    def __init__(
+        self,
+        *,
+        deployments: DeploymentService,
+        sanitizer: Callable[[], PresidioSanitizer],
+        foi: FOIResources,
+        sar: SARClassifier,
+        automatic: AutomaticClassifier,
+        crawl_policy: CrawlPolicy,
+        foi_finder: FOIFinder,
+    ) -> None:
+        """
+        Retain injected runtime dependencies without starting background work.
 
-    deployments: DeploymentService
-    sanitizer: Callable[[], PresidioSanitizer]
-    foi: FOIResources
-    sar: SARClassifier
-    automatic: AutomaticClassifier
-    crawl_policy: CrawlPolicy
-    foi_finder: FOIFinder
+        Configuration has already been validated by DeploymentCatalog. These are
+        live service objects, retained by identity rather than parsed as data.
+        Lifecycle tasks belong to this instance and start only on entry or close.
+        """
+        self.deployments = deployments
+        self.sanitizer = sanitizer
+        self.foi = foi
+        self.sar = sar
+        self.automatic = automatic
+        self.crawl_policy = crawl_policy
+        self.foi_finder = foi_finder
+        self._idle_task: asyncio.Task[None] | None = None
+        self._close_task: asyncio.Task[None] | None = None
+
+    async def __aenter__(self) -> Self:
+        """
+        Start one idle cleanup loop, rejecting nested or completed lifetimes.
+        """
+        if self._close_task is not None or self._idle_task is not None:
+            raise RuntimeError("Application lifecycle has already started or closed")
+        self._idle_task = asyncio.create_task(self.deployments.idle_scaler())
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """
+        Release application resources even when the caller fails or is cancelled.
+        """
+        await self.close()
+
+    async def close(self) -> None:
+        """
+        Finish shutdown once, including when multiple callers request it.
+
+        Shield cleanup from caller cancellation and wait for it before propagating
+        cancellation. Stop idle cleanup, drain both classifiers, then release the
+        deployment service. A failed step does not skip the remaining steps.
+        """
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close())
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(self._close_task)
+                break
+            except asyncio.CancelledError:
+                if self._close_task.cancelled():
+                    raise
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _close(self) -> None:
+        """
+        Perform ordered cleanup behind the public, idempotent close method.
+        """
+        failures: list[BaseException] = []
+        if self._idle_task is not None:
+            self._idle_task.cancel()
+            try:
+                await self._idle_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                failures.append(exc)
+        for close in (self.sar.close, self.automatic.close, self.deployments.close):
+            try:
+                await close()
+            except (Exception, asyncio.CancelledError) as exc:
+                failures.append(exc)
+        if failures:
+            raise BaseExceptionGroup("Application shutdown failed", failures)
 
 
 def assemble_application(
@@ -100,13 +188,12 @@ def assemble_application(
     cold local owners through the shared registry. Feature configuration is checked
     only when its provider is used, allowing management-only catalogs to assemble.
 
-    Reuse the returned application across a batch. Call its deployment service's
-    close() method when finished to release resources.
+    Reuse the returned application across a batch inside an async context manager,
+    or call its close() method when finished to drain work and release resources.
     """
     from .automatic.pipeline import AutomaticClassifier
     from .foi.backends import FOIResources
     from .foi.email_finder.service import FOIFinder
-    from .sanitization.presidio import PresidioSanitizer
     from .sar.pipeline import SARClassifier
     from .web.crawl import CrawlPolicy
 
@@ -140,16 +227,6 @@ def assemble_application(
             lambda: catalog.require_automatic().classifier,
         ),
         max_concurrency=settings.automatic_max_concurrency,
-    )
-    Application.model_rebuild(
-        _types_namespace={
-            "FOIResources": FOIResources,
-            "FOIFinder": FOIFinder,
-            "CrawlPolicy": CrawlPolicy,
-            "SARClassifier": SARClassifier,
-            "AutomaticClassifier": AutomaticClassifier,
-            "PresidioSanitizer": PresidioSanitizer,
-        }
     )
     crawl_policy = CrawlPolicy()
     return Application(

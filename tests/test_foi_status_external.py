@@ -12,7 +12,7 @@ from starlette.testclient import TestClient
 
 from llm_management.foi.examples import validation_examples
 from llm_management.foi.response_schemas import ExtractionOutput
-from llm_management.server import app
+from llm_management.server import create_app
 from tests.foi_validation import assert_response_matches, post_example
 
 pytestmark = pytest.mark.external
@@ -23,7 +23,7 @@ def client():
     """
     Own the API lifecycle and scale touched deployments down after the batch.
     """
-    with TestClient(app) as connection:
+    with TestClient(create_app()) as connection:
         yield connection
 
 
