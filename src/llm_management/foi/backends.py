@@ -23,6 +23,7 @@ from ..deployments.local_config import (
     SequenceClassifierDeployment,
 )
 from ..deployments.types import DeploymentAccess as DeploymentAccess
+from ..deployments.types import DeploymentInference
 from ..inference.classifiers import LocalSequenceClassifier
 from ..inference.errors import ClassifierOutputError, ClassifierUnavailable
 from ..inference.providers import ResourceProviders
@@ -367,7 +368,7 @@ async def classify_question_units(
     texts: Sanitized[list[str]],
     *,
     backend: ExtractionBackend,
-    deployments: DeploymentAccess,
+    deployments: DeploymentInference,
     resources: FOIResources | None = None,
 ) -> ClassificationRows:
     """
@@ -401,10 +402,9 @@ async def classify_question_units(
         raise ClassifierUnavailable(
             "Extraction deployment must use the configured QuestionSlice model"
         )
-    deployment = await deployments.ensure_running(slug)
-    cfg = deployment.config
-    state = deployment.state
-    try:
+    async with deployments.use(slug) as deployment:
+        cfg = deployment.config
+        state = deployment.state
         rows = await classify_remote(
             texts=texts,
             model=cfg.model,
@@ -414,7 +414,5 @@ async def classify_question_units(
             # A remote classification endpoint would return these probabilities directly.
             embedding_head=head.classify,
         )
-    finally:
-        deployments.touch(slug)
     # Exoscale imports by repository name; the remote weight SHA is unverified.
     return ClassificationRows(rows, classifier.model_name, None)

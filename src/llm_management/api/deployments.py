@@ -85,7 +85,7 @@ def deployment_status(
     its current replica count.
     """
     config = service.get_config(slug)
-    state = service.cache.ensure(service.get_backend(config.slug))
+    state = service.status.ensure(service.get_backend(config.slug))
     return DeploymentStatusResponse(
         slug=slug, exists=state.exists, replicas=state.replicas
     )
@@ -154,10 +154,11 @@ def all_deployments_overview(service: DependencyService) -> AllDeploymentsRespon
     now = time.time()
     overviews = []
     for config in service.catalog.exoscale.deployment:
-        state = service.cache.ensure(service.get_backend(config.slug))
+        state = service.status.ensure(service.get_backend(config.slug))
+        activity = service.activity.get(config.slug)
         idle = (
-            now - state.last_request_time
-            if state.last_request_time > 0 and state.replicas > 0
+            now - activity.last_request_time
+            if activity.last_request_time > 0 and state.replicas > 0
             else None
         )
         remaining = max(0.0, service.idle_seconds - idle) if idle is not None else None

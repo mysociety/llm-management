@@ -9,7 +9,8 @@ from contextlib import contextmanager
 
 from fastapi import APIRouter, HTTPException
 
-from ..foi import backends, pipeline, response_analysis
+from ..deployments.types import DeploymentInference
+from ..foi import pipeline, response_analysis
 from ..foi.email_finder.schemas import FOIResult, PublicAuthority
 from ..foi.email_finder.service import FinderInputError
 from ..foi.response_schemas import ExtractionOutput, ResponseAnalysisInput
@@ -26,13 +27,11 @@ from .dependencies import DependencyFOIFinder, DependencyFOIResources, Dependenc
 router = APIRouter(tags=["FOI endpoints"])
 
 
-def foi_deployments(service: DependencyService) -> backends.DeploymentAccess:
+def foi_deployments(service: DependencyService) -> DeploymentInference:
     """
     Bind the shared deployment lifecycle to the HTTP-independent FOI pipeline.
     """
-    return backends.DeploymentAccess(
-        service.get_config, service.ensure_running, service.cache.touch
-    )
+    return service.access
 
 
 @contextmanager

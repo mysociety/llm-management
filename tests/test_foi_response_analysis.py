@@ -12,7 +12,7 @@ from llm_management.foi.response_schemas import ExtractionOutput
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
+    monkeypatch.setattr(server.app.state.service, "active_deployments", lambda: [])
     with TestClient(server.app) as client:
         yield client
 
@@ -59,7 +59,7 @@ def output():
 
 def test_unconfigured_response_does_not_provision(client, body, monkeypatch):
     ensure = AsyncMock(side_effect=AssertionError("must not provision"))
-    monkeypatch.setattr(server.app.state.service, "ensure_running", ensure)
+    monkeypatch.setattr(server.app.state.service, "_prepare_locked", ensure)
     foi = server.app.state.application.foi.catalog.require_foi()
     monkeypatch.setattr(foi, "response_deployment", None)
     response = client.post("/endpoint/foi/response_status", json=body)

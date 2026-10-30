@@ -21,7 +21,7 @@ def test_activity_lease_prevents_scaling_and_releases_after_failure():
     service = DeploymentService(
         SimpleNamespace(get=lambda slug: config), cache, ResourceRegistry()
     )
-    cache.ensure = lambda backend: state
+    cache.status.ensure = lambda backend: state
     service.backends["model"] = SimpleNamespace(
         config=config, scale_to_zero=config.scale_to_zero
     )
@@ -31,14 +31,14 @@ def test_activity_lease_prevents_scaling_and_releases_after_failure():
             with service.track_requests():
                 await service.ensure_running("model")
                 await service.ensure_running("model")
-                assert state.requests_in_flight == 1
+                assert service.activity.get("model").requests_in_flight == 1
                 with pytest.raises(DeploymentServiceError) as failure:
                     await service.scale_to_zero("model")
                 assert failure.value.status_code == 409
                 raise ValueError("caller failed")
 
     asyncio.run(run())
-    assert state.requests_in_flight == 0
+    assert service.activity.get("model").requests_in_flight == 0
     config.scale_to_zero.assert_not_called()
 
 

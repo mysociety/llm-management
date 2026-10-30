@@ -1,18 +1,18 @@
 """
-Internal cache for deployment state and last-request timestamps.
+Compatibility adapter for independently owned cloud status and activity.
 
-Avoids constantly querying Exoscale management APIs by keeping a local
-record of known deployments and the last time a request was forwarded.
+Refreshing a snapshot cannot reset idle timers or replace live request leases.
+Combined DeploymentState values remain available for existing callers.
 """
 
 from __future__ import annotations
 
 import asyncio
-import threading
-import time
 from typing import TYPE_CHECKING
 
-from .types import DeploymentState
+from .activity import DeploymentActivityTracker
+from .status import DeploymentStatusCache
+from .types import DeploymentActivity, DeploymentSnapshot, DeploymentState
 
 if TYPE_CHECKING:
     from .backends import DeploymentBackend
@@ -20,139 +20,145 @@ if TYPE_CHECKING:
 
 class DeploymentCache:
     """
-    Thread-safe in-memory cache of deployment states. Entries older
-    than cache_ttl_seconds are considered stale and will be refreshed
-    on the next access.
+    Cache cloud observations while retaining the legacy combined-state interface.
+
+    Activity lives in a separate tracker, shared with the deployment service.
+    Cache reads are detached snapshots; changes go through explicit cache or
+    activity operations. The cache never loads models or provisions deployments.
     """
 
-    def __init__(self, cache_ttl_seconds: float = 60.0) -> None:
-        self._lock = threading.Lock()
-        self._deployments: dict[str, DeploymentState] = {}
-        self._ensure_locks: dict[str, asyncio.Lock] = {}
-        self.cache_ttl_seconds = cache_ttl_seconds
+    def __init__(
+        self,
+        cache_ttl_seconds: float = 60.0,
+        *,
+        status: DeploymentStatusCache | None = None,
+        activity: DeploymentActivityTracker | None = None,
+    ) -> None:
+        """
+        Adapt separately owned status and activity to the legacy cache interface.
+
+        Standalone legacy construction supplies defaults. Application assembly passes
+        both dependencies explicitly; normal execution uses those dependencies directly.
+        """
+        self.status = (
+            status if status is not None else DeploymentStatusCache(cache_ttl_seconds)
+        )
+        self.activity = (
+            activity if activity is not None else DeploymentActivityTracker()
+        )
+
+    @property
+    def cache_ttl_seconds(self) -> float:
+        """
+        Preserve access to the status observation TTL.
+        """
+        return self.status.cache_ttl_seconds
+
+    @cache_ttl_seconds.setter
+    def cache_ttl_seconds(self, value: float) -> None:
+        """
+        Update status expiry without changing activity ownership.
+        """
+        self.status.cache_ttl_seconds = value
 
     def ensure_lock(self, slug: str) -> asyncio.Lock:
         """
-        Return a per-slug asyncio.Lock, creating one if it doesn't exist.
-        Ensures only one caller at a time triggers create_or_resume for
-        a given deployment.
+        Compatibility access to the activity tracker's lifecycle lock.
         """
-        with self._lock:
-            if slug not in self._ensure_locks:
-                self._ensure_locks[slug] = asyncio.Lock()
-            return self._ensure_locks[slug]
+        return self.activity.ensure_lock(slug)
 
     def get(self, slug: str) -> DeploymentState | None:
         """
-        Return the cached state for a deployment, or None if not cached.
+        Combine cached status with current activity without exposing mutable storage.
         """
-        with self._lock:
-            return self._deployments.get(slug)
+        snapshot = self.status.get(slug)
+        return self.state(snapshot) if snapshot is not None else None
+
+    def state(self, snapshot: DeploymentSnapshot) -> DeploymentState:
+        """
+        Build the legacy flat view from independent status and activity records.
+        """
+        activity = self.activity.get(snapshot.slug)
+        return DeploymentState(
+            slug=snapshot.slug,
+            backend=snapshot.backend,
+            exists=snapshot.exists,
+            replicas=snapshot.replicas,
+            deployment_url=snapshot.deployment_url,
+            api_key=snapshot.api_key,
+            last_refreshed=snapshot.last_refreshed,
+            last_request_time=activity.last_request_time,
+            requests_in_flight=activity.requests_in_flight,
+        )
 
     def set(self, state: DeploymentState) -> None:
         """
-        Insert or replace the cached state for a deployment.
+        Explicitly seed both status and activity from a legacy combined record.
+
+        Normal cloud refreshes use refresh(), which never replaces activity.
         """
-        with self._lock:
-            self._deployments[state.slug] = state
+        self.status.set(state)
+        self.activity.set(
+            state.slug,
+            DeploymentActivity(
+                last_request_time=state.last_request_time,
+                requests_in_flight=state.requests_in_flight,
+            ),
+        )
 
     def touch(self, slug: str) -> None:
         """
-        Record that a request was just forwarded to this deployment,
-        resetting the idle-scaler countdown.
+        Compatibility entry point for recording application activity.
         """
-        with self._lock:
-            if slug in self._deployments:
-                self._deployments[slug].last_request_time = time.time()
+        if self.get(slug) is not None:
+            self.activity.touch(slug)
 
     def cooldown(self, slug: str, timeout_seconds: float) -> float:
         """
-        Backdate activity to leave at most 60 seconds on the idle timer.
+        Compatibility entry point for shortening an application's idle countdown.
         """
-        with self._lock:
-            state = self._deployments[slug]
-            now = time.time()
-            latest = now - timeout_seconds + 60
-            state.last_request_time = (
-                min(state.last_request_time, latest)
-                if state.last_request_time > 0
-                else latest
-            )
-            return max(0.0, timeout_seconds - (now - state.last_request_time))
+        return self.activity.cooldown(slug, timeout_seconds)
 
     def is_stale(self, slug: str) -> bool:
         """
-        Return True if the entry is missing or older than the cache TTL.
+        Check only the cloud observation's age, independently of recent inference.
         """
-        with self._lock:
-            entry = self._deployments.get(slug)
-            if entry is None:
-                return True
-            return (time.time() - entry.last_refreshed) > self.cache_ttl_seconds
+        return self.status.is_stale(slug)
 
     def begin_request(self, slug: str) -> None:
-        with self._lock:
-            self._deployments[slug].requests_in_flight += 1
-            self._deployments[slug].last_request_time = time.time()
+        """
+        Compatibility entry point for acquiring an application lease.
+        """
+        self.activity.begin_request(slug)
 
     def end_request(self, slug: str) -> None:
-        with self._lock:
-            state = self._deployments.get(slug)
-            if state:
-                state.requests_in_flight = max(0, state.requests_in_flight - 1)
-                state.last_request_time = time.time()
+        """
+        Compatibility entry point for releasing an application lease.
+        """
+        self.activity.end_request(slug)
 
     def all_active(self) -> list[DeploymentState]:
         """
-        Return all deployments that have received at least one request
-        and currently have replicas > 0.
+        Find used running deployments, including Compute VMs without a ready tunnel.
         """
-        with self._lock:
-            return [
-                ds
-                for ds in self._deployments.values()
-                if ds.last_request_time > 0
-                and (ds.replicas > 0 or ds.backend == "exoscale_compute" and ds.exists)
-            ]
+        return [
+            self.state(snapshot) for snapshot in self.activity.active(self.status.all())
+        ]
 
     def remove(self, slug: str) -> None:
         """
-        Remove a deployment from the cache entirely.
+        Evict cloud status without discarding application activity or live leases.
         """
-        with self._lock:
-            self._deployments.pop(slug, None)
+        self.status.remove(slug)
 
     def refresh(self, backend: DeploymentBackend) -> DeploymentState:
         """
-        Query the Exoscale API for the current state of a deployment and
-        update the cache entry. Preserves the existing last_request_time
-        so the idle-scaler timer is not reset.
+        Replace the cloud observation without rewriting activity storage.
         """
-        cfg = backend.config
-        status = backend.query_status()
-        with self._lock:
-            existing = self._deployments.get(cfg.slug)
-            last_request_time = existing.last_request_time if existing else 0.0
-            requests_in_flight = existing.requests_in_flight if existing else 0
-            state = DeploymentState(
-                slug=cfg.slug,
-                backend=getattr(cfg, "backend", "exoscale_managed"),
-                exists=status.exists,
-                replicas=status.replicas,
-                deployment_url=status.deployment_url,
-                api_key=status.api_key,
-                last_request_time=last_request_time,
-                last_refreshed=time.time(),
-                requests_in_flight=requests_in_flight,
-            )
-            self._deployments[cfg.slug] = state
-            return state
+        return self.state(self.status.refresh(backend))
 
     def ensure(self, backend: DeploymentBackend) -> DeploymentState:
         """
-        Return the cached deployment state, refreshing from the Exoscale
-        API if the entry is missing or has exceeded its TTL.
+        Return fresh cached status, querying the provider after eviction or expiry.
         """
-        if self.is_stale(backend.config.slug):
-            return self.refresh(backend)
-        return self.get(backend.config.slug)  # type: ignore[return-value]
+        return self.state(self.status.ensure(backend))

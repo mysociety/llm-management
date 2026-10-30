@@ -4,6 +4,9 @@ HTTP adapters for example agents and immigration classification.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 import httpx2
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -41,26 +44,25 @@ class ClefImmigrationRequest(BaseModel):
 router = APIRouter()
 
 
-async def chat_model_from_slug(
+@asynccontextmanager
+async def use_chat_model(
     slug: str, service: DependencyService
-) -> OpenAIChatModel:
+) -> AsyncGenerator[OpenAIChatModel, None]:
     """
-    Return an OpenAI-compatible chat model backed by the given deployment.
-    Ensures the deployment is cached and running, touches the idle timer,
-    and raises 503 if the deployment is not available.
+    Hold a deployment lease while the caller runs its OpenAI-compatible agent.
     """
     cfg = service.get_config(slug)
     if getattr(cfg, "protocol", "openai") != "openai":
         raise HTTPException(
             status_code=400, detail="This endpoint requires an OpenAI deployment."
         )
-    deployment = await service.ensure_running(slug)
-    cfg = deployment.config
-    state = deployment.state
-    return OpenAIChatModel(
-        cfg.model,
-        provider=OpenAIProvider(api_key=state.api_key, base_url=state.deployment_url),
-    )
+    async with service.use(slug) as running:
+        yield OpenAIChatModel(
+            running.config.model,
+            provider=OpenAIProvider(
+                api_key=running.state.api_key, base_url=running.state.deployment_url
+            ),
+        )
 
 
 @router.post("/endpoint/misc/capital_city", tags=["Misc endpoints"])
@@ -72,8 +74,8 @@ async def capital_city_endpoint(
     city as structured output via a pydantic-ai Agent running on the
     specified deployment.
     """
-    model = await chat_model_from_slug(deployment, service)
-    return await capital_city_agent(model=model, country=body.country)
+    async with use_chat_model(deployment, service) as model:
+        return await capital_city_agent(model=model, country=body.country)
 
 
 @router.post("/endpoint/foi/immigration_detection", include_in_schema=False)
@@ -87,8 +89,8 @@ async def immigration_detection_endpoint(
     as a plain text response ("IMM" or "FOI") via a pydantic-ai Agent
     running on the specified deployment.
     """
-    model = await chat_model_from_slug(deployment, service)
-    return await immigration_detection_agent(model=model, request=body.body)
+    async with use_chat_model(deployment, service) as model:
+        return await immigration_detection_agent(model=model, request=body.body)
 
 
 @router.post("/endpoint/foi/immigration_detection/clef", include_in_schema=False)
@@ -100,34 +102,34 @@ async def clef_immigration_detection_endpoint(
     """
     Classify a request with one Clef choice question using existing labels.
     """
-    running = await service.ensure_running(deployment)
-    cfg = running.config
-    state = running.state
-    # The provider owns the /v1/systemone URL and response validation.
-    async with httpx2.AsyncClient(timeout=300.0) as client:
-        model = SystemOneModel(
-            cfg.model,
-            provider=SystemOneProvider(
-                base_url=state.deployment_url,
-                api_key=state.api_key,
-                http_client=client,
-            ),
-        )
-        try:
-            return await immigration_decision_agent(model=model, request=body.body)
-        except ModelHTTPError as exc:
-            raise HTTPException(
-                status_code=502, detail="Clef classification request failed"
-            ) from exc
-        except ModelAPIError as exc:
-            if isinstance(exc.__cause__, httpx2.TimeoutException):
+    async with service.use(deployment) as running:
+        cfg = running.config
+        state = running.state
+        # The provider owns the /v1/systemone URL and response validation.
+        async with httpx2.AsyncClient(timeout=300.0) as client:
+            model = SystemOneModel(
+                cfg.model,
+                provider=SystemOneProvider(
+                    base_url=state.deployment_url,
+                    api_key=state.api_key,
+                    http_client=client,
+                ),
+            )
+            try:
+                return await immigration_decision_agent(model=model, request=body.body)
+            except ModelHTTPError as exc:
                 raise HTTPException(
-                    status_code=504, detail="Clef server timed out"
+                    status_code=502, detail="Clef classification request failed"
                 ) from exc
-            raise HTTPException(
-                status_code=503, detail="Clef server could not be reached"
-            ) from exc
-        except UnexpectedModelBehavior as exc:
-            raise HTTPException(
-                status_code=502, detail="Clef returned an invalid classification"
-            ) from exc
+            except ModelAPIError as exc:
+                if isinstance(exc.__cause__, httpx2.TimeoutException):
+                    raise HTTPException(
+                        status_code=504, detail="Clef server timed out"
+                    ) from exc
+                raise HTTPException(
+                    status_code=503, detail="Clef server could not be reached"
+                ) from exc
+            except UnexpectedModelBehavior as exc:
+                raise HTTPException(
+                    status_code=502, detail="Clef returned an invalid classification"
+                ) from exc

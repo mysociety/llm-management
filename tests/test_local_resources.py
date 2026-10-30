@@ -34,8 +34,8 @@ def test_local_cleanup_failure_does_not_skip_remote_shutdown(monkeypatch):
     monkeypatch.setattr(server.app.state.service, "resources", registry)
     monkeypatch.setattr(server.settings, "auth_tokens", {"test": "token"})
     monkeypatch.setattr(
-        server.app.state.service.cache,
-        "all_active",
+        server.app.state.service,
+        "active_deployments",
         lambda: [SimpleNamespace(slug="remote")],
     )
     cfg = SimpleNamespace(scale_to_zero=Mock())
@@ -124,7 +124,7 @@ def test_classifier_unloads_model_and_tokenizer_under_lease():
 def test_cpu_ensure_status_and_failure(monkeypatch):
     sanitizer = server.app.state.application.sanitizer()
     monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
+    monkeypatch.setattr(server.app.state.service, "active_deployments", lambda: [])
     with TestClient(server.app) as client:
         assert client.post("/deployments/presidio/warm-up").json()["action"] == "warmed"
         rows = client.get("/local-deployments").json()

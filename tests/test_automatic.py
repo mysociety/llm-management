@@ -229,7 +229,7 @@ def test_endpoint_contract_and_auth(chain, monkeypatch):
         server.app.state.application.automatic, "encoder_provider", lambda: encoder
     )
     monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
+    monkeypatch.setattr(server.app.state.service, "active_deployments", lambda: [])
     with TestClient(server.app) as client:
         response = client.post(
             "/endpoint/foi/automatic_response_detection",
@@ -345,7 +345,7 @@ def test_api_startup_does_not_load_automatic_models(monkeypatch):
     monkeypatch.setattr(
         server.app.state.application.automatic, "encoder_provider", encoder
     )
-    monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
+    monkeypatch.setattr(server.app.state.service, "active_deployments", lambda: [])
     with TestClient(server.app) as client:
         assert client.get("/health").status_code == 200
     logistic.assert_not_called()

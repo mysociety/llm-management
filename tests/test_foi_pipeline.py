@@ -1,11 +1,19 @@
 """Direct pipeline tests: no FastAPI app or TestClient needed."""
 
+from __future__ import annotations
+
 import asyncio
-from types import SimpleNamespace
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, Mock
 
 from llm_management.deployments import get_catalog
-from llm_management.deployments.types import RunningDeployment
+from llm_management.deployments.config import DeploymentConfig
+from llm_management.deployments.types import (
+    DeploymentInference,
+    DeploymentSnapshot,
+    RunningDeployment,
+)
 from llm_management.foi import backends, pipeline, topic_classification
 from llm_management.foi.backends import ClassificationRows, DeploymentAccess
 from llm_management.foi.schemas import TopicOutput
@@ -52,19 +60,30 @@ def test_waiting_topic_model_does_not_block_other_extractions(
         "prepare_topic_request",
         lambda *args, **kwargs: presidio.sanitize_payload({"messages": []}),
     )
-    cfg = SimpleNamespace(
-        model=get_catalog().get(get_catalog().require_foi().topic_deployment).model
-    )
-    deployments = DeploymentAccess(
-        lambda slug: cfg,
-        AsyncMock(
-            return_value=RunningDeployment(
-                config=cfg,
-                state=SimpleNamespace(deployment_url="https://test/v1", api_key="test"),
-            )
-        ),
-        Mock(),
-    )
+    cfg = get_catalog().get(get_catalog().require_foi().topic_deployment)
+    released = Mock()
+
+    class InferenceClient:
+        """
+        A feature client with no management, cache or legacy callback operations.
+        """
+
+        def get_config(self, slug: str) -> DeploymentConfig:
+            return cfg
+
+        @asynccontextmanager
+        async def use(self, slug: str) -> AsyncGenerator[RunningDeployment, None]:
+            try:
+                yield RunningDeployment(
+                    config=cfg,
+                    state=DeploymentSnapshot(
+                        slug=slug, deployment_url="https://test/v1", api_key="test"
+                    ),
+                )
+            finally:
+                released(slug)
+
+    deployments: DeploymentInference = InferenceClient()
 
     async def run():
         entered, release = asyncio.Event(), asyncio.Event()
@@ -99,6 +118,6 @@ def test_waiting_topic_model_does_not_block_other_extractions(
         assert result.questions[0].text == "Please provide reports."
         assert result.promoted_continuation_index == 0
         assert result.classification.questions[0].regime == "FOI"
-        deployments.touch.assert_called_once()
+        released.assert_called_once_with(cfg.slug)
 
     asyncio.run(run())
