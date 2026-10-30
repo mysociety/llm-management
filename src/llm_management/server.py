@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from .api import agents, classifiers, deployments, foi, mocks, proxies
 from .api.auth import bearer_auth, require_bearer_auth_when_enabled
 from .api.limits import RequestLimits
-from .bootstrap import Application, assemble_application
+from .bootstrap import ApplicationRuntime, assemble_runtime
 from .deployments.errors import DeploymentServiceError, LLMManagementError
 from .inference.errors import ClassifierBusy
 from .settings import settings
@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "requests. Ensure this instance is protected at the network level "
             "before exposing it to internet traffic."
         )
-    async with app.state.application:
+    async with app.state.runtime:
         yield
 
 
@@ -50,13 +50,15 @@ async def service_error(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
-def create_app(application: Application | None = None) -> FastAPI:
+def create_app(runtime: ApplicationRuntime) -> FastAPI:
     """
-    Construct an API around explicit, cold application dependencies.
+    Bind HTTP routes to an existing runtime without assembling dependencies.
+
+    The FastAPI lifespan starts and closes this runtime. Assembly is explicit at
+    the entry point so tests and other hosts can supply independent runtimes.
     """
-    application = application if application is not None else assemble_application()
     app = FastAPI(title="LLM Management Proxy", docs_url="/", lifespan=lifespan)
-    app.state.application = application
+    app.state.runtime = runtime
     app.add_exception_handler(LLMManagementError, deployment_error)
     app.add_exception_handler(DeploymentServiceError, service_error)
 
@@ -83,4 +85,4 @@ def create_app(application: Application | None = None) -> FastAPI:
     return app
 
 
-app = create_app()
+app = create_app(runtime=assemble_runtime())

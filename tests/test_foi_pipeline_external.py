@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 from starlette.testclient import TestClient
 
+from llm_management.bootstrap import assemble_runtime
 from llm_management.deployments import get_catalog
 from llm_management.foi.examples import ExtractionExpectation, validation_examples
 from llm_management.foi.schemas import ExtractQuestionsResponse, TopicOutput
@@ -25,7 +26,7 @@ def client():
     """
     Release model resources and scale touched deployments down after the batch.
     """
-    with TestClient(create_app()) as connection:
+    with TestClient(create_app(runtime=assemble_runtime())) as connection:
         yield connection
 
 

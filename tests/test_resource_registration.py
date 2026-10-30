@@ -65,12 +65,12 @@ from llm_management.deployments.catalog import DeploymentCatalog
 catalog = DeploymentCatalog.load()
 assert not any(name.startswith(("llm_management.foi.", "llm_management.sar.",
     "llm_management.automatic.", "llm_management.sanitization.")) for name in sys.modules)
-from llm_management.bootstrap import assemble_application
+from llm_management.bootstrap import assemble_runtime
 from llm_management.inference.resources import ResourceRegistry
 from llm_management.inference.providers import ResourceProviders
 from llm_management.deployments.resource_types import RESOURCE_TYPES
 registry = ResourceRegistry()
-application = assemble_application(catalog, registry)
+runtime = assemble_runtime(catalog, registry)
 assert registry.all() == []
 # All real registered factories must also construct cold owners.
 other_registry = ResourceRegistry()
@@ -140,16 +140,16 @@ def test_typed_provider_rejects_different_schema_with_same_owner_type():
 
 
 def test_management_only_catalog_and_missing_binding_are_deferred():
-    from llm_management.bootstrap import assemble_application
+    from llm_management.bootstrap import assemble_runtime
 
     catalog = DeploymentCatalog()
-    application = assemble_application(catalog)
-    assert application.foi.category_matcher is None
+    runtime = assemble_runtime(catalog)
+    assert runtime.foi.category_matcher is None
     with pytest.raises(LLMManagementError, match="FOI pipeline is not configured"):
-        application.foi.classifier()
+        runtime.foi.classifier()
     for provider in (
-        application.automatic.logistic_provider,
-        application.automatic.encoder_provider,
+        runtime.automatic.logistic_provider,
+        runtime.automatic.encoder_provider,
     ):
         with pytest.raises(
             ValueError, match="Application requires an automatic-response pipeline"

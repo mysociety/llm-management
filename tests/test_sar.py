@@ -24,10 +24,10 @@ def chain(monkeypatch):
     deberta = Mock()
     deberta.classify.return_value = [[0.5, 0.5]]
     monkeypatch.setattr(
-        server.app.state.application.sar, "logistic_provider", lambda: logistic
+        server.app.state.runtime.sar, "logistic_provider", lambda: logistic
     )
     monkeypatch.setattr(
-        server.app.state.application.sar, "encoder_provider", lambda: deberta
+        server.app.state.runtime.sar, "encoder_provider", lambda: deberta
     )
     return logistic, deberta
 
@@ -123,7 +123,7 @@ def test_resource_registration_and_warmup_group():
     assert {
         get_catalog().require_sar().logistic,
         get_catalog().require_sar().classifier,
-    } <= server.app.state.application.deployments.resources.names()
+    } <= server.app.state.runtime.deployments.resources.names()
     assert config.get_group("group_sar_pipeline_cpu").deployments == [
         get_catalog().require_sar().logistic,
         get_catalog().require_sar().classifier,
@@ -133,7 +133,7 @@ def test_resource_registration_and_warmup_group():
 def test_endpoint_conservative_response(chain, monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
     monkeypatch.setattr(
-        server.app.state.application.deployments, "active_deployments", lambda: []
+        server.app.state.runtime.deployments, "active_deployments", lambda: []
     )
     chain[1].classify.side_effect = ClassifierBusy()
     with TestClient(server.app) as client:
@@ -147,7 +147,7 @@ def test_endpoint_conservative_response(chain, monkeypatch):
 
 @pytest.mark.parametrize("token_count,accepted", [(512, True), (513, False)])
 def test_deberta_token_budget_without_truncation(monkeypatch, token_count, accepted):
-    model = server.app.state.application.sar.encoder_provider()
+    model = server.app.state.runtime.sar.encoder_provider()
     tokenizer = Mock(return_value={"input_ids": [[1] * token_count]})
     monkeypatch.setattr(model, "_tokenizer", tokenizer)
     if accepted:
@@ -225,7 +225,7 @@ def test_unexpected_logistic_cutoff_is_rejected(monkeypatch):
 def test_endpoint_requires_authentication(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {"test": "secret"})
     monkeypatch.setattr(
-        server.app.state.application.deployments, "active_deployments", lambda: []
+        server.app.state.runtime.deployments, "active_deployments", lambda: []
     )
     with TestClient(server.app) as client:
         assert (
@@ -336,7 +336,7 @@ def test_fast_logistic_loading_failure_keeps_unclear_flag(chain):
 def test_endpoint_fast_parameter_and_stage(chain, monkeypatch, fast):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
     monkeypatch.setattr(
-        server.app.state.application.deployments, "active_deployments", lambda: []
+        server.app.state.runtime.deployments, "active_deployments", lambda: []
     )
     payload = {"body": "my records"}
     if fast is not None:

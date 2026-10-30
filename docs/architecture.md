@@ -38,7 +38,7 @@ flowchart TD
 
 `DeploymentCatalog.load()` and `get_catalog()` validate configuration without
 registering models, loading weights or constructing cloud backends.
-`assemble_application()` creates the deployment service and registers cold
+`assemble_runtime()` creates the deployment service and registers cold
 factories. Each factory constructs a controller on first use. Model weights load
 only during inference or explicit warm-up.
 
@@ -49,23 +49,26 @@ warm-up group membership and feature bindings. These checks use configuration ty
 only. A new resource type needs a feature-binding check only when its feature imposes
 additional constraints, such as two resources sharing a checkpoint.
 
-`Application` is a plain typed runtime container. Its constructor retains injected
+`ApplicationRuntime` owns services, resources and their lifecycle; `app` is the
+FastAPI HTTP interface hosting that runtime. The runtime also serves direct batch
+callers without FastAPI. It is a plain typed container. Its constructor retains injected
 dependencies by identity; it does not parse configuration, build a Pydantic schema
 or start tasks. Configuration validation belongs to `DeploymentCatalog`.
-Entering `async with application` starts idle cleanup. Closing stops that loop,
+Entering `async with runtime` starts idle cleanup. Closing stops that loop,
 drains SAR and automatic classifier work, then releases deployment resources.
 Concurrent closes share one cleanup task, and cancellation waits for cleanup before
-propagating. Each application has its own lifecycle; a closed instance cannot restart.
+propagating. Each runtime has its own lifecycle; a closed instance cannot restart.
 
 HTTP routers are module-level objects. The single FastAPI dependency in
-`api/__init__.py` retrieves the typed application from
-`request.app.state.application`. Routes accept `DependencyApplication` and select
+`api/__init__.py` retrieves the typed runtime from
+`request.app.state.runtime`. Routes accept `DependencyRuntime` and select
 its service or feature owner directly, without constructing resources per request.
 Feature functions still receive their specific dependencies explicitly. Tests can
-override `get_application` to substitute the complete runtime.
-`create_app()` binds an application to the routes and delegates lifespan to its
-context manager. Separate app instances can use the same routes with independent
-assemblies.
+override `get_runtime` to substitute the complete runtime.
+`create_app(runtime=...)` requires an existing runtime and delegates lifespan to
+its context manager. It configures HTTP routes and middleware; it does not assemble
+services. The server entry point uses `app = create_app(runtime=assemble_runtime())`.
+Separate FastAPI apps can use the same routes with independent runtimes.
 
 An application owns its deployment status cache, activity tracker, backend controllers,
 local-resource registry and automatic-classifier admission capacity. Warm-up and
@@ -90,10 +93,10 @@ retains their guards for warm-up, status and unloading. Both refer to the same
 resource. Tokenizer factories are a smaller variant: their callbacks hold cached
 state, and the returned `LocalResource` itself serves as the provider's owner.
 
-HTTP startup, batch entry points and test fixtures assemble their application.
+HTTP startup, batch entry points and test fixtures assemble their runtime.
 Feature functions receive the specific resources, providers or deployment client
-they need; they never look up a process-wide application. Batch callers use
-`async with assemble_application() as application` to own startup and shutdown.
+they need; they never look up a process-wide runtime. Batch callers use
+`async with assemble_runtime() as runtime` to own startup and shutdown.
 Tests can instead supply small provider or sanitizer doubles for isolated behaviour.
 
 The service coordinates locks, activity, startup cancellation, warm-up, scaling and
@@ -140,28 +143,28 @@ delegates to the shared predictor.
 The same assembly used by HTTP callers can be supplied to the FOI pipeline:
 
 ```python
-from llm_management.bootstrap import assemble_application
+from llm_management.bootstrap import assemble_runtime
 from llm_management.foi.pipeline import process_information_request
 
 
 async def process_one(text: str):
-    async with assemble_application() as application:
+    async with assemble_runtime() as runtime:
         return await process_information_request(
             text,
-            deployments=application.deployments,
-            resources=application.foi,
+            deployments=runtime.deployments,
+            resources=runtime.foi,
         )
 ```
 
 Reuse one assembly for an entire batch rather than constructing it per item.
-`application.sar.detect(text, fast=True)` and
-`application.automatic.detect(body, fast=True)` use the same local owners as
-`application.deployments.warmup_resource(slug)`. Exiting the application context stops idle cleanup,
+`runtime.sar.detect(text, fast=True)` and
+`runtime.automatic.detect(body, fast=True)` use the same local owners as
+`runtime.deployments.warmup_resource(slug)`. Exiting the runtime context stops idle cleanup,
 drains classifier work, then unloads inactive local resources and scales down remote
-deployments used by that application. HTTP lifespan uses this same context manager.
-For manually managed lifetimes, call `await application.close()`; repeated calls
+deployments used by that runtime. HTTP lifespan uses this same context manager.
+For manually managed lifetimes, call `await runtime.close()`; repeated calls
 share one shutdown operation, and cleanup finishes before cancellation propagates.
-An application lifetime is single-use; assemble another application after shutdown.
+A runtime lifetime is single-use; assemble another runtime after shutdown.
 
 `assemble_deployments()` creates just the service and typed local providers.
 `assemble_service()` returns its service without constructing feature pipelines.
@@ -273,7 +276,7 @@ scale-to-zero check those leases before acting. The idle countdown restarts when
 inference finishes. HTTP middleware is no longer needed for deployment leases.
 
 Feature pipelines accept the `DeploymentInference` protocol: `get_config(slug)`
-and `use(slug)`. Pass `application.deployments` directly; the service implements
+and `use(slug)`. Pass `runtime.deployments` directly; the service implements
 this protocol, so features need only these two operations. Input preparation, checkpoint
 checks, output validation and error translation remain in each feature. Test clients
 can implement just these two operations.
@@ -290,10 +293,10 @@ lease counts and startup/scaling locks. Preparation, management and cleanup read
 status snapshots directly. A slow cloud refresh cannot overwrite a live lease,
 and status eviction does not remove activity.
 
-Status and activity are separate records throughout the application. Seeding or
+Status and activity are separate records throughout the runtime. Seeding or
 refreshing status cannot replace live activity. Management owns single-resource and
 group command interpretation, typed outcomes and ordered group results; the service
-owns execution, locks, leases and shutdown. HTTP state stores only the application.
+owns execution, locks, leases and shutdown. HTTP state stores only the runtime.
 
 ### Response-analysis dependencies
 

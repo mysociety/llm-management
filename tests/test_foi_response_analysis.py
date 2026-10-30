@@ -13,7 +13,7 @@ from llm_management.foi.response_schemas import ExtractionOutput
 def client(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
     monkeypatch.setattr(
-        server.app.state.application.deployments, "active_deployments", lambda: []
+        server.app.state.runtime.deployments, "active_deployments", lambda: []
     )
     with TestClient(server.app) as client:
         yield client
@@ -61,10 +61,8 @@ def output():
 
 def test_unconfigured_response_does_not_provision(client, body, monkeypatch):
     ensure = AsyncMock(side_effect=AssertionError("must not provision"))
-    monkeypatch.setattr(
-        server.app.state.application.deployments, "_prepare_locked", ensure
-    )
-    foi = server.app.state.application.foi.catalog.require_foi()
+    monkeypatch.setattr(server.app.state.runtime.deployments, "_prepare_locked", ensure)
+    foi = server.app.state.runtime.foi.catalog.require_foi()
     monkeypatch.setattr(foi, "response_deployment", None)
     response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 503
@@ -105,7 +103,7 @@ def test_request_output_is_projected_for_model(
     assert observed.request_text == ("Original request" if upstream == "full" else None)
     assert (
         predict.call_args.kwargs["model"]
-        == server.app.state.application.deployments.catalog.get("foi_status").model
+        == server.app.state.runtime.deployments.catalog.get("foi_status").model
     )
 
 
@@ -352,7 +350,7 @@ def test_enriched_questions_chain_to_response_status(
         )
 
 
-def test_response_uses_supplied_application(body, output, monkeypatch, application):
+def test_response_uses_supplied_runtime(body, output, monkeypatch, runtime):
     import asyncio
     from unittest.mock import Mock
 
@@ -360,19 +358,19 @@ def test_response_uses_supplied_application(body, output, monkeypatch, applicati
     from llm_management.foi.response_schemas import ResponseAnalysisInput
 
     assemble = Mock(side_effect=AssertionError("Must use the supplied runtime"))
-    monkeypatch.setattr(bootstrap, "assemble_application", assemble)
+    monkeypatch.setattr(bootstrap, "assemble_runtime", assemble)
     predict = AsyncMock(return_value=ExtractionOutput.model_validate(output))
     monkeypatch.setattr(response_analysis, "predict", predict)
-    sanitizer = Mock(wraps=application.sanitizer())
+    sanitizer = Mock(wraps=runtime.sanitizer())
     asyncio.run(
         response_analysis.analyze_response(
             ResponseAnalysisInput.model_validate(body),
-            resources=application.foi,
-            deployments=application.deployments,
+            resources=runtime.foi,
+            deployments=runtime.deployments,
             sanitizer=sanitizer,
         )
     )
     assemble.assert_not_called()
     sanitizer.sanitize_strings.assert_called_once()
-    assert predict.call_args.kwargs["resources"] is application.foi
-    assert predict.call_args.kwargs["deployments"] is application.deployments
+    assert predict.call_args.kwargs["resources"] is runtime.foi
+    assert predict.call_args.kwargs["deployments"] is runtime.deployments

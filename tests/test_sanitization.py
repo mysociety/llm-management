@@ -154,7 +154,7 @@ def test_topic_payload_is_sanitized_before_provisioning(
 
 
 def test_sanitizer_failure_prevents_request_and_response_inference(
-    application, monkeypatch, foi_resources
+    runtime, monkeypatch, foi_resources
 ):
     failure = Mock(side_effect=ClassifierUnavailable("unavailable"))
     monkeypatch.setattr(foi_resources.sanitizer(), "sanitize_strings", failure)
@@ -178,7 +178,7 @@ def test_sanitizer_failure_prevents_request_and_response_inference(
             response_analysis.analyze_response(
                 ResponseAnalysisInput.model_validate(observed().model_dump()),
                 resources=foi_resources,
-                deployments=application.deployments,
+                deployments=runtime.deployments,
             )
         )
     predict.assert_not_called()
@@ -218,7 +218,7 @@ def test_external_adapters_reject_raw_input_before_http(monkeypatch):
         )
 
 
-def test_response_predict_receives_sanitized_input(application, monkeypatch):
+def test_response_predict_receives_sanitized_input(runtime, monkeypatch):
     output = ExtractionOutput(outcomes=[], events=[], process_references=[])
     predict = AsyncMock(return_value=output)
     monkeypatch.setattr(response_analysis, "predict", predict)
@@ -226,7 +226,7 @@ def test_response_predict_receives_sanitized_input(application, monkeypatch):
     assert (
         asyncio.run(
             response_analysis.analyze_response(
-                body, resources=application.foi, deployments=application.deployments
+                body, resources=runtime.foi, deployments=runtime.deployments
             )
         )
         == output

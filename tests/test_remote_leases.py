@@ -245,7 +245,7 @@ def test_startup_failure_does_not_leak_lease(remote):
     asyncio.run(run())
 
 
-def test_activity_is_independent_of_cache_ttl_and_other_applications(remote):
+def test_activity_is_independent_of_cache_ttl_and_other_runtimes(remote):
     service, backend, slug = remote
     other = assemble_service()
     other.backends[slug] = backend
