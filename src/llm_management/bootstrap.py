@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, NamedTuple, Self
 from .deployments import resource_types
 from .deployments.activity import DeploymentActivityTracker
 from .deployments.catalog import DeploymentCatalog, get_catalog
+from .deployments.management import DeploymentManagement
 from .deployments.service import DeploymentService
 from .deployments.status import DeploymentStatusCache
 from .inference.providers import ResourceProviders
@@ -37,11 +38,13 @@ class DeploymentAssembly(NamedTuple):
 
     The service owns the registry and remote state. Providers retain local owners
     created through that registry; both management warm-up and feature inference
-    therefore reach the same application-owned objects.
+    therefore reach the same application-owned objects. Management interprets commands
+    using this service; the service has no dependency on that interface.
     """
 
     service: DeploymentService
     providers: ResourceProviders
+    management: DeploymentManagement
 
 
 def assemble_deployments(
@@ -51,8 +54,8 @@ def assemble_deployments(
     """
     Assemble deployment management without constructing any feature pipelines.
 
-    Register deferred local factories and create an empty remote cache. No owner,
-    model, backend controller or background task is created here.
+    Register deferred local factories and create separate status and activity stores.
+    No owner, model, backend controller or background task is created here.
     """
     catalog = catalog if catalog is not None else get_catalog()
     registry = registry if registry is not None else ResourceRegistry()
@@ -66,7 +69,9 @@ def assemble_deployments(
         activity=activity,
         cpu_idle_seconds=settings.cpu_idle_timeout_minutes * 60,
     )
-    return DeploymentAssembly(service=service, providers=providers)
+    return DeploymentAssembly(
+        service=service, providers=providers, management=DeploymentManagement(service)
+    )
 
 
 class ApplicationRuntime:
@@ -84,6 +89,7 @@ class ApplicationRuntime:
         self,
         *,
         deployments: DeploymentService,
+        management: DeploymentManagement,
         sanitizer: Callable[[], PresidioSanitizer],
         foi: FOIResources,
         sar: SARClassifier,
@@ -99,6 +105,7 @@ class ApplicationRuntime:
         Lifecycle tasks belong to this instance and start only on entry or close.
         """
         self.deployments = deployments
+        self.management = management
         self.sanitizer = sanitizer
         self.foi = foi
         self.sar = sar
@@ -180,9 +187,10 @@ def assemble_runtime(
     Assemble independent runtime ownership without loading models or starting VMs.
 
     Use the supplied catalog and registry, or create defaults for this assembly.
-    The service owns a fresh cache and backend controllers; feature providers resolve
-    cold local owners through the shared registry. Feature configuration is checked
-    only when its provider is used, allowing management-only catalogs to assemble.
+    The service owns separate status and activity stores and retains backend
+    controllers on first use. Feature providers resolve cold local owners through
+    the shared registry. Feature configuration is checked only when its provider
+    is used, allowing management-only catalogs to assemble.
 
     Reuse the returned runtime across a batch inside an async context manager,
     or call its close() method when finished to drain work and release resources.
@@ -227,6 +235,7 @@ def assemble_runtime(
     crawl_policy = CrawlPolicy()
     return ApplicationRuntime(
         deployments=service,
+        management=deployment_assembly.management,
         sanitizer=sanitizer,
         foi=foi,
         sar=sar,
@@ -234,16 +243,3 @@ def assemble_runtime(
         crawl_policy=crawl_policy,
         foi_finder=FOIFinder(settings, catalog, crawl_policy=crawl_policy),
     )
-
-
-def assemble_service(
-    catalog: DeploymentCatalog | None = None, registry: ResourceRegistry | None = None
-) -> DeploymentService:
-    """
-    Assemble management dependencies without constructing feature pipelines.
-
-    The service retains registered factories and their providers through the
-    registry. Direct callers manage its idle task and call close() when finished;
-    callers needing feature inference should use assemble_runtime().
-    """
-    return assemble_deployments(catalog=catalog, registry=registry).service

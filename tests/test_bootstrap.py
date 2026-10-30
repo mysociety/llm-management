@@ -97,7 +97,7 @@ def test_http_dependencies_use_the_serving_runtime(monkeypatch):
                 slug=label, action=WarmUpAction.WARMED, replicas=1
             )
         )
-        monkeypatch.setattr(runtime.deployments.management, "warm_up_resource", call)
+        monkeypatch.setattr(runtime.management, "warm_up_resource", call)
         calls.append(call)
 
     # No lifespan needed: mocked lifecycle actions never load resources.
@@ -147,8 +147,8 @@ def test_management_assembly_does_not_import_features():
                         raise AssertionError(fullname)
 
             sys.meta_path.insert(0, NoFeatures())
-            from llm_management.bootstrap import assemble_service
-            service = assemble_service()
+            from llm_management.bootstrap import assemble_deployments
+            service = assemble_deployments().service
             assert service.resources.names()
             assert service.resources.all() == []
             assert service.backends == {}
