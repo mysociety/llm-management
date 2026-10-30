@@ -197,7 +197,9 @@ def test_loading_once_and_shared_weights(monkeypatch):
     config = get_catalog().local.get(
         get_catalog().automatic.logistic, automatic_resources.AutoLogisticDeployment
     )
-    detector = automatic_resources.LogisticDetector(config)
+    detector = automatic_resources.LogisticDetector(
+        config=config, catalog=get_catalog(), registry=ResourceRegistry()
+    )
     detector.resource.warmup()
     detector.resource.warmup()
     assert loader.call_count == 2
@@ -322,7 +324,9 @@ def test_unexpected_gate_policy_fails_loading(monkeypatch, update):
     config = get_catalog().local.get(
         get_catalog().automatic.logistic, automatic_resources.AutoLogisticDeployment
     )
-    detector = automatic_resources.LogisticDetector(config)
+    detector = automatic_resources.LogisticDetector(
+        config=config, catalog=get_catalog(), registry=ResourceRegistry()
+    )
     with pytest.raises(ClassifierUnavailable):
         detector.load()
     assert detector.cascade is None and detector.standalone is None
@@ -365,7 +369,9 @@ def test_lazy_modes_share_policy_and_reload_after_idle_expiry(monkeypatch):
     config = get_catalog().local.get(
         get_catalog().automatic.logistic, automatic_resources.AutoLogisticDeployment
     )
-    logistic = automatic_resources.LogisticDetector(config, registry=registry)
+    logistic = automatic_resources.LogisticDetector(
+        config=config, catalog=get_catalog(), registry=registry
+    )
     monkeypatch.setattr(
         server.app.state.application.automatic, "logistic_provider", lambda: logistic
     )
