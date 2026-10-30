@@ -9,7 +9,7 @@ describes resources; application assembly gives their runtime objects an owner.
 | Question | Starting point |
 | --- | --- |
 | How are dependencies connected? | [bootstrap.py](../src/llm_management/bootstrap.py) |
-| How is the API constructed? | [server.py](../src/llm_management/server.py) and [api/](../src/llm_management/api/) |
+| How is the API constructed? | [http_app.py](../src/llm_management/http_app.py), [server.py](../src/llm_management/server.py) and [api/](../src/llm_management/api/) |
 | How does startup, warm-up or scaling work? | [deployments/service.py](../src/llm_management/deployments/service.py) |
 | Where do configuration and cloud operations belong? | [deployments/config.py](../src/llm_management/deployments/config.py), [catalog.py](../src/llm_management/deployments/catalog.py), [managed.py](../src/llm_management/deployments/managed.py) and [compute.py](../src/llm_management/deployments/compute.py) |
 | How do resource types fit together, and how do I add one? | [Resource registration guide](resource-registration.md) |
@@ -39,7 +39,11 @@ flowchart TD
 `DeploymentCatalog.load()` and `get_catalog()` validate configuration without
 registering models, loading weights or constructing cloud backends.
 `assemble_runtime()` creates the deployment service and registers cold
-factories. Each factory constructs a controller on first use. Model weights load
+factories. Default assembly loads a new validated catalog for each runtime, including
+independent nested models and slug dictionaries. Callers can deliberately share a
+catalog by passing it explicitly. `get_catalog()` remains a cached lookup for callers
+that request shared configuration; runtime assembly does not use it.
+Each factory constructs a controller on first use. Model weights load
 only during inference or explicit warm-up.
 
 Catalog schemas validate each configuration entry. The named checks in
@@ -69,6 +73,11 @@ override `get_runtime` to substitute the complete runtime.
 its context manager. It configures HTTP routes and middleware; it does not assemble
 services. The server entry point uses `app = create_app(runtime=assemble_runtime())`.
 Separate FastAPI apps can use the same routes with independent runtimes.
+The factory and lifespan live in `http_app.py`; importing them does not construct a
+runtime. `server.py` is only the ASGI entry point that creates the served app.
+Tests request `http_app` explicitly, instead of mutating `server.app` or relying on
+module inspection. Its fixture closes the runtime before test patches are restored,
+including for clients that do not run the HTTP lifespan.
 
 An application owns its deployment status cache, activity tracker, backend controllers,
 local-resource registry and automatic-classifier admission capacity. Warm-up and
@@ -169,14 +178,29 @@ A runtime lifetime is single-use; assemble another runtime after shutdown.
 Use `assembly.service` for execution and `assembly.management` for commands;
 this assembly does not construct feature pipelines.
 Management-only callers own the service's idle task and shutdown explicitly.
-`runtime.management` (or `assembly.management`) exposes `warm_up`, `stop`, `cool_down`, `status`, `overview`
+`runtime.management` (or `assembly.management` for management-only callers) exposes `warm_up`, `stop`, `cool_down`, `status`, `overview`
 and `local_status` for both HTTP and direct callers. This layer interprets group
 addresses and returns the HTTP-compatible result models; the service executes
 operations under the existing resource leases and deployment locks. Group actions
 share resolution and concurrent execution while retaining their own failure
-contracts and configured result order. Group warm-up uses the same member operation
-as individual warm-up.
+contracts and configured result order. Group warm-up calls the same member operation
+as individual warm-up. Execution primitives stay in the service; bootstrap constructs
+the management interface alongside it, so the service does not depend on management.
+All management response models and action enums live in `deployments/contracts.py`;
+the HTTP routes import those contracts directly and do not re-export them.
 See [the FOI guide](foi.md) for HTTP batch examples.
+
+## Execution policy
+
+Bootstrap captures batching and logistic admission settings in an immutable
+`ClassifierExecutionPolicy`, injected into SAR and Automatic. `create_app()` captures
+HTTP body size, upload timeout and admission limits in `HTTPRequestPolicy`, or accepts
+an explicit policy. Changing process settings after construction does not change these
+limits for an existing runtime or HTTP app; construct a new instance to apply changes.
+Environment setting names and defaults are unchanged. These policies describe execution
+limits; feature input preparation, model decisions and failure results remain explicit
+in their pipelines. Authentication and provider configuration retain their existing
+settings access and are not part of these scheduling policies.
 
 ## Classifier task lifetime
 
@@ -320,24 +344,3 @@ existing array format, so configuration round trips do not change file structure
 There is no second cached index to synchronize. Slug fields are immutable after
 construction: to rename an entry, create its replacement under the new key and
 revalidate the catalog, including feature and group references.
-
-Management response contracts and action enums live in `deployments/contracts.py`;
-HTTP routes import them directly without re-exporting them.
-
-The HTTP factory and lifespan live in `http_app.py`, which does not assemble a
-runtime on import. `server.py` is the ASGI entry point that creates the served app.
-
-Default runtime assembly loads a fresh catalog; nested models and dictionaries
-are independent. An explicitly supplied catalog is retained by identity.
-
-## Execution policy
-
-Bootstrap captures batching and logistic admission settings in an immutable
-`ClassifierExecutionPolicy`, injected into SAR and Automatic. `create_app()` captures
-HTTP body size, upload timeout and admission limits in `HTTPRequestPolicy`, or accepts
-an explicit policy. Changing process settings after construction does not change these
-limits for an existing runtime or HTTP app; construct a new instance to apply changes.
-Environment setting names and defaults are unchanged. These policies describe execution
-limits; feature input preparation, model decisions and failure results remain explicit
-in their pipelines. Authentication and provider configuration retain their existing
-settings access and are not part of these scheduling policies.

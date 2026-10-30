@@ -5,7 +5,6 @@ from unittest.mock import Mock
 
 from starlette.testclient import TestClient
 
-from llm_management import server
 from llm_management.http_app import lifespan
 from llm_management.inference.classifiers import LocalSequenceClassifier
 from llm_management.inference.resources import LocalResource, ResourceRegistry
@@ -30,26 +29,26 @@ def test_shutdown_continues_after_local_unload_failure(caplog):
     assert "Failed to release local resource broken" in caplog.text
 
 
-def test_local_cleanup_failure_does_not_skip_remote_shutdown(monkeypatch):
+def test_local_cleanup_failure_does_not_skip_remote_shutdown(http_app, monkeypatch):
     registry = Mock()
     registry.close.side_effect = RuntimeError("cleanup failed")
-    monkeypatch.setattr(server.app.state.runtime.deployments, "resources", registry)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "resources", registry)
     monkeypatch.setattr(settings, "auth_tokens", {"test": "token"})
     monkeypatch.setattr(
-        server.app.state.runtime.deployments,
+        http_app.state.runtime.deployments,
         "active_deployments",
         lambda: [SimpleNamespace(slug="remote")],
     )
     cfg = SimpleNamespace(scale_to_zero=Mock())
     monkeypatch.setattr(
-        server.app.state.runtime.deployments, "get_config", lambda slug: cfg
+        http_app.state.runtime.deployments, "get_config", lambda slug: cfg
     )
-    server.app.state.runtime.deployments.backends["remote"] = SimpleNamespace(
+    http_app.state.runtime.deployments.backends["remote"] = SimpleNamespace(
         config=cfg, scale_to_zero=cfg.scale_to_zero
     )
 
     async def run():
-        async with lifespan(server.app):
+        async with lifespan(http_app):
             pass
 
     asyncio.run(run())
@@ -125,13 +124,13 @@ def test_classifier_unloads_model_and_tokenizer_under_lease():
     assert classifier._model is None and classifier._tokenizer is None
 
 
-def test_cpu_ensure_status_and_failure(monkeypatch):
-    sanitizer = server.app.state.runtime.sanitizer()
+def test_cpu_ensure_status_and_failure(http_app, monkeypatch):
+    sanitizer = http_app.state.runtime.sanitizer()
     monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(
-        server.app.state.runtime.deployments, "active_deployments", lambda: []
+        http_app.state.runtime.deployments, "active_deployments", lambda: []
     )
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         assert client.post("/deployments/presidio/warm-up").json()["action"] == "warmed"
         rows = client.get("/local-deployments").json()
         assert any(row["name"] == "presidio" and row["ready"] for row in rows)

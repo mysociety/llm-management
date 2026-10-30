@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from llm_management import server
 from llm_management.deployments.activity import DeploymentActivityTracker
 from llm_management.deployments.client import get_client
 from llm_management.deployments.compute import close_tunnel
@@ -27,11 +26,13 @@ from llm_management.settings import settings
 pytestmark = pytest.mark.external
 
 
-def test_compute_lifecycle_and_agents_live():
+def test_compute_lifecycle_and_agents_live(
+    http_app,
+):
     if settings.server_role != "test" and not settings.server_role.startswith("test_"):
         pytest.skip("Set SERVER_ROLE=test (or test_<run> for concurrent isolated runs)")
-    cfg = server.app.state.runtime.deployments.get_config("clef")
-    backend = server.app.state.runtime.deployments.get_backend("clef")
+    cfg = http_app.state.runtime.deployments.get_config("clef")
+    backend = http_app.state.runtime.deployments.get_backend("clef")
     assert isinstance(cfg, ComputeDeploymentConfig)
     report = {
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -44,12 +45,12 @@ def test_compute_lifecycle_and_agents_live():
     destination = Path(
         os.environ.get("LLM_COMPUTE_SMOKE_REPORT", "compute-smoke-results.json")
     )
-    old_status = server.app.state.runtime.deployments.status
-    old_activity = server.app.state.runtime.deployments.activity
+    old_status = http_app.state.runtime.deployments.status
+    old_activity = http_app.state.runtime.deployments.activity
     old_auth = settings.auth_tokens
     settings.auth_tokens = {"live-smoke": secrets.token_urlsafe(32)}
-    server.app.state.runtime.deployments.status = DeploymentStatusCache()
-    server.app.state.runtime.deployments.activity = DeploymentActivityTracker()
+    http_app.state.runtime.deployments.status = DeploymentStatusCache()
+    http_app.state.runtime.deployments.activity = DeploymentActivityTracker()
     headers = {"Authorization": "Bearer " + settings.auth_tokens["live-smoke"]}
 
     def record(name, response):
@@ -60,7 +61,7 @@ def test_compute_lifecycle_and_agents_live():
         response.raise_for_status()
 
     try:
-        with TestClient(server.app) as client:
+        with TestClient(http_app) as client:
             assert client.post("/deployments/clef/warm-up").status_code == 401
             start = time.monotonic()
             record("ensure", client.post("/deployments/clef/warm-up", headers=headers))
@@ -109,7 +110,7 @@ def test_compute_lifecycle_and_agents_live():
 
             # Drop only the local connection, then reconnect using the durable key.
             close_tunnel(backend.runtime_key)
-            server.app.state.runtime.deployments.status.remove("clef")
+            http_app.state.runtime.deployments.status.remove("clef")
             start = time.monotonic()
             record(
                 "reconnect", client.post("/deployments/clef/warm-up", headers=headers)
@@ -145,7 +146,7 @@ def test_compute_lifecycle_and_agents_live():
             )
             report["cleanup_verified"] = True
         finally:
-            server.app.state.runtime.deployments.status = old_status
-            server.app.state.runtime.deployments.activity = old_activity
+            http_app.state.runtime.deployments.status = old_status
+            http_app.state.runtime.deployments.activity = old_activity
             settings.auth_tokens = old_auth
             destination.write_text(json.dumps(report, indent=2) + "\n")

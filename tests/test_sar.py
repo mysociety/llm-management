@@ -6,7 +6,6 @@ from unittest.mock import Mock
 import pytest
 from starlette.testclient import TestClient
 
-from llm_management import server
 from llm_management.deployments import get_catalog
 from llm_management.inference.errors import ClassifierBusy, ClassifierUnavailable
 from llm_management.inference.logistic_v1 import (
@@ -18,17 +17,15 @@ from llm_management.settings import Settings, settings
 
 
 @pytest.fixture
-def chain(monkeypatch):
+def chain(http_app, monkeypatch):
     logistic = Mock()
     logistic.predict.return_value = SimpleNamespace(result=True, positive_score=0.01)
     deberta = Mock()
     deberta.classify.return_value = [[0.5, 0.5]]
     monkeypatch.setattr(
-        server.app.state.runtime.sar, "logistic_provider", lambda: logistic
+        http_app.state.runtime.sar, "logistic_provider", lambda: logistic
     )
-    monkeypatch.setattr(
-        server.app.state.runtime.sar, "encoder_provider", lambda: deberta
-    )
+    monkeypatch.setattr(http_app.state.runtime.sar, "encoder_provider", lambda: deberta)
     return logistic, deberta
 
 
@@ -116,27 +113,29 @@ def test_token_aliases(monkeypatch):
     assert Settings(_env_file=None).huggingface_token == "old"
 
 
-def test_resource_registration_and_warmup_group():
+def test_resource_registration_and_warmup_group(
+    http_app,
+):
     from llm_management.deployments import DeploymentCatalog
 
     config = DeploymentCatalog.load()
     assert {
         get_catalog().require_sar().logistic,
         get_catalog().require_sar().classifier,
-    } <= server.app.state.runtime.deployments.resources.names()
+    } <= http_app.state.runtime.deployments.resources.names()
     assert config.get_group("group_sar_pipeline_cpu").deployments == [
         get_catalog().require_sar().logistic,
         get_catalog().require_sar().classifier,
     ]
 
 
-def test_endpoint_conservative_response(chain, monkeypatch):
+def test_endpoint_conservative_response(http_app, chain, monkeypatch):
     monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(
-        server.app.state.runtime.deployments, "active_deployments", lambda: []
+        http_app.state.runtime.deployments, "active_deployments", lambda: []
     )
     chain[1].classify.side_effect = ClassifierBusy()
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         response = client.post(
             "/endpoint/foi/sar_detection", json={"body": "my records"}
         )
@@ -146,8 +145,10 @@ def test_endpoint_conservative_response(chain, monkeypatch):
 
 
 @pytest.mark.parametrize("token_count,accepted", [(512, True), (513, False)])
-def test_deberta_token_budget_without_truncation(monkeypatch, token_count, accepted):
-    model = server.app.state.runtime.sar.encoder_provider()
+def test_deberta_token_budget_without_truncation(
+    http_app, monkeypatch, token_count, accepted
+):
+    model = http_app.state.runtime.sar.encoder_provider()
     tokenizer = Mock(return_value={"input_ids": [[1] * token_count]})
     monkeypatch.setattr(model, "_tokenizer", tokenizer)
     if accepted:
@@ -222,12 +223,12 @@ def test_unexpected_logistic_cutoff_is_rejected(monkeypatch):
     assert not detector.resource.status().ready
 
 
-def test_endpoint_requires_authentication(monkeypatch):
+def test_endpoint_requires_authentication(http_app, monkeypatch):
     monkeypatch.setattr(settings, "auth_tokens", {"test": "secret"})
     monkeypatch.setattr(
-        server.app.state.runtime.deployments, "active_deployments", lambda: []
+        http_app.state.runtime.deployments, "active_deployments", lambda: []
     )
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         assert (
             client.post(
                 "/endpoint/foi/sar_detection", json={"body": "records"}
@@ -333,17 +334,17 @@ def test_fast_logistic_loading_failure_keeps_unclear_flag(chain):
 
 
 @pytest.mark.parametrize("fast", [None, False, True])
-def test_endpoint_fast_parameter_and_stage(chain, monkeypatch, fast):
+def test_endpoint_fast_parameter_and_stage(http_app, chain, monkeypatch, fast):
     monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(
-        server.app.state.runtime.deployments, "active_deployments", lambda: []
+        http_app.state.runtime.deployments, "active_deployments", lambda: []
     )
     payload = {"body": "my records"}
     if fast is not None:
         payload["fast"] = fast
     # Disagreement demonstrates that only fast mode skips confirmation.
     chain[1].classify.return_value = [[0.9, 0.1]]
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         response = client.post("/endpoint/foi/sar_detection", json=payload)
     assert response.status_code == 200
     assert response.json()["is_sar"] is bool(fast)
