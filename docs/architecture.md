@@ -326,3 +326,6 @@ HTTP routes import them directly without re-exporting them.
 
 The HTTP factory and lifespan live in `http_app.py`, which does not assemble a
 runtime on import. `server.py` is the ASGI entry point that creates the served app.
+
+Default runtime assembly loads a fresh catalog; nested models and dictionaries
+are independent. An explicitly supplied catalog is retained by identity.
