@@ -147,7 +147,7 @@ async def process_one(text: str):
     async with assemble_application() as application:
         return await process_information_request(
             text,
-            deployments=application.deployments.access,
+            deployments=application.deployments,
             resources=application.foi,
         )
 ```
@@ -272,8 +272,8 @@ scale-to-zero check those leases before acting. The idle countdown restarts when
 inference finishes. HTTP middleware is no longer needed for deployment leases.
 
 Feature pipelines accept the `DeploymentInference` protocol: `get_config(slug)`
-and `use(slug)`. `service.access` exposes the service through this small interface;
-it does not construct a bundle of lifecycle callbacks. Input preparation, checkpoint
+and `use(slug)`. Pass `application.deployments` directly; the service implements
+this protocol, so features need only these two operations. Input preparation, checkpoint
 checks, output validation and error translation remain in each feature. Test clients
 can implement just these two operations.
 
@@ -282,7 +282,7 @@ consulting request context. `ensure_running()` and `track_requests()` remain a
 compatibility pair for older callers: the latter retains their implicit leases
 until its scope exits. Legacy three-callback `DeploymentAccess` constructions also
 satisfy the protocol and retain their ensure/touch behaviour. New code should use
-`service.access` to get explicit lease protection.
+`service` to get explicit lease protection.
 
 Assembly creates `DeploymentStatusCache` and `DeploymentActivityTracker` separately
 and passes both to the service. The status cache contains only `DeploymentSnapshot`

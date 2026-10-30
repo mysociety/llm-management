@@ -27,7 +27,6 @@ from .errors import DeploymentServiceError, LLMManagementError
 from .management import DeploymentManagement
 from .status import DeploymentStatusCache
 from .types import (
-    DeploymentInference,
     DeploymentSnapshot,
     EnsureOutcome,
     GroupActionMemberOutcome,
@@ -116,13 +115,6 @@ class DeploymentService:
         self._cache = value
         self.status = value.status
         self.activity = value.activity
-
-    @property
-    def access(self) -> DeploymentInference:
-        """
-        Expose this service through the feature's two-method inference protocol.
-        """
-        return self
 
     @asynccontextmanager
     async def use(self, slug: str) -> AsyncGenerator[RunningDeployment, None]:

@@ -131,7 +131,7 @@ class DeploymentAccess(NamedTuple):
     Legacy callback adapter implementing the feature inference protocol.
 
     Retained for callers constructing dependencies from individual functions.
-    Normal application assembly supplies DeploymentService through service.access.
+    Normal application assembly supplies DeploymentService directly.
     """
 
     get_config: DeploymentConfigLookup
@@ -146,7 +146,7 @@ class DeploymentAccess(NamedTuple):
 
         Older three-callback constructions retain their ensure/touch behaviour.
         An optional lease callback forwards explicit lifetime protection. New
-        integrations should use service.access rather than assembling callbacks.
+        integrations should pass the service directly rather than assembling callbacks.
         """
         if self.lease is not None:
             async with self.lease(slug) as running:
