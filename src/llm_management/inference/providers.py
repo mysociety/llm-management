@@ -190,17 +190,3 @@ class ResourceProviders(Mapping[str, Callable[[], ResourceOwner]]):
             return cast(Owner, self[name]())
 
         return resolve
-
-
-def register_configured_resources(
-    catalog: DeploymentCatalog, registry: ResourceRegistry
-) -> ResourceProviders:
-    """
-    Register an application's configured resources and return its provider container.
-
-    Assembly retains this container through the injected provider callables and
-    the registry's factory callbacks. Registration does not import owners, load
-    artifacts or provision compute. The bootstrap module re-exports this function
-    for existing callers.
-    """
-    return ResourceProviders(catalog, registry)
