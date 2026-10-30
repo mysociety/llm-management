@@ -4,7 +4,7 @@ HTTP contracts and error translation for FOI pipelines.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 from fastapi import APIRouter, HTTPException
@@ -36,7 +36,7 @@ def foi_deployments(service: DependencyService) -> backends.DeploymentAccess:
 
 
 @contextmanager
-def foi_http_errors() -> Iterator[None]:
+def foi_http_errors() -> Generator[None, None, None]:
     """
     Translate domain/runtime failures only at the HTTP boundary.
     """

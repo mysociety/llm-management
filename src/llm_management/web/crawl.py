@@ -8,7 +8,7 @@ import asyncio
 import re
 import time
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
@@ -47,7 +47,7 @@ class SharedLock:
     users: int = 0
 
     @asynccontextmanager
-    async def hold(self) -> AsyncIterator[None]:
+    async def hold(self) -> AsyncGenerator[None, None]:
         self.users += 1
         try:
             async with self.lock:
@@ -252,7 +252,7 @@ class CrawlPolicy:
         *,
         rules: RobotsRules | None = None,
         user_agent: str = USER_AGENT,
-    ) -> AsyncIterator[httpx2.Response]:
+    ) -> AsyncGenerator[httpx2.Response, None]:
         """
         Hold one host slot until the response closes, including body consumption.
         """
