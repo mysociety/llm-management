@@ -102,7 +102,7 @@ def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(monkeypatch):
     server.app.state.service.backends[state.slug] = SimpleNamespace(
         config=cfg, create_or_resume=cfg.create_or_resume
     )
-    monkeypatch.setattr(cache, "ensure", lambda cfg: state)
+    monkeypatch.setattr(cache.status, "ensure", lambda cfg: state)
 
     def refresh(cfg):
         state.exists = True
@@ -110,7 +110,7 @@ def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(monkeypatch):
         cache.set(state)
         return state
 
-    monkeypatch.setattr(cache, "refresh", refresh)
+    monkeypatch.setattr(cache.status, "refresh", refresh)
 
     async def run():
         with pytest.raises(DeploymentServiceError):
@@ -125,7 +125,7 @@ def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(monkeypatch):
     results = asyncio.run(run())
     assert calls == ["start"]
     assert all(result.state.replicas == 1 for result in results)
-    assert state.last_request_time > 0
+    assert cache.activity.get(state.slug).last_request_time > 0
 
 
 def test_group_endpoint_contract_and_auth(monkeypatch):
@@ -320,8 +320,8 @@ def test_group_lifecycle_handles_local_and_remote_members(monkeypatch, action):
     backend = SimpleNamespace(scale_to_zero=Mock())
     state = DeploymentState(slug="foi_topic", exists=True, replicas=1)
     monkeypatch.setattr(service, "get_backend", lambda slug: backend)
-    monkeypatch.setattr(service.cache, "ensure", lambda backend: state)
-    monkeypatch.setattr(service.cache, "refresh", Mock())
+    monkeypatch.setattr(service.status, "ensure", lambda backend: state)
+    monkeypatch.setattr(service.status, "refresh", Mock())
     service.cache.set(state)
     result = asyncio.run(service.change_group("group_mixed", action))
     assert result.success
@@ -352,8 +352,8 @@ def test_group_busy_local_member_does_not_block_remote(monkeypatch, action):
     backend = SimpleNamespace(scale_to_zero=Mock())
     monkeypatch.setattr(service, "get_backend", lambda slug: backend)
     state = DeploymentState(slug="foi_topic", exists=False)
-    monkeypatch.setattr(service.cache, "ensure", lambda backend: state)
-    monkeypatch.setattr(service.cache, "refresh", Mock())
+    monkeypatch.setattr(service.status, "ensure", lambda backend: state)
+    monkeypatch.setattr(service.status, "refresh", Mock())
     with resource.use():
         result = asyncio.run(service.change_group("group_mixed", action))
     assert not result.success

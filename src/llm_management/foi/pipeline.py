@@ -13,11 +13,11 @@ from typing import NamedTuple
 
 import httpx2
 
-from ..deployments import TopicTokenizerDeployment
 from ..deployments.errors import LLMManagementError
+from ..deployments.local_config import TopicTokenizerDeployment
+from ..deployments.types import DeploymentInference
 from ..inference.errors import ClassifierOutputError, ClassifierUnavailable
 from . import backends, category_classification, topic_classification
-from .backends import DeploymentAccess
 from .category_schemas import CategoryMetadata
 from .question_slice import build_extraction_result, contextual_inputs, segment_request
 from .sanitization import sanitize_request
@@ -57,7 +57,7 @@ class QuestionExtractionResult(NamedTuple):
 async def _extract_questions(
     request_text: str,
     *,
-    deployments: DeploymentAccess,
+    deployments: DeploymentInference,
     resources: backends.FOIResources,
     backend: ExtractionBackend = "cpu",
 ) -> QuestionExtractionResult:
@@ -125,7 +125,7 @@ async def _extract_questions(
 async def extract_questions(
     request_text: str,
     *,
-    deployments: DeploymentAccess,
+    deployments: DeploymentInference,
     resources: backends.FOIResources,
     backend: ExtractionBackend = "cpu",
 ) -> QuestionSliceResult:
@@ -149,7 +149,7 @@ async def extract_questions(
 async def process_information_request(
     request_text: str,
     *,
-    deployments: DeploymentAccess,
+    deployments: DeploymentInference,
     resources: backends.FOIResources,
     backend: ExtractionBackend = "cpu",
 ) -> InformationRequestResult:
@@ -218,17 +218,17 @@ async def process_information_request(
     # Expected question IDs let the response validator detect missing or reordered
     # answers; the returned topics and regimes are retained alongside extraction.
     try:
-        deployment = await deployments.ensure_running(slug)
-        cfg = deployment.config
-        state = deployment.state
-        result.classification = await topic_classification.classify_topics(
-            payload=payload,
-            model=cfg.model,
-            deployment_url=state.deployment_url,
-            api_key=state.api_key,
-            question_ids=[q.question_id for q in extraction.questions],
-        )
-        result.classification_model = cfg.model
+        async with deployments.use(slug) as deployment:
+            cfg = deployment.config
+            state = deployment.state
+            result.classification = await topic_classification.classify_topics(
+                payload=payload,
+                model=cfg.model,
+                deployment_url=state.deployment_url,
+                api_key=state.api_key,
+                question_ids=[q.question_id for q in extraction.questions],
+            )
+            result.classification_model = cfg.model
     except ClassifierUnavailable as exc:
         raise PipelineUnavailable(str(exc)) from exc
     except LLMManagementError as exc:
@@ -242,9 +242,6 @@ async def process_information_request(
         raise PipelineOutputError(
             "Question topic classification failed or returned invalid output"
         ) from exc
-    finally:
-        # Refresh the deployment's idle timer even if inference or validation fails.
-        deployments.touch(slug)
 
     # Fill each FOI/EIR question's nullable category using its generated description.
     # SAR questions stay uncategorized. Shared status/provenance goes into metadata;

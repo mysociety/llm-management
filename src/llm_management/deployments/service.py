@@ -11,19 +11,23 @@ import asyncio
 import logging
 import threading
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, Generator
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import Literal
 
 from ..inference.errors import ClassifierBusy, ClassifierUnavailable
 from ..inference.resources import ResourceRegistry, ResourceStatus
+from .activity import DeploymentActivityTracker
 from .backends import DeploymentBackend, backend_for
 from .cache import DeploymentCache
 from .catalog import DeploymentCatalog
 from .config import DeploymentConfig
 from .errors import DeploymentServiceError, LLMManagementError
+from .status import DeploymentStatusCache
 from .types import (
+    DeploymentInference,
+    DeploymentSnapshot,
     EnsureOutcome,
     GroupActionMemberOutcome,
     GroupActionOutcome,
@@ -39,8 +43,8 @@ class DeploymentService:
     """
     Coordinate remote deployments and local resources owned by one application.
 
-    Remote startup and scaling share per-slug locks. Request contexts hold activity
-    leases so idle cleanup cannot scale down deployments still serving that caller.
+    Remote startup and scaling share per-slug locks. Explicit inference leases
+    prevent idle cleanup from stopping deployments still serving a caller.
     Local owners use separate worker-thread resource leases. This service schedules
     cleanup; neither the catalog nor the registry runs a background timer itself.
     """
@@ -48,9 +52,11 @@ class DeploymentService:
     def __init__(
         self,
         catalog: DeploymentCatalog,
-        cache: DeploymentCache,
-        resources: ResourceRegistry,
+        cache: DeploymentCache | None = None,
+        resources: ResourceRegistry | None = None,
         *,
+        status: DeploymentStatusCache | None = None,
+        activity: DeploymentActivityTracker | None = None,
         auto_ensure: bool = True,
         idle_seconds: float = 900,
         cpu_idle_seconds: float = 900,
@@ -61,13 +67,26 @@ class DeploymentService:
 
         All timeout values are seconds. Remote inactivity uses wall-clock request times;
         local resource expiry uses the guards' monotonic activity times. Construction
-        creates no cloud backends and starts no cleanup task.
+        creates no cloud backends and starts no cleanup task. Assembly supplies status
+        and activity independently. The positional cache argument is retained for
+        older callers; mixing it with separate state dependencies is rejected.
         """
         self.catalog = catalog
         self.backends: dict[str, DeploymentBackend] = {}
         self._backend_lock = threading.Lock()
-        self.cache = cache
-        self.resources = resources
+        if cache is not None and (status is not None or activity is not None):
+            raise ValueError(
+                "Supply either a legacy cache or separate status and activity"
+            )
+        self._cache: DeploymentCache | None = None
+        if cache is not None:
+            self.cache = cache
+        else:
+            self.status = status if status is not None else DeploymentStatusCache()
+            self.activity = (
+                activity if activity is not None else DeploymentActivityTracker()
+            )
+        self.resources = resources if resources is not None else ResourceRegistry()
         self.auto_ensure = auto_ensure
         self.idle_seconds = idle_seconds
         self.cpu_idle_seconds = cpu_idle_seconds
@@ -76,12 +95,55 @@ class DeploymentService:
             "request_deployments", default=None
         )
 
+    @property
+    def cache(self) -> DeploymentCache:
+        """
+        Legacy combined-state adapter; core execution uses status and activity directly.
+        """
+        if self._cache is None:
+            self._cache = DeploymentCache(status=self.status, activity=self.activity)
+        return self._cache
+
+    @cache.setter
+    def cache(self, value: DeploymentCache) -> None:
+        """
+        Preserve explicit cache replacement while binding its independent dependencies.
+        """
+        self._cache = value
+        self.status = value.status
+        self.activity = value.activity
+
+    @property
+    def access(self) -> DeploymentInference:
+        """
+        Expose this service through the feature's two-method inference protocol.
+        """
+        return self
+
+    @asynccontextmanager
+    async def use(self, slug: str) -> AsyncGenerator[RunningDeployment, None]:
+        """
+        Ensure a remote deployment and lease it for the complete inference operation.
+
+        Lease acquisition happens under the same per-deployment lock as startup,
+        so idle cleanup cannot stop a newly prepared deployment before inference.
+        Every exit releases the lease and resets its idle countdown. Nested and
+        concurrent uses hold independent leases; no HTTP middleware is required.
+        Startup cancellation still waits for provisioning and records recoverable
+        cloud resources before propagating cancellation.
+        """
+        async with self.activity.ensure_lock(slug):
+            running = await self._prepare_locked(slug)
+            self.activity.begin_request(slug)
+        try:
+            yield running
+        finally:
+            self.activity.end_request(slug)
+
     def get_config(self, slug: str) -> DeploymentConfig:
         """
         Resolve a remote deployment or raise the shared 404 service error.
         """
-        from .errors import LLMManagementError
-
         try:
             return self.catalog.get(slug)
         except LLMManagementError as exc:
@@ -102,13 +164,14 @@ class DeploymentService:
             return self.backends[slug]
 
     @contextmanager
-    def track_requests(self) -> Iterator[None]:
+    def track_requests(self) -> Generator[None, None, None]:
         """
         Hold remote activity leases until the complete caller operation ends.
 
-        ensure_running() records each deployment once in this context. On every exit,
-        release those leases and restore the previous context. Direct batch callers must
-        enter this context to obtain the same in-flight protection as HTTP requests.
+        Compatibility context for callers using ensure_running() directly. It records
+        each deployment once and releases those leases on exit. New inference code
+        should use the narrower async use(slug) context instead; it also protects
+        direct batch callers without requiring a surrounding request context.
         """
         leases: set[str] = set()
         token = self.request_deployments.set(leases)
@@ -116,7 +179,7 @@ class DeploymentService:
             yield
         finally:
             for slug in leases:
-                self.cache.end_request(slug)
+                self.activity.end_request(slug)
             self.request_deployments.reset(token)
 
     async def ensure_running(
@@ -135,6 +198,26 @@ class DeploymentService:
         context receives an activity lease; callers without one only update activity.
         Raise service errors for invalid counts, forbidden startup or failed readiness.
         """
+        async with self.activity.ensure_lock(slug):
+            running = await self._prepare_locked(
+                slug, allow_start=allow_start, replicas=replicas
+            )
+            leases = self.request_deployments.get()
+            if leases is not None and slug not in leases:
+                self.activity.begin_request(slug)
+                leases.add(slug)
+        return RunningDeployment(running.config, self.cache.state(running.state))
+
+    async def _prepare_locked(
+        self, slug: str, *, allow_start: bool = False, replicas: int | None = None
+    ) -> RunningDeployment:
+        """
+        Prepare cloud inference under the lock held by use() or ensure_running().
+
+        This shared implementation knows nothing about request contexts or lease
+        ownership. Its wrappers acquire leases before releasing the lifecycle lock.
+        Only status observations flow through startup; activity stays in its tracker.
+        """
         cfg = self.get_config(slug)
         if replicas is not None:
             if replicas < 1:
@@ -148,60 +231,58 @@ class DeploymentService:
                         detail="Compute deployments support one replica.",
                     )
                 replicas = None
-        async with self.cache.ensure_lock(slug):
-            backend = self.get_backend(slug)
-            state = await asyncio.to_thread(self.cache.ensure, backend)
-            if (
-                not state.exists
-                or state.replicas == 0
-                or replicas is not None
-                and state.replicas != replicas
-            ):
-                if not (allow_start or self.auto_ensure):
-                    raise DeploymentServiceError(
-                        status_code=503,
-                        detail=f"Deployment '{slug}' is not running. Ensure it first.",
-                    )
-                logger.info("Auto-ensuring deployment %s.", slug)
-                self.cache.touch(slug)
-                # Let a startup finish under the lock if its initiating request is
-                # cancelled, then track the VM so idle/shutdown cleanup can find it.
-                kwargs = {"replicas": replicas} if replicas is not None else {}
-                startup = asyncio.create_task(
-                    asyncio.to_thread(backend.create_or_resume, **kwargs)
+        backend = self.get_backend(slug)
+        state = await asyncio.to_thread(self.status.ensure, backend)
+        if (
+            not state.exists
+            or state.replicas == 0
+            or replicas is not None
+            and state.replicas != replicas
+        ):
+            if not (allow_start or self.auto_ensure):
+                raise DeploymentServiceError(
+                    status_code=503,
+                    detail=f"Deployment '{slug}' is not running. Ensure it first.",
                 )
-                try:
-                    await asyncio.shield(startup)
-                except asyncio.CancelledError:
-                    await startup
-                    await asyncio.to_thread(self.cache.refresh, backend)
-                    self.cache.touch(slug)
-                    raise
-                except Exception:
-                    if (
-                        getattr(cfg, "backend", "exoscale_managed")
-                        == "exoscale_compute"
-                    ):
-                        try:
-                            await asyncio.to_thread(self.cache.refresh, backend)
-                            self.cache.touch(slug)
-                        except Exception:
-                            logger.exception(
-                                "Failed to refresh Compute resources after startup failure."
-                            )
-                    raise
-                state = await asyncio.to_thread(self.cache.refresh, backend)
-                if not state.exists or state.replicas == 0:
-                    raise DeploymentServiceError(
-                        status_code=503,
-                        detail=f"Deployment '{slug}' did not become ready.",
-                    )
-            self.cache.touch(slug)
-            leases = self.request_deployments.get()
-            if leases is not None and slug not in leases:
-                self.cache.begin_request(slug)
-                leases.add(slug)
+            logger.info("Auto-ensuring deployment %s.", slug)
+            self.activity.touch(slug)
+            # Let a startup finish under the lock if its initiating request is
+            # cancelled, then track the VM so idle/shutdown cleanup can find it.
+            kwargs = {"replicas": replicas} if replicas is not None else {}
+            startup = asyncio.create_task(
+                asyncio.to_thread(backend.create_or_resume, **kwargs)
+            )
+            try:
+                await asyncio.shield(startup)
+            except asyncio.CancelledError:
+                await startup
+                await asyncio.to_thread(self.status.refresh, backend)
+                self.activity.touch(slug)
+                raise
+            except Exception:
+                if getattr(cfg, "backend", "exoscale_managed") == "exoscale_compute":
+                    try:
+                        await asyncio.to_thread(self.status.refresh, backend)
+                        self.activity.touch(slug)
+                    except Exception:
+                        logger.exception(
+                            "Failed to refresh Compute resources after startup failure."
+                        )
+                raise
+            state = await asyncio.to_thread(self.status.refresh, backend)
+            if not state.exists or state.replicas == 0:
+                raise DeploymentServiceError(
+                    status_code=503,
+                    detail=f"Deployment '{slug}' did not become ready.",
+                )
+        self.activity.touch(slug)
         return RunningDeployment(config=cfg, state=state)
+
+    def active_deployments(self) -> list[DeploymentSnapshot]:
+        """
+        Select observed cloud resources still eligible for this application's cleanup.
+        """
+        return self.activity.active(self.status.all())
 
     async def idle_scaler(self) -> None:
         """
@@ -219,9 +300,9 @@ class DeploymentService:
             try:
                 await asyncio.to_thread(self.resources.expire, self.cpu_idle_seconds)
                 timeout_seconds = self.idle_seconds
-                active = self.cache.all_active()
+                active = self.active_deployments()
                 for ds in active:
-                    elapsed = time.time() - ds.last_request_time
+                    elapsed = time.time() - self.activity.get(ds.slug).last_request_time
                     if elapsed >= timeout_seconds:
                         logger.info(
                             "Deployment %s idle for %.0fs — scaling to zero.",
@@ -229,18 +310,17 @@ class DeploymentService:
                             elapsed,
                         )
                         try:
-                            async with self.cache.ensure_lock(ds.slug):
-                                current = self.cache.get(ds.slug)
+                            async with self.activity.ensure_lock(ds.slug):
+                                current = self.activity.get(ds.slug)
                                 if (
-                                    current is None
-                                    or current.requests_in_flight
+                                    current.requests_in_flight
                                     or time.time() - current.last_request_time
                                     < timeout_seconds
                                 ):
                                     continue
                                 backend = self.get_backend(ds.slug)
                                 await asyncio.to_thread(backend.scale_to_zero)
-                                await asyncio.to_thread(self.cache.refresh, backend)
+                                await asyncio.to_thread(self.status.refresh, backend)
                         except Exception:
                             logger.exception(
                                 "Failed to auto-scale %s to zero.", ds.slug
@@ -288,15 +368,15 @@ class DeploymentService:
                 raise DeploymentServiceError(status_code=409, detail=str(exc)) from exc
             return
         self.get_config(slug)
-        async with self.cache.ensure_lock(slug):
+        async with self.activity.ensure_lock(slug):
             backend = self.get_backend(slug)
-            state = self.cache.get(slug)
-            if state and state.requests_in_flight:
+            state = self.activity.get(slug)
+            if state.requests_in_flight:
                 raise DeploymentServiceError(
                     status_code=409, detail="Deployment has requests in flight."
                 )
             await asyncio.to_thread(backend.scale_to_zero)
-            await asyncio.to_thread(self.cache.refresh, backend)
+            await asyncio.to_thread(self.status.refresh, backend)
 
     async def cooldown(self, slug: str) -> float | None:
         """
@@ -313,10 +393,10 @@ class DeploymentService:
             except ClassifierBusy as exc:
                 raise DeploymentServiceError(status_code=409, detail=str(exc)) from exc
         self.get_config(slug)
-        async with self.cache.ensure_lock(slug):
+        async with self.activity.ensure_lock(slug):
             backend = self.get_backend(slug)
-            state = await asyncio.to_thread(self.cache.ensure, backend)
-            if state.requests_in_flight:
+            state = await asyncio.to_thread(self.status.ensure, backend)
+            if self.activity.get(slug).requests_in_flight:
                 raise DeploymentServiceError(
                     status_code=409, detail="Deployment has requests in flight."
                 )
@@ -324,14 +404,14 @@ class DeploymentService:
                 state.replicas == 0 and state.backend != "exoscale_compute"
             ):
                 return None
-            return self.cache.cooldown(slug, self.idle_seconds)
+            return self.activity.cooldown(slug, self.idle_seconds)
 
     async def close(self) -> None:
         """
         Attempt local release and scale down remote deployments tracked as active.
 
         Local cleanup skips guards still leased by workers, so shutdown does not unload
-        models being used. Remote cleanup uses the cache's activity snapshot rather than
+        models being used. Remote cleanup joins status observations with application activity rather than
         all configured deployments. Log failures and continue with the other resources;
         this method does not cancel the idle-scaler task itself.
         """
@@ -339,7 +419,7 @@ class DeploymentService:
             await asyncio.to_thread(self.resources.close)
         except Exception:
             logger.exception("Failed to close local resources on shutdown.")
-        for state in self.cache.all_active():
+        for state in self.active_deployments():
             try:
                 backend = self.get_backend(state.slug)
                 await asyncio.to_thread(backend.scale_to_zero)
@@ -364,7 +444,7 @@ class DeploymentService:
             await self.warmup_resource(slug)
             return EnsureOutcome(slug=slug, action="warmed", replicas=None)
         backend = self.get_backend(slug)
-        previous = await asyncio.to_thread(self.cache.ensure, backend)
+        previous = await asyncio.to_thread(self.status.ensure, backend)
         if replicas is None:
             actual = await self.warmup_resource(slug)
         else:

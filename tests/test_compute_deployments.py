@@ -357,6 +357,7 @@ def test_idle_loop_deletes_compute_only_after_requests_finish(
     state = cache.get("clef")
     state.last_request_time = time.time() - 3600
     state.requests_in_flight = int(busy)
+    cache.set(state)
     monkeypatch.setattr(server.app.state.service, "cache", cache)
     monkeypatch.setattr(server.app.state.service, "get_config", lambda slug: config)
     sleeps = 0

@@ -26,10 +26,10 @@ def client(monkeypatch):
     """
     monkeypatch.setattr(server.settings, "auth_tokens", {})
     service = server.app.state.service
-    monkeypatch.setattr(service.cache, "all_active", lambda: [])
+    monkeypatch.setattr(service, "active_deployments", lambda: [])
     monkeypatch.setattr(
         service,
-        "ensure_running",
+        "_prepare_locked",
         AsyncMock(side_effect=AssertionError("Mock started a deployment")),
     )
     resources = server.app.state.application.foi

@@ -14,7 +14,7 @@ from llm_management.deployments.types import RunningDeployment
 @pytest.fixture
 def clef_client(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {"client": "client-secret"})
-    monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
+    monkeypatch.setattr(server.app.state.service, "active_deployments", lambda: [])
     ensure = AsyncMock(
         return_value=RunningDeployment(
             config=SimpleNamespace(model="Cloudflare/clef-flash"),
@@ -23,7 +23,7 @@ def clef_client(monkeypatch):
             ),
         )
     )
-    monkeypatch.setattr(server.app.state.service, "ensure_running", ensure)
+    monkeypatch.setattr(server.app.state.service, "_prepare_locked", ensure)
     requests = []
     replies = []
 
@@ -74,7 +74,7 @@ def test_auth_rejects_before_contacting_clef(clef_client, path):
     client, requests, _ = clef_client
     assert client.post(path, json={"body": "visa"}).status_code == 401
     assert requests == []
-    server.app.state.service.ensure_running.assert_not_awaited()
+    server.app.state.service._prepare_locked.assert_not_awaited()
 
 
 def test_selected_deployment_uses_shared_lifecycle(clef_client):
@@ -84,7 +84,7 @@ def test_selected_deployment_uses_shared_lifecycle(clef_client):
         post(client, "/deployments/clef_flash/v1/systemone?tag=a", json={}).status_code
         == 200
     )
-    server.app.state.service.ensure_running.assert_awaited_once_with("clef_flash")
+    server.app.state.service._prepare_locked.assert_awaited_once_with("clef_flash")
     assert str(requests[0].url) == "https://clef.test/v1/systemone?tag=a"
 
 
@@ -120,7 +120,7 @@ def test_immigration_choice_contract(clef_client, label):
     assert response.json() == {"classification": label}
     payload = json.loads(requests[0].content)
     assert payload["model"] == "Cloudflare/clef-flash"
-    server.app.state.service.ensure_running.assert_awaited_once_with("clef_flash")
+    server.app.state.service._prepare_locked.assert_awaited_once_with("clef_flash")
     assert "My request text" in payload["state"]
     assert str(requests[0].url) == "https://clef.test/v1/systemone"
     assert requests[0].headers["authorization"] == "Bearer upstream-secret"
@@ -183,7 +183,7 @@ def test_transport_errors(clef_client, path, error, status):
 )
 def test_unknown_deployment_returns_404(clef_client, path):
     client, requests, _ = clef_client
-    server.app.state.service.ensure_running.side_effect = HTTPException(
+    server.app.state.service._prepare_locked.side_effect = HTTPException(
         status_code=404, detail="Unknown deployment"
     )
     response = post(client, path, json={"body": "visa"})
@@ -199,7 +199,7 @@ def test_invalid_immigration_input_does_not_contact_clef(clef_client, text):
     )
     assert response.status_code == 422
     assert requests == []
-    server.app.state.service.ensure_running.assert_not_awaited()
+    server.app.state.service._prepare_locked.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -271,7 +271,7 @@ def test_systemone_alias_is_removed(clef_client):
     client, requests, _ = clef_client
     assert post(client, "/v1/systemone", json={}).status_code == 404
     assert requests == []
-    server.app.state.service.ensure_running.assert_not_awaited()
+    server.app.state.service._prepare_locked.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -290,7 +290,7 @@ def test_proxy_rejects_unsafe_paths_before_startup(clef_client, path):
     response = post(client, "/deployments/clef/v1/" + path, json={})
     assert response.status_code == 400
     assert not requests
-    server.app.state.service.ensure_running.assert_not_awaited()
+    server.app.state.service._prepare_locked.assert_not_awaited()
 
 
 def test_proxy_bounds_upstream_response(clef_client, monkeypatch):

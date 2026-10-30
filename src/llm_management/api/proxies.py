@@ -35,56 +35,60 @@ async def proxy_to_deployment(
         or any(ord(c) < 32 or ord(c) == 127 for c in path)
     ):
         raise HTTPException(status_code=400, detail="Invalid inference path")
-    state = (await service.ensure_running(slug)).state
+    async with service.use(slug) as running:
+        state = running.state
 
-    target_url = f"{state.deployment_url.rstrip('/')}/{path}"
-    body = await request.body()
-    headers = dict(request.headers)
-    headers.pop("authorization", None)
-    if state.api_key:
-        headers["authorization"] = f"Bearer {state.api_key}"
-    for h in ("host", "content-length", "transfer-encoding"):
-        headers.pop(h, None)
+        target_url = f"{state.deployment_url.rstrip('/')}/{path}"
+        body = await request.body()
+        headers = dict(request.headers)
+        headers.pop("authorization", None)
+        if state.api_key:
+            headers["authorization"] = f"Bearer {state.api_key}"
+        for h in ("host", "content-length", "transfer-encoding"):
+            headers.pop(h, None)
 
-    params = httpx2.QueryParams(tuple(request.query_params.multi_items()))
+        params = httpx2.QueryParams(tuple(request.query_params.multi_items()))
 
-    try:
-        async with httpx2.AsyncClient(timeout=300.0) as client:
-            async with client.stream(
-                method=request.method,
-                url=target_url,
-                headers=headers,
-                params=params,
-                content=body,
-            ) as resp:
-                content = bytearray()
-                async for chunk in resp.aiter_bytes(chunk_size=65536):
-                    if len(content) + len(chunk) > settings.proxy_max_response_bytes:
-                        raise HTTPException(
-                            status_code=502, detail="Upstream response too large"
-                        )
-                    content.extend(chunk)
-    except httpx2.TimeoutException as exc:
-        raise HTTPException(
-            status_code=504, detail="Deployment server timed out"
-        ) from exc
-    except httpx2.RequestError as exc:
-        raise HTTPException(
-            status_code=503, detail="Deployment server could not be reached"
-        ) from exc
+        try:
+            async with httpx2.AsyncClient(timeout=300.0) as client:
+                async with client.stream(
+                    method=request.method,
+                    url=target_url,
+                    headers=headers,
+                    params=params,
+                    content=body,
+                ) as resp:
+                    content = bytearray()
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
+                        if (
+                            len(content) + len(chunk)
+                            > settings.proxy_max_response_bytes
+                        ):
+                            raise HTTPException(
+                                status_code=502, detail="Upstream response too large"
+                            )
+                        content.extend(chunk)
+        except httpx2.TimeoutException as exc:
+            raise HTTPException(
+                status_code=504, detail="Deployment server timed out"
+            ) from exc
+        except httpx2.RequestError as exc:
+            raise HTTPException(
+                status_code=503, detail="Deployment server could not be reached"
+            ) from exc
 
-    return Response(
-        content=bytes(content),
-        status_code=resp.status_code,
-        headers={
-            name: value
-            for name, value in resp.headers.items()
-            if name.lower()
-            not in (
-                "content-encoding",
-                "content-length",
-                "transfer-encoding",
-                "connection",
-            )
-        },
-    )
+        return Response(
+            content=bytes(content),
+            status_code=resp.status_code,
+            headers={
+                name: value
+                for name, value in resp.headers.items()
+                if name.lower()
+                not in (
+                    "content-encoding",
+                    "content-length",
+                    "transfer-encoding",
+                    "connection",
+                )
+            },
+        )

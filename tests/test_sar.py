@@ -120,7 +120,7 @@ def test_resource_registration_and_warmup_group():
 
 def test_endpoint_conservative_response(chain, monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
+    monkeypatch.setattr(server.app.state.service, "active_deployments", lambda: [])
     chain[1].classify.side_effect = ClassifierBusy()
     with TestClient(server.app) as client:
         response = client.post(
@@ -198,7 +198,7 @@ def test_unexpected_logistic_cutoff_is_rejected(monkeypatch):
 
 def test_endpoint_requires_authentication(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {"test": "secret"})
-    monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
+    monkeypatch.setattr(server.app.state.service, "active_deployments", lambda: [])
     with TestClient(server.app) as client:
         assert (
             client.post(
@@ -292,7 +292,7 @@ def test_fast_logistic_loading_failure_keeps_unclear_flag(chain):
 @pytest.mark.parametrize("fast", [None, False, True])
 def test_endpoint_fast_parameter_and_stage(chain, monkeypatch, fast):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
+    monkeypatch.setattr(server.app.state.service, "active_deployments", lambda: [])
     payload = {"body": "my records"}
     if fast is not None:
         payload["fast"] = fast

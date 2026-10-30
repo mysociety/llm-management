@@ -14,9 +14,10 @@ from typing import TYPE_CHECKING, NamedTuple
 from pydantic import BaseModel, ConfigDict
 
 from .deployments import resource_types
-from .deployments.cache import DeploymentCache
+from .deployments.activity import DeploymentActivityTracker
 from .deployments.catalog import DeploymentCatalog, get_catalog
 from .deployments.service import DeploymentService
+from .deployments.status import DeploymentStatusCache
 from .inference.providers import ResourceProviders
 from .inference.providers import (
     register_configured_resources as register_configured_resources,
@@ -59,10 +60,13 @@ def assemble_deployments(
     catalog = catalog if catalog is not None else get_catalog()
     registry = registry if registry is not None else ResourceRegistry()
     providers = register_configured_resources(catalog, registry)
+    status = DeploymentStatusCache()
+    activity = DeploymentActivityTracker()
     service = DeploymentService(
         catalog,
         resources=registry,
-        cache=DeploymentCache(),
+        status=status,
+        activity=activity,
         cpu_idle_seconds=settings.cpu_idle_timeout_minutes * 60,
     )
     return DeploymentAssembly(service=service, providers=providers)

@@ -94,7 +94,16 @@ def serving(monkeypatch, output):
     )
     monkeypatch.setattr(server.app.state.service, "ensure_running", ensure)
     touch = []
-    monkeypatch.setattr(server.app.state.service.cache, "touch", touch.append)
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def use(slug):
+        try:
+            yield await ensure(slug)
+        finally:
+            touch.append(slug)
+
+    monkeypatch.setattr(server.app.state.service, "use", use)
     real_client = httpx2.AsyncClient
 
     def handle(request):

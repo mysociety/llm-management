@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 
 from ..deployments.errors import LLMManagementError
-from ..deployments.types import DeploymentAccess
+from ..deployments.types import DeploymentInference
 from ..inference.errors import ClassifierUnavailable
 from ..sanitization import Sanitized, presidio, require_sanitized
 from ..sanitization.contracts import TextSanitizer
@@ -22,7 +22,7 @@ async def predict(
     observed: Sanitized[ExtractionInput],
     *,
     model: str,
-    deployments: DeploymentAccess | None = None,
+    deployments: DeploymentInference | None = None,
     resources: FOIResources | None = None,
 ) -> ExtractionOutput:
     """
@@ -39,13 +39,7 @@ async def predict(
         application = default_application()
         resources = resources if resources is not None else application.foi
         service = application.deployments
-        deployments = (
-            deployments
-            if deployments is not None
-            else DeploymentAccess(
-                service.get_config, service.ensure_running, service.cache.touch
-            )
-        )
+        deployments = deployments if deployments is not None else service.access
     config = resources.catalog.require_foi()
     slug = config.response_deployment
     if slug is None or resources.response_tokenizer is None:
@@ -69,17 +63,19 @@ async def predict(
             "FOI status deployment does not match the configured model"
         )
     try:
-        running = await deployments.ensure_running(slug)
-        if not running.state.api_key or not running.state.deployment_url:
-            raise PipelineUnavailable("FOI status inference connection is unavailable")
-        output = await response_model.classify_status(
-            messages,
-            model=running.config.model,
-            deployment_url=running.state.deployment_url,
-            api_key=running.state.api_key,
-            output_tokens=config.response.output_tokens,
-        )
-        return output.validate_against(clean)
+        async with deployments.use(slug) as running:
+            if not running.state.api_key or not running.state.deployment_url:
+                raise PipelineUnavailable(
+                    "FOI status inference connection is unavailable"
+                )
+            output = await response_model.classify_status(
+                messages,
+                model=running.config.model,
+                deployment_url=running.state.deployment_url,
+                api_key=running.state.api_key,
+                output_tokens=config.response.output_tokens,
+            )
+            return output.validate_against(clean)
     except ClassifierUnavailable as exc:
         raise PipelineUnavailable("FOI status contract unavailable") from exc
     except LLMManagementError as exc:
@@ -88,15 +84,13 @@ async def predict(
         raise PipelineOutputError(
             "Status model returned invalid analysis or failed"
         ) from exc
-    finally:
-        deployments.touch(slug)
 
 
 async def analyze_response(
     body: ResponseAnalysisInput,
     *,
     sanitizer: TextSanitizer | None = None,
-    deployments: DeploymentAccess | None = None,
+    deployments: DeploymentInference | None = None,
     resources: FOIResources | None = None,
 ) -> ExtractionOutput:
     """

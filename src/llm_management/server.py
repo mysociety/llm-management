@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .api import agents, classifiers, deployments, foi, mocks, proxies
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     Run idle cleanup and release the app's resources on shutdown.
     """
@@ -73,13 +73,6 @@ def create_app(application: Application | None = None) -> FastAPI:
     app.state.application = application
     app.add_exception_handler(LLMManagementError, deployment_error)
     app.add_exception_handler(DeploymentServiceError, service_error)
-
-    @app.middleware("http")
-    async def track_deployment_requests(
-        request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
-        with service.track_requests():
-            return await call_next(request)
 
     app.add_middleware(RequestLimits)
     app.middleware("http")(require_bearer_auth_when_enabled)

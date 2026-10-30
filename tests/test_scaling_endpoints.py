@@ -156,10 +156,10 @@ def test_cooldown_shortens_timer_and_traffic_resets_it(
     assert response.status_code == 200
     expected = 60 if remaining is None else max(0, min(60, remaining))
     assert response.json()["seconds_until_scale_to_zero"] == expected
-    assert 900 - (10_000 - state.last_request_time) <= 60
+    assert 900 - (10_000 - cache.activity.get("test").last_request_time) <= 60
     client.scale_deployment.assert_not_called()
     cache.touch("test")
-    assert state.last_request_time == 10_000
+    assert cache.activity.get("test").last_request_time == 10_000
 
 
 @pytest.mark.parametrize("exists", [False, True])
