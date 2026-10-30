@@ -16,11 +16,8 @@ named VM templates. Its serving image is published from
 [mysociety/systemone-container](https://github.com/mysociety/systemone-container/).
 See [the template guide](../EXOSCALE_TEMPLATES.md) for creation, testing and cleanup.
 
-Temporary VMs, snapshots, SSH keys and groups are deleted; the reusable template is retained.
-Live checks on 8 October 2026 verified offline model loading, HTTP and native
-Pydantic AI requests, tunnel recovery and cleanup. A fresh template VM completed
-its challenges in 5m 33s. The [template guide](../EXOSCALE_TEMPLATES.md#live-lifecycle-verification)
-records the template ID and lifecycle results.
+Temporary VMs, snapshots, SSH keys and groups are deleted; the reusable template
+is retained.
 
 To request a replica count, call `POST /deployments/{slug}/warm-up?replicas=3`.
 The count must be a positive integer no greater than the managed deployment's
@@ -57,8 +54,8 @@ the shortened countdown expires.
 Groups use the same lifecycle URLs as individual deployments. Every group slug
 must start with `group_` followed by a nonempty name; individual local and remote
 deployments cannot use that prefix. Catalog validation enforces this at load time.
-For example, use `group_foi_response_pipeline` as `{slug}` below. The separate
-`/deployment-group/...` routes are removed. Group warm-up rejects `replicas`
+For example, use `group_foi_response_pipeline` as `{slug}` below.
+Group warm-up rejects `replicas`
 overrides with HTTP 422 before starting any members.
 
 Groups support these authenticated actions for both local and remote members:
@@ -135,12 +132,18 @@ The application uses that configured key for managed inference and never queries
 Exoscale for deployment-specific credentials. Deployment status remains readable
 without a key, but inference requires it.
 
-Managed deployments can set `inference_engine_version` to select a provider runtime
-explicitly. Omitting it keeps the provider default. OLMo selects `0.29.0`:
-the provider default `0.31.0` crashes in Anthropic endpoint initialization when it
-probes OLMo's template without defining `tools`. The 0.29.0 code path avoids that
-probe when no explicit template override is supplied. See the upstream
-[0.29.0 initialization](https://github.com/vllm-project/vllm/blob/v0.29.0/vllm/entrypoints/anthropic/serving.py)
-and [0.31.0 probe](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/entrypoints/anthropic/serving.py).
-Changing this pin requires a fresh deployment
-and live inference checks.
+### Managed inference runtime settings
+
+Managed deployments can set `inference_engine_version` to pin a provider runtime.
+Omitting it uses the provider default.
+
+- `foi_topic` and `foi_status` pin `0.32.0` with
+  `disable_any_whitespace=false`. Allowing whitespace avoids forcing compact JSON
+  during generation, which can change model output and cause status omissions.
+  Both retain schema-constrained output and application validation.
+- `olmo3_7b` pins `0.29.0` with `disable_any_whitespace=true` because newer tested
+  runtimes fail during startup when probing its chat template.
+
+Editing the catalog does not migrate existing deployments. Runtime upgrades
+require a fresh deployment and live checks of startup, inference and semantic
+outputs; valid JSON alone does not establish compatibility.
