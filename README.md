@@ -329,6 +329,7 @@ these extraction tests. These smoke tests do not establish production accuracy.
 | Guide | Contents |
 | --- | --- |
 | [Architecture](docs/architecture.md) | Ownership, dependency direction, reading paths and adding features |
+| [Resource registration](docs/resource-registration.md) | Resource families, type versus instance, and how to add a model approach |
 | [Deployment management](docs/deployments.md) | Lifecycle, replica overrides, cooldown and group warm-up |
 | [FOI processing](docs/foi.md) | Extraction, topics, pending response analysis, provenance and batch examples |
 | [Sanitization and resources](docs/sanitization.md) | PII policy, attestations, leases and idle unloading |
