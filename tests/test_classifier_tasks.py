@@ -13,8 +13,10 @@ import pytest
 
 from llm_management.automatic.pipeline import AutomaticClassifier
 from llm_management.inference.errors import ClassifierBusy, ClassifierUnavailable
+from llm_management.inference.policy import ClassifierExecutionPolicy
 from llm_management.inference.tasks import ClassifierTasks
 from llm_management.sar.pipeline import SARClassifier
+from llm_management.settings import settings
 
 
 def test_rejected_work_is_not_created_and_cancellation_keeps_its_slot():
@@ -156,9 +158,18 @@ def test_classifier_shutdown_stops_new_gates_and_preserves_late_positive_policy(
     logistic = Mock(predict=predict)
     encoder_provider = Mock(side_effect=AssertionError("Closed encoder must not load"))
     classifier = (
-        SARClassifier(lambda: logistic, encoder_provider)
+        SARClassifier(
+            lambda: logistic,
+            encoder_provider,
+            policy=ClassifierExecutionPolicy.from_settings(settings),
+        )
         if kind == "sar"
-        else AutomaticClassifier(lambda: logistic, encoder_provider, max_concurrency=1)
+        else AutomaticClassifier(
+            lambda: logistic,
+            encoder_provider,
+            max_concurrency=1,
+            policy=ClassifierExecutionPolicy.from_settings(settings),
+        )
     )
 
     async def run():
@@ -197,9 +208,18 @@ def test_encoder_cleanup_failure_does_not_skip_gate_drain(kind, monkeypatch):
 
     logistic = Mock(predict=predict)
     classifier = (
-        SARClassifier(lambda: logistic, Mock())
+        SARClassifier(
+            lambda: logistic,
+            Mock(),
+            policy=ClassifierExecutionPolicy.from_settings(settings),
+        )
         if kind == "sar"
-        else AutomaticClassifier(lambda: logistic, Mock(), max_concurrency=1)
+        else AutomaticClassifier(
+            lambda: logistic,
+            Mock(),
+            max_concurrency=1,
+            policy=ClassifierExecutionPolicy.from_settings(settings),
+        )
     )
     monkeypatch.setattr(
         classifier.batcher,
@@ -236,7 +256,10 @@ def test_shutdown_drains_accepted_work_waiting_for_automatic_capacity():
         return SimpleNamespace(result=False, positive_score=0.1)
 
     classifier = AutomaticClassifier(
-        lambda: Mock(predict=predict), Mock(), max_concurrency=1
+        lambda: Mock(predict=predict),
+        Mock(),
+        max_concurrency=1,
+        policy=ClassifierExecutionPolicy.from_settings(settings),
     )
 
     async def run():

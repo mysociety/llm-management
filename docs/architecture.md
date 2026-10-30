@@ -329,3 +329,15 @@ runtime on import. `server.py` is the ASGI entry point that creates the served a
 
 Default runtime assembly loads a fresh catalog; nested models and dictionaries
 are independent. An explicitly supplied catalog is retained by identity.
+
+## Execution policy
+
+Bootstrap captures batching and logistic admission settings in an immutable
+`ClassifierExecutionPolicy`, injected into SAR and Automatic. `create_app()` captures
+HTTP body size, upload timeout and admission limits in `HTTPRequestPolicy`, or accepts
+an explicit policy. Changing process settings after construction does not change these
+limits for an existing runtime or HTTP app; construct a new instance to apply changes.
+Environment setting names and defaults are unchanged. These policies describe execution
+limits; feature input preparation, model decisions and failure results remain explicit
+in their pipelines. Authentication and provider configuration retain their existing
+settings access and are not part of these scheduling policies.

@@ -7,8 +7,15 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import sys
+import threading
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
 
 from llm_management.bootstrap import assemble_runtime
+from llm_management.inference.errors import ClassifierBusy
+from llm_management.settings import settings
 
 
 def test_default_runtimes_have_independent_catalogs() -> None:
@@ -29,6 +36,35 @@ def test_default_runtimes_have_independent_catalogs() -> None:
     assert second.management.service is second.deployments
     asyncio.run(first.close())
     asyncio.run(second.close())
+
+
+@pytest.mark.parametrize("kind", ["sar", "automatic"])
+def test_classifier_admission_keeps_its_assembled_policy(monkeypatch, kind) -> None:
+    monkeypatch.setattr(settings, "logistic_max_pending", 1)
+    runtime = assemble_runtime()
+    classifier = runtime.sar if kind == "sar" else runtime.automatic
+    entered, finish = threading.Event(), threading.Event()
+
+    def predict(*args, **kwargs):
+        entered.set()
+        assert finish.wait(5)
+        return SimpleNamespace(result=False, positive_score=0.1)
+
+    classifier.logistic_provider = lambda: Mock(predict=predict)
+    monkeypatch.setattr(settings, "logistic_max_pending", 64)
+
+    async def run() -> None:
+        first = asyncio.create_task(classifier.detect("first", fast=True))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            with pytest.raises(ClassifierBusy, match="queue is full"):
+                await classifier.detect("second", fast=True)
+        finally:
+            finish.set()
+            await first
+            await runtime.close()
+
+    asyncio.run(run())
 
 
 def test_importing_http_factory_does_not_assemble_a_runtime() -> None:

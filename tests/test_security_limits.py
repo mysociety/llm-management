@@ -9,7 +9,7 @@ from starlette.testclient import TestClient
 
 from llm_management.api.auth import require_bearer_auth_when_enabled
 from llm_management.api.classifiers import AutomaticResponseRequest
-from llm_management.api.limits import RequestLimits
+from llm_management.api.limits import HTTPRequestPolicy, RequestLimits
 from llm_management.settings import Settings, settings
 
 
@@ -53,7 +53,11 @@ def test_chunked_body_bound_and_admission(monkeypatch):
             await send({"type": "http.response.start", "status": 200, "headers": []})
             await send({"type": "http.response.body", "body": b""})
 
-        middleware = RequestLimits(downstream)
+        middleware = RequestLimits(
+            downstream, policy=HTTPRequestPolicy.from_settings(settings)
+        )
+        monkeypatch.setattr(settings, "http_max_body_bytes", 1_000_000)
+        monkeypatch.setattr(settings, "http_max_concurrent_requests", 64)
 
         async def request(chunks, headers=()):
             messages = iter(chunks)
@@ -105,7 +109,9 @@ def test_slow_upload_times_out_and_releases_admission(monkeypatch):
         async def send(message):
             messages.append(message)
 
-        middleware = RequestLimits(downstream)
+        middleware = RequestLimits(
+            downstream, policy=HTTPRequestPolicy.from_settings(settings)
+        )
         await middleware({"type": "http", "headers": []}, receive, send)
         assert messages[0]["status"] == 408
         assert middleware.active == 0

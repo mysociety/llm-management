@@ -18,9 +18,9 @@ from ..inference.errors import (
     ClassifierUnavailable,
 )
 from ..inference.logistic_v1 import BinaryPredictionV1, normalize_text_v1
+from ..inference.policy import ClassifierExecutionPolicy
 from ..inference.tasks import ClassifierTasks
 from ..inference.validation import binary_positive_probability, validate_probability
-from ..settings import settings
 from .schemas import AutomaticResult, unresolved
 
 if TYPE_CHECKING:
@@ -120,19 +120,21 @@ class AutomaticClassifier:
         encoder_provider: Callable[[], Encoder],
         *,
         max_concurrency: int,
+        policy: ClassifierExecutionPolicy,
     ) -> None:
         """
         Bind cold providers and create this application's bounded admission capacity.
         """
+        self.policy = policy
         self.logistic_provider = logistic_provider
         self.encoder_provider = encoder_provider
         self.capacity = asyncio.Semaphore(max_concurrency)
         self.batcher = AsyncClassifierBatcher(
             lambda texts: self.encoder_provider().classify(texts),
-            batch_size=settings.deberta_batch_size,
-            delay_seconds=settings.deberta_batch_delay_ms / 1000,
-            max_pending=settings.deberta_queue_size,
-            timeout_seconds=settings.deberta_queue_timeout_seconds,
+            batch_size=policy.batch_size,
+            delay_seconds=policy.batch_delay_seconds,
+            max_pending=policy.batch_max_pending,
+            timeout_seconds=policy.batch_timeout_seconds,
         )
         self.gate_tasks = ClassifierTasks[AutomaticResult]("Logistic")
 
@@ -190,7 +192,7 @@ class AutomaticClassifier:
         Await logistic capacity, then batch only positive cascade decisions.
         """
         pending = self.gate_tasks.submit(
-            lambda: self._gate(body, fast), max_pending=settings.logistic_max_pending
+            lambda: self._gate(body, fast), max_pending=self.policy.logistic_max_pending
         )
         try:
             result = await pending

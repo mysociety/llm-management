@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 from .api import agents, classifiers, deployments, foi, mocks, proxies
 from .api.auth import bearer_auth, require_bearer_auth_when_enabled
-from .api.limits import RequestLimits
+from .api.limits import HTTPRequestPolicy, RequestLimits
 from .bootstrap import ApplicationRuntime
 from .deployments.errors import DeploymentServiceError, LLMManagementError
 from .inference.errors import ClassifierBusy
@@ -50,19 +50,28 @@ async def service_error(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
-def create_app(runtime: ApplicationRuntime) -> FastAPI:
+def create_app(
+    runtime: ApplicationRuntime, *, request_policy: HTTPRequestPolicy | None = None
+) -> FastAPI:
     """
     Bind HTTP routes to an existing runtime without assembling dependencies.
 
     The FastAPI lifespan starts and closes this runtime. Assembly is explicit at
     the entry point so tests and other hosts can supply independent runtimes.
+    Capture request limits from settings here unless an explicit policy is supplied;
+    the middleware retains that policy for the lifetime of this HTTP app.
     """
     app = FastAPI(title="LLM Management Proxy", docs_url="/", lifespan=lifespan)
     app.state.runtime = runtime
     app.add_exception_handler(LLMManagementError, deployment_error)
     app.add_exception_handler(DeploymentServiceError, service_error)
 
-    app.add_middleware(RequestLimits)
+    policy = (
+        request_policy
+        if request_policy is not None
+        else HTTPRequestPolicy.from_settings(settings)
+    )
+    app.add_middleware(RequestLimits, policy=policy)
     app.middleware("http")(require_bearer_auth_when_enabled)
 
     @app.exception_handler(ClassifierBusy)

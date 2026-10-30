@@ -248,3 +248,8 @@ Use `SlugMappedList[ConfigType] = Field(default_factory=dict)` for new collectio
 with this contract. The annotation in `deployments/collections.py` handles list or
 keyed input, slug validation, typed JSON schemas and ordered list serialization.
 The field supplies its empty default; no field-specific serializer is needed.
+
+Runtime assembly creates deployment execution and management together. Feature code
+uses its injected providers and `runtime.deployments` for remote leases; operational
+commands use `runtime.management`. SAR and Automatic scheduling limits come from an
+injected `ClassifierExecutionPolicy`, independently of model registration.

@@ -19,6 +19,7 @@ from .deployments.catalog import DeploymentCatalog
 from .deployments.management import DeploymentManagement
 from .deployments.service import DeploymentService
 from .deployments.status import DeploymentStatusCache
+from .inference.policy import ClassifierExecutionPolicy
 from .inference.providers import ResourceProviders
 from .inference.resources import ResourceRegistry
 from .settings import settings
@@ -212,7 +213,9 @@ def assemble_runtime(
     foi = FOIResources.from_config(
         catalog=catalog, providers=providers, sanitizer=sanitizer
     )
+    execution_policy = ClassifierExecutionPolicy.from_settings(settings)
     sar = SARClassifier(
+        policy=execution_policy,
         logistic_provider=providers.provider(
             resource_types.SAR_LOGISTIC, lambda: catalog.require_sar().logistic
         ),
@@ -222,6 +225,7 @@ def assemble_runtime(
     )
 
     automatic = AutomaticClassifier(
+        policy=execution_policy,
         logistic_provider=providers.provider(
             resource_types.AUTOMATIC_LOGISTIC,
             lambda: catalog.require_automatic().logistic,
