@@ -26,6 +26,9 @@ def isolated_external_run() -> Generator[str, None, None]:
     directory = settings.compute_state_dir / "pytest" / role
     directory.mkdir(parents=True, exist_ok=False, mode=0o700)
     with pytest.MonkeyPatch.context() as patch:
+        # Live tests still host HTTP in-process, with no network listener.
+        patch.setattr(settings, "auth_tokens", {})
+        patch.setattr(settings, "allow_unauthenticated", True)
         patch.setattr(settings, "server_role", role)
         patch.setattr(settings, "compute_state_dir", directory)
         patch.setenv("SERVER_ROLE", role)

@@ -18,6 +18,19 @@ if TYPE_CHECKING:
     from llm_management.sanitization import PresidioSanitizer
 
 
+@pytest.fixture(autouse=True)
+def local_http_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Explicitly opt in to unauthenticated in-process HTTP tests.
+
+    Authentication tests override these values to exercise production defaults.
+    """
+    from llm_management.settings import settings
+
+    monkeypatch.setattr(settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "allow_unauthenticated", True)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def external_test_run(request: pytest.FixtureRequest):
     """
