@@ -4,7 +4,6 @@ FastAPI entry point: assemble dependencies, install middleware and routers.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -28,25 +27,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     Run idle cleanup and release the app's resources on shutdown.
     """
-    service = app.state.service
     if not settings.auth_tokens:
         logger.warning(
             "AUTH_TOKENS is empty — the server API is open to unauthenticated "
             "requests. Ensure this instance is protected at the network level "
             "before exposing it to internet traffic."
         )
-    task = asyncio.create_task(service.idle_scaler())
-    try:
+    async with app.state.application:
         yield
-    finally:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        await app.state.application.sar.close()
-        await app.state.application.automatic.close()
-        await service.close()
 
 
 async def deployment_error(request: Request, exc: Exception) -> JSONResponse:

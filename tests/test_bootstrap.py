@@ -158,3 +158,137 @@ def test_management_assembly_does_not_import_features():
         capture_output=True,
         text=True,
     )
+
+
+def test_application_lifecycle_orders_cleanup_and_closes_once(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    application = assemble_application()
+    events = []
+
+    async def idle():
+        events.append("idle started")
+        try:
+            await asyncio.Event().wait()
+        finally:
+            events.append("idle stopped")
+
+    async def sar_close():
+        events.append("sar drained")
+
+    async def automatic_close():
+        events.append("automatic drained")
+
+    async def deployments_close():
+        events.append("resources released")
+
+    monkeypatch.setattr(application.deployments, "idle_scaler", idle)
+    monkeypatch.setattr(application.sar, "close", AsyncMock(side_effect=sar_close))
+    monkeypatch.setattr(
+        application.automatic, "close", AsyncMock(side_effect=automatic_close)
+    )
+    monkeypatch.setattr(
+        application.deployments, "close", AsyncMock(side_effect=deployments_close)
+    )
+
+    async def run():
+        async with application as entered:
+            assert entered is application
+            await asyncio.sleep(0)
+        await asyncio.gather(application.close(), application.close())
+
+    asyncio.run(run())
+    assert events == [
+        "idle started",
+        "idle stopped",
+        "sar drained",
+        "automatic drained",
+        "resources released",
+    ]
+
+
+def test_application_shutdown_continues_after_classifier_failure(monkeypatch):
+    import asyncio
+    from builtins import ExceptionGroup
+    from unittest.mock import AsyncMock
+
+    import pytest
+
+    application = assemble_application()
+    monkeypatch.setattr(
+        application.sar, "close", AsyncMock(side_effect=RuntimeError("drain failed"))
+    )
+    automatic_close = AsyncMock()
+    deployments_close = AsyncMock()
+    monkeypatch.setattr(application.automatic, "close", automatic_close)
+    monkeypatch.setattr(application.deployments, "close", deployments_close)
+
+    with pytest.raises(ExceptionGroup, match="Application shutdown failed") as caught:
+        asyncio.run(application.close())
+    assert str(caught.value.exceptions[0]) == "drain failed"
+    automatic_close.assert_awaited_once()
+    deployments_close.assert_awaited_once()
+
+
+def test_cancelled_close_waits_for_resource_cleanup(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    import pytest
+
+    application = assemble_application()
+    monkeypatch.setattr(application.automatic, "close", AsyncMock())
+    release_resources = AsyncMock()
+    monkeypatch.setattr(application.deployments, "close", release_resources)
+
+    async def run():
+        draining = asyncio.Event()
+        finish = asyncio.Event()
+
+        async def drain():
+            draining.set()
+            await finish.wait()
+
+        monkeypatch.setattr(application.sar, "close", drain)
+        shutdown = asyncio.create_task(application.close())
+        await draining.wait()
+        shutdown.cancel()
+        await asyncio.sleep(0)
+        assert not shutdown.done()
+        shutdown.cancel()
+        await asyncio.sleep(0)
+        assert not shutdown.done()
+        release_resources.assert_not_awaited()
+        finish.set()
+        with pytest.raises(asyncio.CancelledError):
+            await shutdown
+        await application.close()
+        release_resources.assert_awaited_once()
+
+    asyncio.run(run())
+
+
+def test_application_context_failure_cleans_up_and_rejects_reuse(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    import pytest
+
+    application = assemble_application()
+    release_resources = AsyncMock()
+    monkeypatch.setattr(application.deployments, "close", release_resources)
+
+    async def run():
+        with pytest.raises(ValueError, match="caller failed"):
+            async with application:
+                with pytest.raises(RuntimeError, match="already started"):
+                    async with application:
+                        pass
+                raise ValueError("caller failed")
+        release_resources.assert_awaited_once()
+        with pytest.raises(RuntimeError, match="already started or closed"):
+            async with application:
+                pass
+
+    asyncio.run(run())
