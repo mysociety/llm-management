@@ -68,6 +68,7 @@ assert not any(name.startswith(("llm_management.foi.", "llm_management.sar.",
 from llm_management.bootstrap import assemble_application
 from llm_management.inference.resources import ResourceRegistry
 from llm_management.inference.providers import ResourceProviders
+from llm_management.deployments.resource_types import RESOURCE_TYPES
 registry = ResourceRegistry()
 application = assemble_application(catalog, registry)
 assert registry.all() == []
@@ -75,7 +76,7 @@ assert registry.all() == []
 other_registry = ResourceRegistry()
 providers = ResourceProviders(catalog, other_registry)
 for config in catalog.local.deployment:
-    owner = providers[config.slug]()
+    owner = providers.provider(RESOURCE_TYPES[type(config)], lambda: config.slug)()
     assert not other_registry.get(config.slug).status().ready
 """
     result = subprocess.run(
