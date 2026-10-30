@@ -18,6 +18,7 @@ from ..inference.errors import (
     ClassifierUnavailable,
 )
 from ..inference.logistic_v1 import normalize_text_v1
+from ..inference.tasks import ClassifierTasks
 from ..inference.validation import binary_positive_probability, validate_probability
 from ..settings import settings
 from .resources import deberta_detector, logistic_detector
@@ -136,29 +137,37 @@ class SARClassifier:
             timeout_seconds=settings.deberta_queue_timeout_seconds,
         )
 
-        self._gates: set[asyncio.Task[SARResult]] = set()
+        self.gate_tasks = ClassifierTasks[SARResult]("Logistic")
 
     async def close(self) -> None:
-        await self.batcher.close()
-        if self._gates:
-            await asyncio.gather(*self._gates, return_exceptions=True)
+        """
+        Stop new gates, close encoder admission, then drain accepted logistic work.
+
+        Closing the encoder first preserves the existing shutdown policy: queued
+        encoder requests fail, and late positive gates receive the feature's normal
+        encoder-unavailable result. Always drain gates, even if encoder cleanup fails.
+        """
+        self.gate_tasks.stop_accepting()
+        try:
+            await self.batcher.close()
+        finally:
+            await self.gate_tasks.close()
 
     async def detect(self, raw_text: str, fast: bool = False) -> SARResult:
-        """Run logistic gating in a thread, then await batched encoder confirmation."""
-        if len(self._gates) >= settings.logistic_max_pending:
-            raise ClassifierBusy("Logistic queue is full")
-        task = asyncio.create_task(
-            asyncio.to_thread(
+        """
+        Run logistic gating in a thread, then await batched encoder confirmation.
+        """
+        pending = self.gate_tasks.submit(
+            lambda: asyncio.to_thread(
                 _detect_sar,
                 raw_text,
                 True,
                 logistic_provider=self.logistic_provider,
                 encoder_provider=self.encoder_provider,
-            )
+            ),
+            max_pending=settings.logistic_max_pending,
         )
-        self._gates.add(task)
-        task.add_done_callback(self._gates.discard)
-        result = await asyncio.shield(task)
+        result = await pending
         if fast or result.status != "complete" or not result.is_sar:
             return result
         try:

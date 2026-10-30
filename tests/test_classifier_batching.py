@@ -243,6 +243,6 @@ def test_logistic_admission_survives_caller_cancellation(monkeypatch, kind):
         finally:
             release.set()
             await classifier.close()
-        assert len(classifier._gates) == 0
+        assert classifier.gate_tasks.pending_count == 0
 
     asyncio.run(run())
