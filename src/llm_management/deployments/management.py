@@ -12,7 +12,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Literal, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from pydantic import BaseModel
 
@@ -24,6 +24,8 @@ from .types import (
     GroupActionOutcome,
     GroupMemberResult,
     GroupWarmUpResponse,
+    LifecycleAction,
+    LifecycleCommand,
     WarmUpAction,
     WarmUpResponse,
 )
@@ -44,12 +46,12 @@ class DeploymentStatusResponse(BaseModel):
 
 class ScaleToZeroResponse(BaseModel):
     slug: str
-    action: str
+    action: LifecycleAction
 
 
 class CoolDownResponse(BaseModel):
     slug: str
-    action: str
+    action: LifecycleAction
     seconds_until_scale_to_zero: float | None
 
 
@@ -110,7 +112,7 @@ class DeploymentManagement:
         Stop one resource or all group members, preserving per-member failures.
         """
         if is_group_slug(slug):
-            return await self.change_group(slug, "scale-to-zero")
+            return await self.change_group(slug, LifecycleCommand.STOP)
         return await self.stop_resource(slug)
 
     async def stop_resource(self, slug: str) -> ScaleToZeroResponse:
@@ -118,14 +120,14 @@ class DeploymentManagement:
         Stop one resource and describe the completed action.
         """
         await self.service.scale_to_zero(slug)
-        return ScaleToZeroResponse(slug=slug, action="scaled_to_zero")
+        return ScaleToZeroResponse(slug=slug, action=LifecycleAction.SCALED_TO_ZERO)
 
     async def cool_down(self, slug: str) -> CoolDownResponse | GroupActionOutcome:
         """
         Shorten idle timers without interrupting work or immediately stopping models.
         """
         if is_group_slug(slug):
-            return await self.change_group(slug, "cool-down")
+            return await self.change_group(slug, LifecycleCommand.COOL_DOWN)
         return await self.cool_down_resource(slug)
 
     async def cool_down_resource(self, slug: str) -> CoolDownResponse:
@@ -135,7 +137,9 @@ class DeploymentManagement:
         remaining = await self.service.cooldown(slug)
         return CoolDownResponse(
             slug=slug,
-            action="already_stopped" if remaining is None else "cooling_down",
+            action=LifecycleAction.ALREADY_STOPPED
+            if remaining is None
+            else LifecycleAction.COOLING_DOWN,
             seconds_until_scale_to_zero=remaining,
         )
 
@@ -223,7 +227,7 @@ class DeploymentManagement:
         )
 
     async def change_group(
-        self, slug: str, action: Literal["cool-down", "scale-to-zero"]
+        self, slug: str, action: LifecycleCommand
     ) -> GroupActionOutcome:
         """
         Apply a lifecycle action concurrently, preserving per-member failures.
@@ -232,7 +236,7 @@ class DeploymentManagement:
         async def change_member(member: str) -> GroupActionMemberOutcome:
             try:
                 match action:
-                    case "cool-down":
+                    case LifecycleCommand.COOL_DOWN:
                         result = await self.cool_down_resource(member)
                         return GroupActionMemberOutcome(
                             slug=member,
@@ -240,7 +244,7 @@ class DeploymentManagement:
                             action=result.action,
                             seconds_until_scale_to_zero=result.seconds_until_scale_to_zero,
                         )
-                    case "scale-to-zero":
+                    case LifecycleCommand.STOP:
                         stopped = await self.stop_resource(member)
                         return GroupActionMemberOutcome(
                             slug=member,

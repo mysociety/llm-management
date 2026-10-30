@@ -45,10 +45,29 @@ class GroupWarmUpResponse(BaseModel):
     deployments: list[GroupMemberResult]
 
 
+class LifecycleCommand(StrEnum):
+    """
+    Management commands supported for a resource group.
+    """
+
+    COOL_DOWN = "cool-down"
+    STOP = "scale-to-zero"
+
+
+class LifecycleAction(StrEnum):
+    """
+    Outcome of stopping a resource or shortening its idle timer.
+    """
+
+    ALREADY_STOPPED = "already_stopped"
+    COOLING_DOWN = "cooling_down"
+    SCALED_TO_ZERO = "scaled_to_zero"
+
+
 class GroupActionMemberOutcome(BaseModel):
     slug: str
     success: bool
-    action: str | None = None
+    action: LifecycleAction | None = None
     seconds_until_scale_to_zero: float | None = None
     error: str | None = None
 

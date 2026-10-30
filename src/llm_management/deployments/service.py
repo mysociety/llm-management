@@ -149,7 +149,7 @@ class DeploymentService:
                 raise DeploymentServiceError(
                     status_code=422, detail="Replicas must be positive."
                 )
-            if getattr(cfg, "backend", "exoscale_managed") == "exoscale_compute":
+            if cfg.backend == "exoscale_compute":
                 if replicas != 1:
                     raise DeploymentServiceError(
                         status_code=422,
@@ -185,7 +185,7 @@ class DeploymentService:
                 self.activity.touch(slug)
                 raise
             except Exception:
-                if getattr(cfg, "backend", "exoscale_managed") == "exoscale_compute":
+                if cfg.backend == "exoscale_compute":
                     try:
                         await asyncio.to_thread(self.status.refresh, backend)
                         self.activity.touch(slug)
