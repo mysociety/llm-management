@@ -1,4 +1,5 @@
-"""QuestionSlice runtime setup and CPU/Exoscale backend selection.
+"""
+QuestionSlice runtime setup and CPU/Exoscale backend selection.
 
 CPU runs the complete classifier. Exoscale serves mean-pooled encoder embeddings;
 the original small classification head runs locally because the gateway does not
@@ -15,15 +16,16 @@ from typing import Any, NamedTuple
 
 from pydantic import BaseModel, ConfigDict
 
-from ..deployments import (
+from ..deployments import get_catalog, resource_types
+from ..deployments.catalog import DeploymentCatalog
+from ..deployments.local_config import (
     QuestionSliceHeadDeployment,
     SequenceClassifierDeployment,
-    get_catalog,
 )
-from ..deployments.catalog import DeploymentCatalog
-from ..deployments.types import DeploymentAccess
+from ..deployments.types import DeploymentAccess as DeploymentAccess
 from ..inference.classifiers import LocalSequenceClassifier
 from ..inference.errors import ClassifierOutputError, ClassifierUnavailable
+from ..inference.providers import ResourceProviders
 from ..inference.remote import classify_remote
 from ..inference.resources import LocalResource, ResourceRegistry
 from ..sanitization import PresidioSanitizer, Sanitized, require_sanitized
@@ -305,6 +307,47 @@ class FOIResources(BaseModel):
     tokenizer: Callable[[], LocalResource[Any]]
     response_tokenizer: Callable[[], LocalResource[Any]] | None = None
     category_matcher: Callable[[], CategoryMatcher] | None = None
+
+    @classmethod
+    def from_config(
+        cls,
+        catalog: DeploymentCatalog,
+        providers: ResourceProviders,
+        sanitizer: Callable[[], PresidioSanitizer],
+    ) -> FOIResources:
+        """
+        Bind FOI roles explicitly; resolving owners remains deferred.
+
+        Keep injectable provider fields for direct callers and tests. Optional
+        categories are disabled when unbound; the response tokenizer reports a
+        missing binding only if response analysis requests it.
+        """
+        return cls(
+            catalog=catalog,
+            sanitizer=sanitizer,
+            classifier=providers.provider(
+                resource_types.QUESTION_CLASSIFIER,
+                lambda: catalog.require_foi().classifier,
+            ),
+            head=providers.provider(
+                resource_types.QUESTION_HEAD, lambda: catalog.require_foi().head
+            ),
+            tokenizer=providers.provider(
+                resource_types.TOPIC_TOKENIZER, lambda: catalog.require_foi().tokenizer
+            ),
+            response_tokenizer=providers.provider(
+                resource_types.RESPONSE_TOKENIZER,
+                lambda: catalog.require_foi().response_tokenizer,
+            ),
+            category_matcher=(
+                providers.provider(
+                    resource_types.CATEGORY_MATCHER,
+                    lambda: catalog.require_foi().category_matcher,
+                )
+                if catalog.foi is not None and catalog.foi.category_matcher is not None
+                else None
+            ),
+        )
 
 
 class ClassificationRows(NamedTuple):

@@ -8,8 +8,9 @@ import asyncio
 import re
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from ..deployments import PresidioDeployment, get_catalog
+from ..deployments import get_catalog
 from ..deployments.catalog import DeploymentCatalog
+from ..deployments.local_config import PresidioDeployment
 from ..inference.errors import ClassifierUnavailable
 from ..inference.resources import LocalResource, ResourceRegistry
 from .contracts import Sanitized, _attest

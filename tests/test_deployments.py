@@ -1,17 +1,13 @@
 """Catalog references, cold resource registration, and runtime configuration."""
 
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 from pydantic import ValidationError
 
 from llm_management.bootstrap import register_configured_resources
-from llm_management.deployments import (
-    DeploymentCatalog,
-    SARClassifierDeployment,
-    get_catalog,
-)
+from llm_management.deployments import DeploymentCatalog, get_catalog
+from llm_management.deployments.local_config import SARClassifierDeployment
 from llm_management.inference.resources import (
     LocalResource,
     ResourceRegistry,
@@ -83,9 +79,13 @@ def test_loading_and_registration_do_not_import_or_load_owners(monkeypatch):
     config = catalog.local.deployment[0]
     load = Mock()
     resource = LocalResource(config.slug, load, Mock())
-    factory = Mock(return_value=SimpleNamespace(resource=resource))
-    imported.side_effect = None
-    imported.return_value = SimpleNamespace(question_classifier=factory)
+    from llm_management.inference.classifiers import LocalSequenceClassifier
+
+    owner = Mock(spec=LocalSequenceClassifier, resource=resource)
+    factory = Mock(return_value=owner)
+    monkeypatch.setattr(
+        "llm_management.foi.backends.create_question_classifier", factory
+    )
     assert registry.get(config.slug) is resource
     assert registry.get(config.slug) is resource
     factory.assert_called_once_with(config, catalog=catalog, registry=registry)
@@ -152,3 +152,44 @@ def test_shared_checkpoint_references_resolve_to_same_identity():
         == local[foi.classifier].model_ref
     )
     assert catalog.get(foi.topic_deployment).model_ref == local[foi.tokenizer].model_ref
+
+
+@pytest.mark.parametrize(
+    ("binding", "message"),
+    [
+        (
+            "namespace",
+            "Remote deployments and local resources must have distinct names",
+        ),
+        ("checkpoint", "Unknown model reference: missing"),
+        ("group", "Unknown resources in group group_missing: ['missing']"),
+        ("foi", "Local deployment 'presidio' requires SequenceClassifierDeployment"),
+        ("sar", "No local deployment found with slug 'missing'"),
+    ],
+)
+def test_catalog_relationship_errors_remain_validation_errors(
+    binding: str, message: str
+) -> None:
+    """
+    Expose useful configuration errors through the catalog's Pydantic boundary.
+    """
+    data = DeploymentCatalog.load().model_dump()
+    if binding == "namespace":
+        data["local"]["deployment"][0]["slug"] = data["exoscale"]["deployment"][0][
+            "slug"
+        ]
+    elif binding == "checkpoint":
+        data["local"]["deployment"][0]["model_ref"] = "missing"
+    elif binding == "group":
+        data["deployment_group"].append(
+            {"slug": "group_missing", "deployments": ["missing"]}
+        )
+    elif binding == "foi":
+        data["foi"]["classifier"] = "presidio"
+    elif binding == "sar":
+        data["sar"]["classifier"] = "missing"
+
+    with pytest.raises(ValidationError) as error:
+        DeploymentCatalog.model_validate(data)
+
+    assert message in str(error.value)

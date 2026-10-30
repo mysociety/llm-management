@@ -4,8 +4,9 @@ Lazy local SAR model resources and release policy checks.
 
 from __future__ import annotations
 
-from ..deployments import SARLogisticDeployment, get_catalog
-from ..deployments.catalog import DeploymentCatalog, SARClassifierDeployment
+from ..deployments import get_catalog
+from ..deployments.catalog import DeploymentCatalog
+from ..deployments.local_config import SARClassifierDeployment, SARLogisticDeployment
 from ..inference.classifiers import (
     AuthenticatedSequenceClassifier as SARSequenceClassifier,
 )

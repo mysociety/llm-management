@@ -14,7 +14,8 @@ from openai import APIError, AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, ConfigDict
 
-from ..deployments.catalog import DeploymentCatalog, ResponseTokenizerDeployment
+from ..deployments.catalog import DeploymentCatalog
+from ..deployments.local_config import ResponseTokenizerDeployment
 from ..inference.errors import ClassifierUnavailable
 from ..inference.resources import LocalResource, ResourceRegistry
 from ..sanitization import Sanitized, require_sanitized
