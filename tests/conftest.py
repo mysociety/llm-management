@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+pytest_plugins = ["pytester"]
+
 if TYPE_CHECKING:
     from fastapi import FastAPI
 

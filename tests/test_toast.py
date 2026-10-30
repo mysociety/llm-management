@@ -27,6 +27,7 @@ pytestmark = [
 @pytest.fixture(scope="session", params=DEPLOYMENTS, ids=DEPLOYMENTS)
 def deployment_client(
     request: pytest.FixtureRequest,
+    external_test_run: str,
 ) -> Iterator[tuple[TestClient, str]]:
     deployment = request.param
     with TestClient(create_app(runtime=assemble_runtime())) as c:

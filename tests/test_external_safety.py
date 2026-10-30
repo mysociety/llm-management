@@ -83,6 +83,73 @@ def test_live(application):
     assert (tmp_path / "fixture-ran").exists() == (outcome == "1 passed")
 
 
+def test_live_role_outlives_session_client_cleanup(pytester, monkeypatch):
+    """
+    Keep isolation active when a later module shadows the session client fixture.
+    """
+    import re
+    from types import SimpleNamespace
+
+    from tests import test_proxy
+
+    closed_roles = []
+
+    class FakeClient:
+        def __init__(self, app):
+            pass
+
+        def __enter__(self):
+            self.role = settings.server_role
+            assert re.fullmatch(r"test_[a-f0-9]{32}", self.role)
+            return self
+
+        def post(self, path):
+            return SimpleNamespace(raise_for_status=lambda: None)
+
+        def __exit__(self, *args):
+            assert settings.server_role == self.role, "Isolation ended before cleanup"
+            closed_roles.append(self.role)
+
+    # Exercise the real session fixture with no runtime or cloud operations.
+    monkeypatch.setattr(test_proxy, "TestClient", FakeClient)
+    monkeypatch.setattr(test_proxy, "assemble_runtime", lambda: None)
+    monkeypatch.setattr(test_proxy, "create_app", lambda **kwargs: None)
+    monkeypatch.setattr(settings, "server_role", "test")
+    monkeypatch.setattr(settings, "compute_state_dir", pytester.path / "state")
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+    monkeypatch.setenv("PYTEST_ADDOPTS", "")
+    pytester.makeconftest(
+        "from tests.conftest import "
+        "pytest_addoption, pytest_collection_modifyitems, external_test_run"
+    )
+    pytester.makeini("[pytest]\nmarkers = external: isolated live-test fixture")
+    pytester.makepyfile(
+        test_a_proxy="""
+            import pytest
+            from tests.test_proxy import client
+
+            @pytest.mark.external
+            def test_proxy_client(client):
+                pass
+        """,
+        test_b_other="""
+            import pytest
+
+            @pytest.fixture(scope="module")
+            def client():
+                yield None
+
+            @pytest.mark.external
+            def test_other_client(client):
+                pass
+        """,
+    )
+    result = pytester.runpytest_inprocess("-q", "--run-external")
+    result.assert_outcomes(passed=2)
+    assert result.ret == 0
+    assert len(closed_roles) == 1
+
+
 @pytest.mark.parametrize("role", ["production", "", "test/production", "testing"])
 def test_operational_roles_rejected_without_creating_state(tmp_path, monkeypatch, role):
     monkeypatch.setattr(settings, "server_role", role)

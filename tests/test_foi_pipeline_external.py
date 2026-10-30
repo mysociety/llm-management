@@ -22,7 +22,7 @@ pytestmark = pytest.mark.external
 
 
 @pytest.fixture(scope="module")
-def client():
+def client(external_test_run: str):
     """
     Release model resources and scale touched deployments down after the batch.
     """
