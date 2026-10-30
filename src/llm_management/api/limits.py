@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from .auth import PUBLIC_PATHS
+
 if TYPE_CHECKING:
     from ..settings import Settings
 
@@ -52,7 +54,9 @@ class RequestLimits:
         self.active = 0
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        # Public handlers do not consume bodies; let routing handle their methods
+        # without buffering uploads or reserving inference capacity.
+        if scope["type"] != "http" or scope.get("path") in PUBLIC_PATHS:
             await self.app(scope, receive, send)
             return
         if self.active >= self.policy.max_concurrent_requests:

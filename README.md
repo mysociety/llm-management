@@ -386,6 +386,12 @@ can be adjusted through environment variables:
 | `PROXY_MAX_RESPONSE_BYTES` | 8,388,608 | Oversized upstream proxy responses return 502. |
 | `LOGISTIC_MAX_PENDING` | 64 | Bounds retained logistic jobs per classifier, including queued or caller-cancelled jobs; overload returns 429. |
 
+Public health and documentation routes bypass API admission and body buffering.
+FastAPI handles allowed methods and returns 405 for unsupported ones. These
+handlers ignore request bodies, so incomplete uploads cannot occupy API slots.
+Public reads remain available when the API's concurrent-request limit is reached.
+`/health` reports process liveness, not available inference capacity.
+
 Automatic-response text is limited to 100,000 characters. Response-status input
 allows up to 64 sources, 256 questions and 256 additional-text items; individual
 source text is limited to 100,000 characters, and combined model-input text to

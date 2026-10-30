@@ -23,6 +23,7 @@ bearer_auth = HTTPBearer(
     auto_error=False,
 )
 
+# These handlers never read request bodies and are exempt from API admission.
 PUBLIC_PATHS = {"/", "/docs/oauth2-redirect", "/health", "/openapi.json", "/redoc"}
 
 
