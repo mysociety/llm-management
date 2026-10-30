@@ -50,11 +50,11 @@ def test_response_deployment_reference_must_resolve():
         DeploymentCatalog.model_validate(data)
 
 
-def test_response_deployment_requires_openai_protocol():
+def test_response_deployment_requires_managed_openai_resource():
     data = DeploymentCatalog.load().model_dump()
     data["foi"]["response_deployment"] = "clef"
 
-    with pytest.raises(ValidationError, match="requires an OpenAI deployment"):
+    with pytest.raises(ValidationError, match="requires a managed OpenAI deployment"):
         DeploymentCatalog.model_validate(data)
 
 
@@ -83,3 +83,17 @@ def test_status_configuration_rejects_incompatible_resources(change):
         ]
     with pytest.raises(ValidationError):
         DeploymentCatalog.model_validate(data)
+
+
+@pytest.mark.parametrize("missing", ["response_deployment", "response_tokenizer"])
+def test_response_pair_is_validated_without_a_catalog(missing):
+    from llm_management.deployments.catalog import FOIPipeline
+
+    data = DeploymentCatalog.load().require_foi().model_dump()
+    data[missing] = None
+    with pytest.raises(ValidationError, match="must be configured together"):
+        FOIPipeline.model_validate(data)
+
+
+def test_catalog_without_foi_needs_no_foi_bindings():
+    assert DeploymentCatalog().foi is None

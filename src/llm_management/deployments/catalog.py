@@ -165,6 +165,17 @@ class FOIPipeline(CatalogModel):
     response: ResponseBudget = Field(default_factory=ResponseBudget)
     topic: TopicBudget
 
+    @model_validator(mode="after")
+    def validate_response_pair(self) -> Self:
+        """
+        Require the optional response deployment and tokenizer together.
+        """
+        if (self.response_deployment is None) != (self.response_tokenizer is None):
+            raise ValueError(
+                "FOI response deployment and tokenizer must be configured together"
+            )
+        return self
+
 
 class BinaryCascadePipeline(CatalogModel):
     logistic: str

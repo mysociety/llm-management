@@ -53,7 +53,7 @@ async def use_chat_model(
     Hold a deployment lease while the caller runs its OpenAI-compatible agent.
     """
     cfg = service.get_config(slug)
-    if getattr(cfg, "protocol", "openai") != "openai":
+    if cfg.protocol != "openai":
         raise HTTPException(
             status_code=400, detail="This endpoint requires an OpenAI deployment."
         )
