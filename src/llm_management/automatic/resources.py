@@ -7,12 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NamedTuple
 
-from ..deployments import (
-    AutoClassifierDeployment,
-    AutoLogisticDeployment,
-    DeploymentCatalog,
-    get_catalog,
-)
+from ..deployments import DeploymentCatalog, get_catalog
+from ..deployments.local_config import AutoClassifierDeployment, AutoLogisticDeployment
 from ..inference.classifiers import AuthenticatedSequenceClassifier
 from ..inference.errors import ClassifierUnavailable
 from ..inference.logistic_v1 import (

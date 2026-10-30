@@ -1,7 +1,8 @@
 """Cold assembly and model ownership across independent applications."""
 
 from llm_management.bootstrap import assemble_application
-from llm_management.deployments.catalog import DeploymentCatalog, SARLogisticDeployment
+from llm_management.deployments.catalog import DeploymentCatalog
+from llm_management.deployments.local_config import SARLogisticDeployment
 from llm_management.inference.resources import ResourceRegistry
 from llm_management.sar.resources import LogisticDetector
 
@@ -64,6 +65,8 @@ def test_separate_catalogs_and_registries_warm_their_own_checkpoint(monkeypatch)
     slug = first.require_sar().logistic
     first_guard = first_registry.get(slug)
     second_guard = second_registry.get(slug)
+    assert first_guard is not None
+    assert second_guard is not None
     assert first_guard is not second_guard
     assert first_application.sar.logistic_provider().resource is first_guard
     assert second_application.sar.logistic_provider().resource is second_guard
@@ -120,3 +123,38 @@ def test_application_owns_shared_crawl_policy(api_catalog: DeploymentCatalog) ->
     assert first.foi_finder.crawl_policy is first.crawl_policy
     assert second.foi_finder.crawl_policy is second.crawl_policy
     assert first.crawl_policy is not second.crawl_policy
+
+
+def test_management_assembly_does_not_import_features():
+    import subprocess
+    import sys
+    import textwrap
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent("""
+            import importlib.abc
+            import sys
+
+            class NoFeatures(importlib.abc.MetaPathFinder):
+                def find_spec(self, fullname, path=None, target=None):
+                    if fullname.startswith((
+                        "llm_management.foi", "llm_management.sar",
+                        "llm_management.automatic", "llm_management.sanitization",
+                    )):
+                        raise AssertionError(fullname)
+
+            sys.meta_path.insert(0, NoFeatures())
+            from llm_management.bootstrap import assemble_service
+            service = assemble_service()
+            assert service.resources.names()
+            assert service.resources.all() == []
+            assert service.backends == {}
+        """),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )

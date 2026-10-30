@@ -17,8 +17,9 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from ..deployments import TopicTokenizerDeployment, get_catalog
+from ..deployments import get_catalog
 from ..deployments.catalog import DeploymentCatalog
+from ..deployments.local_config import TopicTokenizerDeployment
 from ..inference.resources import LocalResource, ResourceRegistry
 from ..sanitization import Sanitized, presidio, require_sanitized
 from ..sanitization.contracts import ChatSanitizer

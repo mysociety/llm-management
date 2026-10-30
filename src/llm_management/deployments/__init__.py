@@ -5,24 +5,26 @@ Validated deployment configuration and runtime lifecycle.
 from __future__ import annotations
 
 from .catalog import (
-    AutoClassifierDeployment,
-    AutoLogisticDeployment,
     BinaryCascadePipeline,
-    CategoryMatcherDeployment,
     DeploymentCatalog,
     DeploymentGroupConfig,
     FOIPipeline,
-    LocalDeploymentConfig,
     ModelCheckpoint,
+    TopicBudget,
+    get_catalog,
+)
+from .local_config import (
+    AutoClassifierDeployment,
+    AutoLogisticDeployment,
+    CategoryMatcherDeployment,
     PresidioDeployment,
     QuestionSliceHeadDeployment,
     SARClassifierDeployment,
     SARLogisticDeployment,
     SequenceClassifierDeployment,
-    TopicBudget,
     TopicTokenizerDeployment,
-    get_catalog,
 )
+from .resource_types import LocalDeploymentConfig
 
 __all__ = [
     "AutoClassifierDeployment",
