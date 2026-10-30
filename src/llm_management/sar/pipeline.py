@@ -18,9 +18,9 @@ from ..inference.errors import (
     ClassifierUnavailable,
 )
 from ..inference.logistic_v1 import normalize_text_v1
+from ..inference.policy import ClassifierExecutionPolicy
 from ..inference.tasks import ClassifierTasks
 from ..inference.validation import binary_positive_probability, validate_probability
-from ..settings import settings
 from .schemas import SARResult
 
 if TYPE_CHECKING:
@@ -109,18 +109,21 @@ class SARClassifier:
         self,
         logistic_provider: Callable[[], LogisticDetector],
         encoder_provider: Callable[[], AuthenticatedSequenceClassifier],
+        *,
+        policy: ClassifierExecutionPolicy,
     ) -> None:
         """
         Bind cold stage providers without constructing or loading their models.
         """
+        self.policy = policy
         self.logistic_provider = logistic_provider
         self.encoder_provider = encoder_provider
         self.batcher = AsyncClassifierBatcher(
             lambda texts: self.encoder_provider().classify(texts),
-            batch_size=settings.deberta_batch_size,
-            delay_seconds=settings.deberta_batch_delay_ms / 1000,
-            max_pending=settings.deberta_queue_size,
-            timeout_seconds=settings.deberta_queue_timeout_seconds,
+            batch_size=policy.batch_size,
+            delay_seconds=policy.batch_delay_seconds,
+            max_pending=policy.batch_max_pending,
+            timeout_seconds=policy.batch_timeout_seconds,
         )
 
         self.gate_tasks = ClassifierTasks[SARResult]("Logistic")
@@ -151,7 +154,7 @@ class SARClassifier:
                 logistic_provider=self.logistic_provider,
                 encoder_provider=self.encoder_provider,
             ),
-            max_pending=settings.logistic_max_pending,
+            max_pending=self.policy.logistic_max_pending,
         )
         result = await pending
         if fast or result.status != "complete" or not result.is_sar:

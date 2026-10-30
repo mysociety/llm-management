@@ -1,23 +1,61 @@
-"""Bound request buffering and admission before parsing JSON or starting inference."""
+"""
+Bound request buffering and admission before parsing JSON or starting inference.
+"""
+
+from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING, Self
 
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from ..settings import settings
+if TYPE_CHECKING:
+    from ..settings import Settings
+
+
+class HTTPRequestPolicy(BaseModel):
+    """
+    Immutable buffering and admission limits captured for one HTTP app.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_body_bytes: int = Field(ge=1)
+    max_concurrent_requests: int = Field(ge=1)
+    body_timeout_seconds: float = Field(gt=0)
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> Self:
+        """
+        Capture supplied process settings when the HTTP app is constructed.
+        """
+        return cls(
+            max_body_bytes=settings.http_max_body_bytes,
+            max_concurrent_requests=settings.http_max_concurrent_requests,
+            body_timeout_seconds=settings.http_body_timeout_seconds,
+        )
 
 
 class RequestLimits:
-    def __init__(self, app: ASGIApp) -> None:
+    """
+    Enforce one app's captured request limits before downstream body parsing.
+    """
+
+    def __init__(self, app: ASGIApp, *, policy: HTTPRequestPolicy) -> None:
+        """
+        Retain explicit limits and start with no active requests.
+        """
         self.app = app
+        self.policy = policy
         self.active = 0
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        if self.active >= settings.http_max_concurrent_requests:
+        if self.active >= self.policy.max_concurrent_requests:
             await JSONResponse(
                 {"detail": "Server is busy"},
                 status_code=429,
@@ -26,7 +64,7 @@ class RequestLimits:
             return
         self.active += 1
         try:
-            limit = settings.http_max_body_bytes
+            limit = self.policy.max_body_bytes
             for name, value in scope.get("headers", []):
                 if name.lower() == b"content-length":
                     try:
@@ -41,7 +79,7 @@ class RequestLimits:
                         return
             body = bytearray()
             try:
-                async with asyncio.timeout(settings.http_body_timeout_seconds):
+                async with asyncio.timeout(self.policy.body_timeout_seconds):
                     while True:
                         message = await receive()
                         if message["type"] == "http.disconnect":
