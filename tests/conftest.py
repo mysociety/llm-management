@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from llm_management.bootstrap import Application
+    from llm_management.bootstrap import ApplicationRuntime
     from llm_management.deployments.catalog import DeploymentCatalog
     from llm_management.foi.backends import FOIResources
     from llm_management.sanitization import PresidioSanitizer
@@ -51,39 +51,40 @@ def sanitizer() -> Generator[PresidioSanitizer, None, None]:
 
 
 @pytest.fixture
-def application() -> Generator[Application, None, None]:
+def runtime() -> Generator[ApplicationRuntime, None, None]:
     """
     Assemble an isolated runtime and close its resources after the test.
     """
     import asyncio
 
-    from llm_management.bootstrap import assemble_application
+    from llm_management.bootstrap import assemble_runtime
 
-    runtime = assemble_application()
+    runtime = assemble_runtime()
     runtime.sanitizer()._analyzer = FakeAnalyzer()
     yield runtime
     asyncio.run(runtime.close())
 
 
 @pytest.fixture(autouse=True)
-def isolated_application(monkeypatch, request):
+def isolated_http_app(monkeypatch, request):
     if request.node.get_closest_marker("external") or not hasattr(
         request.module, "server"
     ):
         return
     from llm_management import server
+    from llm_management.bootstrap import assemble_runtime
 
-    monkeypatch.setattr(server, "app", server.create_app())
-    sanitizer = server.app.state.application.sanitizer()
+    monkeypatch.setattr(server, "app", server.create_app(runtime=assemble_runtime()))
+    sanitizer = server.app.state.runtime.sanitizer()
     monkeypatch.setattr(sanitizer, "_analyzer", FakeAnalyzer())
 
 
 @pytest.fixture
-def foi_resources(application: Application) -> FOIResources:
+def foi_resources(runtime: ApplicationRuntime) -> FOIResources:
     """
     Explicit FOI providers with the unit-test sanitizer and categories disabled.
     """
-    return application.foi.model_copy(update={"category_matcher": None})
+    return runtime.foi.model_copy(update={"category_matcher": None})
 
 
 @pytest.fixture

@@ -25,14 +25,14 @@ def client(monkeypatch):
     Fail if any mock route starts deployments or loads a local model.
     """
     monkeypatch.setattr(server.settings, "auth_tokens", {})
-    service = server.app.state.application.deployments
+    service = server.app.state.runtime.deployments
     monkeypatch.setattr(service, "active_deployments", lambda: [])
     monkeypatch.setattr(
         service,
         "_prepare_locked",
         AsyncMock(side_effect=AssertionError("Mock started a deployment")),
     )
-    resources = server.app.state.application.foi
+    resources = server.app.state.runtime.foi
     for name in (
         "classifier",
         "head",
@@ -203,7 +203,7 @@ def test_mock_email_finder_returns_fictional_result_without_external_calls(
     monkeypatch.setattr(FOIFinder, "find", finder_call)
     monkeypatch.setattr(httpx2.AsyncClient, "send", network_call)
     monkeypatch.setattr(
-        server.app.state.application.foi_finder.catalog, "foi_email_finder", None
+        server.app.state.runtime.foi_finder.catalog, "foi_email_finder", None
     )
     authority = PublicAuthority(
         name="Example Council",

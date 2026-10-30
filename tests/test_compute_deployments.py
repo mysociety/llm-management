@@ -124,7 +124,7 @@ def deployed(tmp_path, monkeypatch):
     cloud = Cloud(recipe)
     monkeypatch.setattr(module, "get_client", lambda zone: cloud)
     adapter = module.ComputeDeployment(config)
-    server.app.state.application.deployments.backends[config.slug] = adapter
+    server.app.state.runtime.deployments.backends[config.slug] = adapter
     processes = []
 
     def run(command, **kwargs):
@@ -259,19 +259,19 @@ def test_server_ensure_dispatches_compute_once_and_pauses_by_deletion(
 ):
     config, adapter, cloud, _ = deployed
     cache = DeploymentStatusCache()
-    monkeypatch.setattr(server.app.state.application.deployments, "status", cache)
+    monkeypatch.setattr(server.app.state.runtime.deployments, "status", cache)
     monkeypatch.setattr(
-        server.app.state.application.deployments, "get_config", lambda slug: config
+        server.app.state.runtime.deployments, "get_config", lambda slug: config
     )
 
     async def run():
         results = await asyncio.gather(
-            server.app.state.application.deployments.prepare("clef"),
-            server.app.state.application.deployments.prepare("clef"),
+            server.app.state.runtime.deployments.prepare("clef"),
+            server.app.state.runtime.deployments.prepare("clef"),
         )
         assert all(result.state.replicas == 1 for result in results)
         assert len(cloud.created) == 1
-        await server.app.state.application.deployments.scale_to_zero("clef")
+        await server.app.state.runtime.deployments.scale_to_zero("clef")
         assert cache.get("clef").exists is False
 
     asyncio.run(run())
@@ -283,21 +283,19 @@ def test_http_request_lease_prevents_teardown_and_releases_after_failure(
 ):
     config, adapter, _, _ = deployed
     cache = DeploymentStatusCache()
-    monkeypatch.setattr(server.app.state.application.deployments, "status", cache)
+    monkeypatch.setattr(server.app.state.runtime.deployments, "status", cache)
     monkeypatch.setattr(
-        server.app.state.application.deployments, "get_config", lambda slug: config
+        server.app.state.runtime.deployments, "get_config", lambda slug: config
     )
     monkeypatch.setattr(server.settings, "auth_tokens", {})
 
     async def send(*args, **kwargs):
         assert (
-            server.app.state.application.deployments.activity.get(
-                "clef"
-            ).requests_in_flight
+            server.app.state.runtime.deployments.activity.get("clef").requests_in_flight
             == 1
         )
         with pytest.raises(DeploymentServiceError) as error:
-            await server.app.state.application.deployments.scale_to_zero("clef")
+            await server.app.state.runtime.deployments.scale_to_zero("clef")
         assert error.value.status_code == 409
         raise httpx2.ConnectError("Test failure")
 
@@ -306,12 +304,11 @@ def test_http_request_lease_prevents_teardown_and_releases_after_failure(
     response = TestClient(server.app).post("/deployments/clef/v1/systemone", json={})
     assert response.status_code == 503
     assert (
-        server.app.state.application.deployments.activity.get("clef").requests_in_flight
+        server.app.state.runtime.deployments.activity.get("clef").requests_in_flight
         == 0
     )
     assert (
-        server.app.state.application.deployments.activity.get("clef").last_request_time
-        > 0
+        server.app.state.runtime.deployments.activity.get("clef").last_request_time > 0
     )
 
 
@@ -342,27 +339,23 @@ def test_cancelled_startup_is_tracked_for_idle_cleanup(monkeypatch):
             api_key="",
         ),
     )
-    monkeypatch.setattr(server.app.state.application.deployments, "status", cache)
+    monkeypatch.setattr(server.app.state.runtime.deployments, "status", cache)
     monkeypatch.setattr(
-        server.app.state.application.deployments, "get_config", lambda slug: cfg
+        server.app.state.runtime.deployments, "get_config", lambda slug: cfg
     )
-    server.app.state.application.deployments.backends["clef"] = SimpleNamespace(
+    server.app.state.runtime.deployments.backends["clef"] = SimpleNamespace(
         config=cfg, create_or_resume=start, query_status=cfg.query_status
     )
 
     async def run():
-        task = asyncio.create_task(
-            server.app.state.application.deployments.prepare("clef")
-        )
+        task = asyncio.create_task(server.app.state.runtime.deployments.prepare("clef"))
         assert await asyncio.to_thread(entered.wait, 5)
         task.cancel()
         finish.set()
         with pytest.raises(asyncio.CancelledError):
             await task
         assert (
-            server.app.state.application.deployments.activity.active(cache.all())[
-                0
-            ].slug
+            server.app.state.runtime.deployments.activity.active(cache.all())[0].slug
             == "clef"
         )
 
@@ -379,13 +372,13 @@ def test_idle_loop_deletes_compute_only_after_requests_finish(
     adapter.create_or_resume()
     cache = DeploymentStatusCache()
     cache.refresh(adapter)
-    state = server.app.state.application.deployments.activity.get("clef")
+    state = server.app.state.runtime.deployments.activity.get("clef")
     state.last_request_time = time.time() - 3600
     state.requests_in_flight = int(busy)
-    server.app.state.application.deployments.activity.set("clef", state)
-    monkeypatch.setattr(server.app.state.application.deployments, "status", cache)
+    server.app.state.runtime.deployments.activity.set("clef", state)
+    monkeypatch.setattr(server.app.state.runtime.deployments, "status", cache)
     monkeypatch.setattr(
-        server.app.state.application.deployments, "get_config", lambda slug: config
+        server.app.state.runtime.deployments, "get_config", lambda slug: config
     )
     sleeps = 0
 
@@ -399,7 +392,7 @@ def test_idle_loop_deletes_compute_only_after_requests_finish(
 
     async def run():
         with pytest.raises(asyncio.CancelledError):
-            await server.app.state.application.deployments.idle_scaler()
+            await server.app.state.runtime.deployments.idle_scaler()
 
     asyncio.run(run())
     assert any(i["id"] == "vm" for i in cloud.instances) is busy
@@ -411,15 +404,15 @@ def test_unready_compute_is_still_tracked_for_teardown(deployed):
     module.close_tunnel(adapter.runtime_key)
     cache = DeploymentStatusCache()
     cache.refresh(adapter)
-    server.app.state.application.deployments.activity.touch("clef")
+    server.app.state.runtime.deployments.activity.touch("clef")
     assert cache.get("clef").replicas == 0
     assert (
-        server.app.state.application.deployments.activity.active(cache.all())[0].slug
+        server.app.state.runtime.deployments.activity.active(cache.all())[0].slug
         == "clef"
     )
     adapter.scale_to_zero()
     cache.refresh(adapter)
-    assert server.app.state.application.deployments.activity.active(cache.all()) == []
+    assert server.app.state.runtime.deployments.activity.active(cache.all()) == []
 
 
 def test_changed_template_refuses_to_reuse_old_vm(deployed, monkeypatch):
@@ -441,10 +434,10 @@ def test_shutdown_tears_down_compute(deployed, monkeypatch):
     adapter.create_or_resume()
     cache = DeploymentStatusCache()
     cache.refresh(adapter)
-    server.app.state.application.deployments.activity.touch("clef")
-    monkeypatch.setattr(server.app.state.application.deployments, "status", cache)
+    server.app.state.runtime.deployments.activity.touch("clef")
+    monkeypatch.setattr(server.app.state.runtime.deployments, "status", cache)
     monkeypatch.setattr(
-        server.app.state.application.deployments, "get_config", lambda slug: config
+        server.app.state.runtime.deployments, "get_config", lambda slug: config
     )
 
     async def run():
@@ -508,10 +501,10 @@ def test_compute_proxies_strip_client_credentials_and_use_v1_tunnel(
 ):
     config, adapter, _, _ = deployed
     monkeypatch.setattr(
-        server.app.state.application.deployments, "status", DeploymentStatusCache()
+        server.app.state.runtime.deployments, "status", DeploymentStatusCache()
     )
     monkeypatch.setattr(
-        server.app.state.application.deployments, "get_config", lambda slug: config
+        server.app.state.runtime.deployments, "get_config", lambda slug: config
     )
     monkeypatch.setattr(server.settings, "auth_tokens", {"caller": "client-token"})
     requests = []

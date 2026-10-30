@@ -224,20 +224,18 @@ def test_research_timeout_releases_slot(monkeypatch: pytest.MonkeyPatch) -> None
 def test_finder_uses_owning_catalog_and_optional_configuration(
     api_catalog: DeploymentCatalog,
 ) -> None:
-    from llm_management.bootstrap import assemble_application
+    from llm_management.bootstrap import assemble_runtime
 
     first = api_catalog
     second = DeploymentCatalog()
-    applications = [assemble_application(first), assemble_application(second)]
-    assert applications[0].foi_finder.catalog is first
-    assert applications[1].foi_finder.catalog is second
-    assert (
-        applications[0].foi_finder.catalog.api.get("research_test").service == "openai"
-    )
+    runtimes = [assemble_runtime(first), assemble_runtime(second)]
+    assert runtimes[0].foi_finder.catalog is first
+    assert runtimes[1].foi_finder.catalog is second
+    assert runtimes[0].foi_finder.catalog.api.get("research_test").service == "openai"
 
     async def run() -> None:
         with pytest.raises(ExternalUnavailable, match="not configured"):
-            await applications[1].foi_finder.find(PublicAuthority(name="Council"))
+            await runtimes[1].foi_finder.find(PublicAuthority(name="Council"))
 
     asyncio.run(run())
 

@@ -15,6 +15,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from starlette.testclient import TestClient
 
+from llm_management.bootstrap import assemble_runtime
 from llm_management.server import create_app
 
 DEPLOYMENT = "olmo3_7b"
@@ -25,7 +26,7 @@ pytestmark = pytest.mark.external
 
 @pytest.fixture(scope="session")
 def client() -> Iterator[TestClient]:
-    with TestClient(create_app()) as c:
+    with TestClient(create_app(runtime=assemble_runtime())) as c:
         resp = c.post(f"/deployments/{DEPLOYMENT}/warm-up")
         resp.raise_for_status()
         yield c

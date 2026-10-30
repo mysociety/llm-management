@@ -78,9 +78,9 @@ def serving(monkeypatch, output):
         lambda: None,
     )
     monkeypatch.setattr(
-        server.app.state.application.foi, "response_tokenizer", lambda: guard
+        server.app.state.runtime.foi, "response_tokenizer", lambda: guard
     )
-    cfg = server.app.state.application.deployments.catalog.get("foi_status")
+    cfg = server.app.state.runtime.deployments.catalog.get("foi_status")
     ensure = AsyncMock(
         return_value=RunningDeployment(
             config=cfg,
@@ -92,7 +92,7 @@ def serving(monkeypatch, output):
             ),
         )
     )
-    monkeypatch.setattr(server.app.state.application.deployments, "prepare", ensure)
+    monkeypatch.setattr(server.app.state.runtime.deployments, "prepare", ensure)
     touch = []
     from contextlib import asynccontextmanager
 
@@ -103,7 +103,7 @@ def serving(monkeypatch, output):
         finally:
             touch.append(slug)
 
-    monkeypatch.setattr(server.app.state.application.deployments, "use", use)
+    monkeypatch.setattr(server.app.state.runtime.deployments, "use", use)
     real_client = httpx2.AsyncClient
 
     def handle(request):
@@ -283,7 +283,7 @@ def test_tokenizer_failure_does_not_start_deployment(serving, body, monkeypatch)
     def failed():
         raise RuntimeError("private details")
 
-    monkeypatch.setattr(server.app.state.application.foi, "response_tokenizer", failed)
+    monkeypatch.setattr(server.app.state.runtime.foi, "response_tokenizer", failed)
     with TestClient(server.app) as client:
         response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 503

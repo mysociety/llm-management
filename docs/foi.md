@@ -211,7 +211,7 @@ Successful deployments are left running if another member fails, and you can ret
 - `extract_questions()` runs extraction only.
 - `process_information_request()` runs extraction followed by classification.
 
-Both are async functions that can also be called from batch code. Callers must pass the application's `FOIResources` explicitly as `resources=application.foi`, alongside its deployment lookup, startup and activity tracking. See the [direct Python example](architecture.md#direct-python-use). The HTTP wrappers in [api/foi.py](../src/llm_management/api/foi.py) expose them as:
+Both are async functions that can also be called from batch code. Callers must pass the runtime's `FOIResources` explicitly as `resources=runtime.foi`, alongside its deployment lookup, startup and activity tracking. See the [direct Python example](architecture.md#direct-python-use). The HTTP wrappers in [api/foi.py](../src/llm_management/api/foi.py) expose them as:
 
 - `POST /endpoint/foi/extract_questions/extract?backend=cpu`
 - `POST /endpoint/foi/extract_questions?backend=cpu`
@@ -814,8 +814,8 @@ slots and cooldowns, including readers used by other features. Separate workers
 or replicas do not share this state; deployment-wide limits need shared
 coordination or a single crawler process. Direct batch callers should share a
 `CrawlPolicy` between their `llm_management.web.pages.PageReader` instances.
-Callers retaining an application from `assemble_application()` can pass its
-`application.crawl_policy` to those readers.
+Callers retaining a runtime from `assemble_runtime()` can pass its
+`runtime.crawl_policy` to those readers.
 
 Each `PageReader` can supply its own `user_agent`. That same identity is used
 for robots discovery, rule matching, `Crawl-delay` and all page requests,

@@ -32,8 +32,8 @@ def test_compute_lifecycle_and_agents_live():
         and not server.settings.server_role.startswith("test_")
     ):
         pytest.skip("Set SERVER_ROLE=test (or test_<run> for concurrent isolated runs)")
-    cfg = server.app.state.application.deployments.get_config("clef")
-    backend = server.app.state.application.deployments.get_backend("clef")
+    cfg = server.app.state.runtime.deployments.get_config("clef")
+    backend = server.app.state.runtime.deployments.get_backend("clef")
     assert isinstance(cfg, ComputeDeploymentConfig)
     report = {
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -46,12 +46,12 @@ def test_compute_lifecycle_and_agents_live():
     destination = Path(
         os.environ.get("LLM_COMPUTE_SMOKE_REPORT", "compute-smoke-results.json")
     )
-    old_status = server.app.state.application.deployments.status
-    old_activity = server.app.state.application.deployments.activity
+    old_status = server.app.state.runtime.deployments.status
+    old_activity = server.app.state.runtime.deployments.activity
     old_auth = server.settings.auth_tokens
     server.settings.auth_tokens = {"live-smoke": secrets.token_urlsafe(32)}
-    server.app.state.application.deployments.status = DeploymentStatusCache()
-    server.app.state.application.deployments.activity = DeploymentActivityTracker()
+    server.app.state.runtime.deployments.status = DeploymentStatusCache()
+    server.app.state.runtime.deployments.activity = DeploymentActivityTracker()
     headers = {"Authorization": "Bearer " + server.settings.auth_tokens["live-smoke"]}
 
     def record(name, response):
@@ -111,7 +111,7 @@ def test_compute_lifecycle_and_agents_live():
 
             # Drop only the local connection, then reconnect using the durable key.
             close_tunnel(backend.runtime_key)
-            server.app.state.application.deployments.status.remove("clef")
+            server.app.state.runtime.deployments.status.remove("clef")
             start = time.monotonic()
             record(
                 "reconnect", client.post("/deployments/clef/warm-up", headers=headers)
@@ -147,7 +147,7 @@ def test_compute_lifecycle_and_agents_live():
             )
             report["cleanup_verified"] = True
         finally:
-            server.app.state.application.deployments.status = old_status
-            server.app.state.application.deployments.activity = old_activity
+            server.app.state.runtime.deployments.status = old_status
+            server.app.state.runtime.deployments.activity = old_activity
             server.settings.auth_tokens = old_auth
             destination.write_text(json.dumps(report, indent=2) + "\n")

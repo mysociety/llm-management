@@ -17,7 +17,7 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from llm_management.bootstrap import assemble_application
+from llm_management.bootstrap import assemble_runtime
 from llm_management.deployments.catalog import (
     DeploymentCatalog,
 )
@@ -133,8 +133,8 @@ def test_invalid_encoder_vectors_rejected(values):
 
 @pytest.fixture
 def matcher():
-    application = assemble_application()
-    return application.foi.category_matcher()
+    runtime = assemble_runtime()
+    return runtime.foi.category_matcher()
 
 
 @pytest.fixture
@@ -504,8 +504,8 @@ def test_slow_encoder_does_not_block_event_loop(matcher):
 
 def test_cold_matchers_are_owned_by_their_applications():
     first_registry, second_registry = ResourceRegistry(), ResourceRegistry()
-    first = assemble_application(registry=first_registry)
-    second = assemble_application(registry=second_registry)
+    first = assemble_runtime(registry=first_registry)
+    second = assemble_runtime(registry=second_registry)
     assert first_registry.all() == second_registry.all() == []
     first_matcher, second_matcher = (
         first.foi.category_matcher(),
@@ -520,9 +520,7 @@ def test_cold_matchers_are_owned_by_their_applications():
         DeploymentCatalog.model_validate(data)
     data["foi"]["category_matcher"] = None
     assert (
-        assemble_application(
-            DeploymentCatalog.model_validate(data)
-        ).foi.category_matcher
+        assemble_runtime(DeploymentCatalog.model_validate(data)).foi.category_matcher
         is None
     )
     entry = next(

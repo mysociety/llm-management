@@ -1,5 +1,5 @@
 """
-Assemble application dependencies and register cold model factories.
+Assemble runtime dependencies and register cold model factories.
 
 Loading a catalog is a pure configuration operation. Assembly establishes runtime
 ownership without loading model weights or creating cloud deployments.
@@ -69,14 +69,14 @@ def assemble_deployments(
     return DeploymentAssembly(service=service, providers=providers)
 
 
-class Application:
+class ApplicationRuntime:
     """
-    Runtime dependencies and lifecycle shared by HTTP and direct batch callers.
+    Own services, resources and lifecycle independently of the FastAPI HTTP app.
 
-    Assembly is cold. Enter ``async with application`` to start idle cleanup;
+    Assembly is cold. Enter ``async with runtime`` to start idle cleanup;
     exiting drains classifier work before releasing local and remote resources.
-    Call ``close()`` when using the application without a context manager.
-    Shutdown is terminal: assemble a new application for a new runtime lifetime.
+    Call ``close()`` when using the runtime without a context manager.
+    Shutdown is terminal: assemble a new runtime for a new runtime lifetime.
     Remote inference holds explicit leases through deployments.use(slug).
     """
 
@@ -124,7 +124,7 @@ class Application:
         traceback: TracebackType | None,
     ) -> None:
         """
-        Release application resources even when the caller fails or is cancelled.
+        Release runtime resources even when the caller fails or is cancelled.
         """
         await self.close()
 
@@ -172,10 +172,10 @@ class Application:
             raise BaseExceptionGroup("Application shutdown failed", failures)
 
 
-def assemble_application(
+def assemble_runtime(
     catalog: DeploymentCatalog | None = None,
     registry: ResourceRegistry | None = None,
-) -> Application:
+) -> ApplicationRuntime:
     """
     Assemble independent runtime ownership without loading models or starting VMs.
 
@@ -184,7 +184,7 @@ def assemble_application(
     cold local owners through the shared registry. Feature configuration is checked
     only when its provider is used, allowing management-only catalogs to assemble.
 
-    Reuse the returned application across a batch inside an async context manager,
+    Reuse the returned runtime across a batch inside an async context manager,
     or call its close() method when finished to drain work and release resources.
     """
     from .automatic.pipeline import AutomaticClassifier
@@ -225,7 +225,7 @@ def assemble_application(
         max_concurrency=settings.automatic_max_concurrency,
     )
     crawl_policy = CrawlPolicy()
-    return Application(
+    return ApplicationRuntime(
         deployments=service,
         sanitizer=sanitizer,
         foi=foi,
@@ -244,6 +244,6 @@ def assemble_service(
 
     The service retains registered factories and their providers through the
     registry. Direct callers manage its idle task and call close() when finished;
-    callers needing feature inference should use assemble_application().
+    callers needing feature inference should use assemble_runtime().
     """
     return assemble_deployments(catalog=catalog, registry=registry).service

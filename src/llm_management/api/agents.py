@@ -27,7 +27,7 @@ from ..agents.immigration_detection import (
     immigration_detection_agent,
 )
 from ..deployments.types import DeploymentInference
-from . import DependencyApplication
+from . import DependencyRuntime
 
 
 class CapitalCityRequest(BaseModel):
@@ -68,7 +68,7 @@ async def use_chat_model(
 
 @router.post("/endpoint/misc/capital_city", tags=["Misc endpoints"])
 async def capital_city_endpoint(
-    application: DependencyApplication,
+    runtime: DependencyRuntime,
     body: CapitalCityRequest,
     deployment: str = "olmo3_7b",
 ) -> CapitalCityResponse:
@@ -77,15 +77,13 @@ async def capital_city_endpoint(
     city as structured output via a pydantic-ai Agent running on the
     specified deployment.
     """
-    async with use_chat_model(
-        slug=deployment, service=application.deployments
-    ) as model:
+    async with use_chat_model(slug=deployment, service=runtime.deployments) as model:
         return await capital_city_agent(model=model, country=body.country)
 
 
 @router.post("/endpoint/foi/immigration_detection", include_in_schema=False)
 async def immigration_detection_endpoint(
-    application: DependencyApplication,
+    runtime: DependencyRuntime,
     body: FOIRequestContainer,
     deployment: str = "toast_llama",
 ) -> ClassificationResponse:
@@ -94,22 +92,20 @@ async def immigration_detection_endpoint(
     as a plain text response ("IMM" or "FOI") via a pydantic-ai Agent
     running on the specified deployment.
     """
-    async with use_chat_model(
-        slug=deployment, service=application.deployments
-    ) as model:
+    async with use_chat_model(slug=deployment, service=runtime.deployments) as model:
         return await immigration_detection_agent(model=model, request=body.body)
 
 
 @router.post("/endpoint/foi/immigration_detection/clef", include_in_schema=False)
 async def clef_immigration_detection_endpoint(
-    application: DependencyApplication,
+    runtime: DependencyRuntime,
     body: ClefImmigrationRequest,
     deployment: str = "clef",
 ) -> ClassificationResponse:
     """
     Classify a request with one Clef choice question using existing labels.
     """
-    async with application.deployments.use(deployment) as running:
+    async with runtime.deployments.use(deployment) as running:
         cfg = running.config
         state = running.state
         # The provider owns the /v1/systemone URL and response validation.
