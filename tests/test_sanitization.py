@@ -216,7 +216,11 @@ def test_external_adapters_reject_raw_input_before_http(monkeypatch):
             )
         )
     with pytest.raises(TypeError, match="sanitization policy"):
-        asyncio.run(response_analysis.predict(observed(), model="test"))
+        asyncio.run(
+            response_analysis.predict(
+                observed(), model="test", deployments=Mock(), resources=Mock()
+            )
+        )
 
 
 def test_response_predict_receives_sanitized_input(monkeypatch):

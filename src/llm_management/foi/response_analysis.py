@@ -9,7 +9,7 @@ import asyncio
 from ..deployments.errors import LLMManagementError
 from ..deployments.types import DeploymentInference
 from ..inference.errors import ClassifierUnavailable
-from ..sanitization import Sanitized, presidio, require_sanitized
+from ..sanitization import Sanitized, require_sanitized
 from ..sanitization.contracts import TextSanitizer
 from . import response_model
 from .backends import FOIResources
@@ -22,24 +22,16 @@ async def predict(
     observed: Sanitized[ExtractionInput],
     *,
     model: str,
-    deployments: DeploymentInference | None = None,
-    resources: FOIResources | None = None,
+    deployments: DeploymentInference,
+    resources: FOIResources,
 ) -> ExtractionOutput:
     """
     Prepare bounded status input before ensuring and calling its remote deployment.
 
-    Reject raw input before resolving any runtime dependencies. Use the application's
-    retained tokenizer and deployment service, or the process-local defaults for
-    direct callers. Track remote activity on every attempted startup or inference.
+    Reject raw input before using the explicitly supplied application dependencies.
+    Use its retained tokenizer and lease the deployment through remote inference.
     """
     clean = require_sanitized(observed)
-    if resources is None or deployments is None:
-        from ..bootstrap import default_application
-
-        application = default_application()
-        resources = resources if resources is not None else application.foi
-        service = application.deployments
-        deployments = deployments if deployments is not None else service
     config = resources.catalog.require_foi()
     slug = config.response_deployment
     if slug is None or resources.response_tokenizer is None:
@@ -99,26 +91,29 @@ async def analyze_response(
     Preserve source metadata and question IDs in the sanitized snapshot. Caller-facing
     output follows the public v4 schema; process_states remains unassessed. Validate
     against original input as well so injected predictors obey the same contract.
+
+    Supply resources and deployments together, or omit both to use the default
+    application. Resolve that choice once for sanitization, configuration and inference.
+    An explicit sanitizer can override the application's sanitizer in either case.
     """
+    if resources is None and deployments is None:
+        from ..bootstrap import default_application
+
+        application = default_application()
+        resources = application.foi
+        deployments = application.deployments
+    elif resources is None or deployments is None:
+        raise ValueError("Supply resources and deployments together")
     observed = body.model_input()
     try:
         sanitized = await asyncio.to_thread(
             sanitize_extraction,
-            sanitizer
-            if sanitizer is not None
-            else resources.sanitizer()
-            if resources is not None
-            else presidio,
+            sanitizer if sanitizer is not None else resources.sanitizer(),
             observed,
         )
     except ClassifierUnavailable as exc:
         raise PipelineUnavailable(str(exc)) from exc
-    if resources is None:
-        from ..deployments.catalog import get_catalog
-
-        catalog = get_catalog()
-    else:
-        catalog = resources.catalog
+    catalog = resources.catalog
     slug = catalog.require_foi().response_deployment
     if slug is None:
         raise PipelineUnavailable("FOI response analysis is not configured")

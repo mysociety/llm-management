@@ -296,3 +296,12 @@ It combines status and activity into detached `DeploymentState` views, delegates
 legacy activity methods, and supports explicit seeding with `cache.set(state)`.
 The older positional service constructor accepting a cache remains supported;
 new assembly injects status and activity directly. All forms remain cold.
+
+### Response-analysis dependencies
+
+`analyze_response()` resolves its application dependencies once. Direct callers can
+omit both `resources` and `deployments` to use the default application, or supply
+both to use an explicitly assembled runtime. Supplying only one is rejected to
+avoid mixing applications. An optional sanitizer overrides that runtime's sanitizer.
+The internal `predict()` operation requires explicit dependencies and retains the
+sanitized-input check, checkpoint validation, remote lease and output validation.
