@@ -18,6 +18,36 @@ if TYPE_CHECKING:
     from llm_management.sanitization import PresidioSanitizer
 
 
+@pytest.fixture(scope="session", autouse=True)
+def external_test_run(request: pytest.FixtureRequest):
+    """
+    Isolate opted-in live tests before any application fixtures are assembled.
+    """
+    if not request.config.getoption("run_external") or not any(
+        item.get_closest_marker("external") for item in request.session.items
+    ):
+        yield None
+        return
+
+    from tests.external_safety import isolated_external_run
+
+    with isolated_external_run() as role:
+        yield role
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """
+    A marker selection alone must never authorize paid or destructive tests.
+    """
+    if not config.getoption("run_external"):
+        skip = pytest.mark.skip(reason="Live tests require --run-external")
+        for item in items:
+            if item.get_closest_marker("external"):
+                item.add_marker(skip)
+
+
 class FakeAnalyzer:
     def analyze(self, text, **kwargs):
         results = []
@@ -130,6 +160,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     """
     Select paid model comparisons independently of frozen research fixtures.
     """
+    parser.addoption(
+        "--run-external",
+        action="store_true",
+        default=False,
+        help="Allow paid live tests in a fresh, isolated test deployment namespace.",
+    )
     group = parser.getgroup("FOI email model evaluations")
     group.addoption(
         "--foi-model",

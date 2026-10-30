@@ -294,6 +294,16 @@ script/test --all
 
 Additional pytest arguments are passed through, e.g. `script/test -v` or `script/test --all -k toast`.
 
+Plain `pytest` skips live tests, including when `-m external` is selected. Direct
+pytest invocations must add `--run-external`; `script/test --all` supplies this
+flag. Live runs require the configured `SERVER_ROLE` to be `test` or `test_<name>`;
+production and empty roles are rejected before application fixtures start.
+Each live session replaces that role with a fresh `test_<random ID>` and uses
+`COMPUTE_STATE_DIR/pytest/<role>` for recovery state. The role and directory are
+printed during setup (use `-s` to show them for successful tests). Existing
+deployments are not reused across test sessions. Keep the recovery directory if
+a run is interrupted, and use its role and path for manual cleanup.
+
 External tests provision the deployments selected by each test module. The full
 FOI pipeline can keep both the ModernBERT encoder and Granite running together
 when testing GPU extraction. Test-client shutdown scales touched deployments to

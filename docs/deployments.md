@@ -102,15 +102,20 @@ total context and reserved output budget.
 
 ### Paid integration tests
 
-Run `SERVER_ROLE=test poetry run pytest -m external -v` to exercise live deployments.
-This uses stable names such as `clef_test`, `foi_status_test`, and `olmo3_7b_test`.
+Run `SERVER_ROLE=test poetry run pytest --run-external -m external -v -s` to exercise
+live deployments. Without `--run-external`, pytest skips these tests even when
+selected by marker. `script/test --all` supplies the flag.
+Only configured roles `test` and `test_<name>` are accepted. Every live session
+assigns a fresh `test_<random ID>` role to all deployment names and saves recovery
+state under `COMPUTE_STATE_DIR/pytest/<role>`. Setup prints the role and directory.
 Toast tests are temporarily disabled with a module-level skip in `tests/test_toast.py`, even
 when selected explicitly. Remove that skip only when Toast testing is needed again.
-The Clef Compute test accepts `SERVER_ROLE=test` and deletes the test VM and access
-resources. Keep `COMPUTE_STATE_DIR` persistent so interrupted runs can recover their
-resource state. Sequential runs can reuse these names and the same state directory.
-For concurrent isolated runs, use `SERVER_ROLE=test_<run>` and a separate
-`COMPUTE_STATE_DIR` per run across all backends.
+The Clef Compute test refuses existing VMs, SSH keys, security groups and manifests.
+Its cleanup checks the VM ID recorded during this run before deleting the VM and
+access resources, including on startup failure and application shutdown. A VM
+whose ID was not saved is retained for manual recovery. Keep `COMPUTE_STATE_DIR`
+persistent and use the printed role and directory to inspect and clean up an
+interrupted run; a new test session creates a new namespace instead of adopting it.
 
 ### Managed inference authentication
 

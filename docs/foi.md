@@ -632,7 +632,7 @@ reference validation and lifecycle activity. Live semantic examples are in
 `tests/test_foi_status_external.py`; run them explicitly:
 
 ```sh
-poetry run pytest -m external tests/test_foi_status_external.py -q
+poetry run pytest --run-external -m external tests/test_foi_status_external.py -q
 ```
 
 These tests may provision the configured Exoscale GPU deployment. They check
@@ -670,7 +670,7 @@ examples drive the mocks and live tests. For paid validation using stable test
 names, run:
 
 ```sh
-SERVER_ROLE=test poetry run pytest -m external -v \
+SERVER_ROLE=test poetry run pytest --run-external -m external -v \
   tests/test_question_slice_external.py \
   tests/test_foi_pipeline_external.py \
   tests/test_foi_status_external.py \

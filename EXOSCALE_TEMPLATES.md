@@ -150,15 +150,17 @@ Both the new named template and the earlier experimental template were retained.
 The reusable external test is isolated by a dedicated role and cleans up its VM:
 
 ```sh
-SERVER_ROLE=systemone_live_unique_run \
-  COMPUTE_STATE_DIR=/tmp/systemone-live-state \
-  poetry run pytest -m external tests/test_compute_external.py -q
+SERVER_ROLE=test \
+  COMPUTE_STATE_DIR=.state/compute \
+  poetry run pytest --run-external -m external tests/test_compute_external.py -q -s
 ```
 
-This test creates billed resources if no VM exists for the role. To also exercise
-CLI creation and recovery from a separate manager process, first run
-`llm-management create-or-resume clef` with the same role and state directory.
-Then run the test, which reconnects to that VM and removes it on completion.
+This test creates billed resources under a fresh `test_<random ID>` role. Setup
+prints the role and recovery directory, which is beneath the configured state
+directory. It refuses pre-existing resources and only deletes a VM whose ID was
+recorded by this run. Interrupted or incompletely recorded creations require
+manual inspection using that role and recovery directory; later test sessions
+never adopt or delete them.
 
 ## Deploying a prepared server
 
