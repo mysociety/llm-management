@@ -22,7 +22,6 @@ from ..deployments.local_config import (
     QuestionSliceHeadDeployment,
     SequenceClassifierDeployment,
 )
-from ..deployments.types import DeploymentAccess as DeploymentAccess
 from ..deployments.types import DeploymentInference
 from ..inference.classifiers import LocalSequenceClassifier
 from ..inference.errors import ClassifierOutputError, ClassifierUnavailable

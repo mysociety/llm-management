@@ -13,7 +13,7 @@ from llm_management.foi import (
     response_analysis,
     topic_classification,
 )
-from llm_management.foi.backends import ClassificationRows, DeploymentAccess
+from llm_management.foi.backends import ClassificationRows
 from llm_management.foi.response_schemas import (
     ExtractionInput,
     ExtractionOutput,
@@ -95,7 +95,7 @@ def test_request_model_inputs_clean_results_original(monkeypatch, foi_resources)
         return_value=ClassificationRows([[0, 0, 1, 0]], "test", "pin")
     )
     monkeypatch.setattr(backends, "classify_question_units", classifier)
-    deployments = DeploymentAccess(Mock(), AsyncMock(), Mock())
+    deployments = Mock()
     original = "Please provide records about Alice Smith at alice@example.org."
     result = asyncio.run(
         pipeline.extract_questions(
@@ -132,16 +132,13 @@ def test_topic_payload_is_sanitized_before_provisioning(
     cfg = SimpleNamespace(
         model=get_catalog().get(get_catalog().require_foi().topic_deployment).model
     )
-    deployments = DeploymentAccess(
-        lambda _: cfg,
-        AsyncMock(
-            return_value=RunningDeployment(
-                config=cfg,
-                state=SimpleNamespace(deployment_url="unused", api_key="unused"),
-            )
-        ),
-        Mock(),
+    deployments = Mock()
+    deployments.get_config.return_value = cfg
+    lease = AsyncMock()
+    lease.__aenter__.return_value = RunningDeployment(
+        config=cfg, state=SimpleNamespace(deployment_url="unused", api_key="unused")
     )
+    deployments.use.return_value = lease
     result = asyncio.run(
         pipeline.process_information_request(
             "Please provide Alice Smith's records.",
@@ -163,7 +160,7 @@ def test_sanitizer_failure_prevents_request_and_response_inference(
     monkeypatch.setattr(foi_resources.sanitizer(), "sanitize_strings", failure)
     classify = AsyncMock()
     monkeypatch.setattr(backends, "classify_question_units", classify)
-    deployments = DeploymentAccess(Mock(), AsyncMock(), Mock())
+    deployments = Mock()
     with pytest.raises(pipeline.PipelineUnavailable):
         asyncio.run(
             pipeline.extract_questions(
@@ -173,7 +170,7 @@ def test_sanitizer_failure_prevents_request_and_response_inference(
             )
         )
     classify.assert_not_called()
-    deployments.ensure_running.assert_not_called()
+    deployments.use.assert_not_called()
     predict = AsyncMock()
     monkeypatch.setattr(response_analysis, "predict", predict)
     with pytest.raises(pipeline.PipelineUnavailable):

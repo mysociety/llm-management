@@ -278,12 +278,10 @@ this protocol, so features need only these two operations. Input preparation, ch
 checks, output validation and error translation remain in each feature. Test clients
 can implement just these two operations.
 
-The normal `use()` path acquires and releases its own lease explicitly, without
-consulting request context. `ensure_running()` and `track_requests()` remain a
-compatibility pair for older callers: the latter retains their implicit leases
-until its scope exits. Legacy three-callback `DeploymentAccess` constructions also
-satisfy the protocol and retain their ensure/touch behaviour. New code should use
-`service` to get explicit lease protection.
+Inference uses `use()` to acquire and release its lease explicitly. Management uses
+`prepare()` to start or resize a deployment without holding an inference lease.
+Both operations share startup locking and cancellation handling. Feature test doubles
+implement `get_config()` and an asynchronous `use()` context manager directly.
 
 Assembly creates `DeploymentStatusCache` and `DeploymentActivityTracker` separately
 and passes both to the service. The status cache contains only `DeploymentSnapshot`

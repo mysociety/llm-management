@@ -49,7 +49,7 @@ class DeploymentActivityTracker:
 
     def set(self, slug: str, activity: DeploymentActivity) -> None:
         """
-        Seed activity explicitly, principally for restoring legacy cache entries.
+        Seed an activity record explicitly without changing observed cloud status.
         """
         with self._lock:
             self._activity[slug] = activity.model_copy()

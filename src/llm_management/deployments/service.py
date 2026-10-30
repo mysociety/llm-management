@@ -11,9 +11,8 @@ import asyncio
 import logging
 import threading
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
-from contextlib import asynccontextmanager, contextmanager
-from contextvars import ContextVar
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Any, Literal, TypeVar
 
 from ..inference.errors import ClassifierBusy, ClassifierUnavailable
@@ -85,10 +84,6 @@ class DeploymentService:
         self.cpu_idle_seconds = cpu_idle_seconds
         self.check_interval = check_interval
 
-        self.request_deployments: ContextVar[set[str] | None] = ContextVar(
-            "request_deployments", default=None
-        )
-
     @asynccontextmanager
     async def use(self, slug: str) -> AsyncGenerator[RunningDeployment, None]:
         """
@@ -132,60 +127,29 @@ class DeploymentService:
                 self.backends[slug] = backend_for(self.get_config(slug))
             return self.backends[slug]
 
-    @contextmanager
-    def track_requests(self) -> Generator[None, None, None]:
-        """
-        Hold remote activity leases until the complete caller operation ends.
-
-        Compatibility context for callers using ensure_running() directly. It records
-        each deployment once and releases those leases on exit. New inference code
-        should use the narrower async use(slug) context instead; it also protects
-        direct batch callers without requiring a surrounding request context.
-        """
-        leases: set[str] = set()
-        token = self.request_deployments.set(leases)
-        try:
-            yield
-        finally:
-            for slug in leases:
-                self.activity.end_request(slug)
-            self.request_deployments.reset(token)
-
-    async def ensure_running(
+    async def prepare(
         self, slug: str, *, allow_start: bool = False, replicas: int | None = None
     ) -> RunningDeployment:
         """
-        Return configuration and ready state, starting or resizing when permitted.
+        Prepare a remote deployment under its lifecycle lock without leasing inference.
 
-        Serialize status checks and startup with the per-slug lock. auto_ensure permits
-        inference-triggered startup; allow_start explicitly permits management warm-up.
-        An explicit replica count also resizes a running managed deployment. Compute
-        supports one VM and treats an explicit count of one as normal startup.
-
-        Shield worker startup from caller cancellation, wait for it to finish and refresh
-        tracked state before propagating cancellation. A surrounding track_requests()
-        context receives an activity lease; callers without one only update activity.
-        Raise service errors for invalid counts, forbidden startup or failed readiness.
+        Management warm-up permits startup explicitly. Inference callers must use
+        use() so their lease starts before the lifecycle lock is released.
         """
         async with self.activity.ensure_lock(slug):
-            running = await self._prepare_locked(
+            return await self._prepare_locked(
                 slug, allow_start=allow_start, replicas=replicas
             )
-            leases = self.request_deployments.get()
-            if leases is not None and slug not in leases:
-                self.activity.begin_request(slug)
-                leases.add(slug)
-        return running
 
     async def _prepare_locked(
         self, slug: str, *, allow_start: bool = False, replicas: int | None = None
     ) -> RunningDeployment:
         """
-        Prepare cloud inference under the lock held by use() or ensure_running().
+        Prepare cloud inference under the lock held by use() or prepare().
 
-        This shared implementation knows nothing about request contexts or lease
-        ownership. Its wrappers acquire leases before releasing the lifecycle lock.
-        Only status observations flow through startup; activity stays in its tracker.
+        This implementation prepares status and connection details without owning
+        a lease. use() acquires its inference lease before releasing the lock;
+        prepare() returns directly for management. Activity stays in its tracker.
         """
         cfg = self.get_config(slug)
         if replicas is not None:
@@ -320,7 +284,7 @@ class DeploymentService:
         if isinstance(target, LocalResource):
             await self._warmup_local(target)
             return None
-        running = await self.ensure_running(target.slug, allow_start=True)
+        running = await self.prepare(target.slug, allow_start=True)
         return running.state.replicas
 
     async def _warmup_local(self, resource: LocalResource[Any]) -> None:
@@ -430,7 +394,7 @@ class DeploymentService:
             return WarmUpResponse(slug=slug, action=WarmUpAction.WARMED, replicas=None)
         backend = self.get_backend(slug)
         previous = await asyncio.to_thread(self.status.ensure, backend)
-        running = await self.ensure_running(slug, allow_start=True, replicas=replicas)
+        running = await self.prepare(slug, allow_start=True, replicas=replicas)
         actual = running.state.replicas
         if previous.replicas > 0:
             if replicas is not None and previous.replicas != replicas:
