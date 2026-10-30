@@ -32,12 +32,14 @@ def backend_for(config: DeploymentConfig) -> DeploymentBackend:
     """
     Construct a backend; cache ownership belongs to its service or CLI caller.
     """
-    if isinstance(config, ComputeDeploymentConfig):
-        from .compute import ComputeDeployment
+    match config:
+        case ComputeDeploymentConfig():
+            from .compute import ComputeDeployment
 
-        return ComputeDeployment(config)
-    if isinstance(config, ExoscaleDeploymentConfig):
-        from .managed import ManagedDeployment
+            return ComputeDeployment(config)
+        case ExoscaleDeploymentConfig():
+            from .managed import ManagedDeployment
 
-        return ManagedDeployment(config)
-    raise TypeError("Unsupported deployment configuration")
+            return ManagedDeployment(config)
+        case _:
+            raise TypeError("Unsupported deployment configuration")
