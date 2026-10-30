@@ -391,6 +391,14 @@ vLLM's native `/classify`, so this backend serves the **fine-tuned encoder** thr
 split across devices, not an unadapted embedding model or a replacement classifier.
 Prefix caching must be disabled for this encoder on the tested vLLM 0.29.0 runtime.
 
+After resume, the managed gateway can briefly return HTTP 404 with a structured
+`deployment not found` error even though the provider reports a running replica.
+Embedding requests retry only that specific response, with delays of 1, 2, 4, 8
+and 15 seconds. The inference lease stays held during retries; cancellation and
+other HTTP errors propagate normally. Exhausted retries retain the existing
+pipeline error response, and diagnostic logs record the upstream HTTP status
+without recording correspondence or credentials.
+
 GPU probabilities may differ slightly due to float16 execution. Keep the imported
 encoder and local head from the same checkpoint release. The local head uses the shared checkpoint’s pinned `revision`;
 remote responses use `extraction_revision: null` because the Exoscale importer does not verify
