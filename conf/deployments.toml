@@ -160,6 +160,7 @@ inference_engine_params = [
 # Merged artifact validated at c2ba6b86e43977bcb71bc90f12dc0cad42ac7e79.
 slug = "foi_topic"
 model_ref = "foi_topic"
+inference_engine_version = "0.32.0"
 gpu_type = "gpua5000"
 gpu_count = 1
 replicas = 1
@@ -169,7 +170,7 @@ inference_engine_params = [
     "--dtype=bfloat16",
     "--enforce-eager",
     "--no-enable-prefix-caching",
-    '--structured-outputs-config={"backend":"xgrammar","disable_any_whitespace":true}',
+    '--structured-outputs-config={"backend":"xgrammar","disable_any_whitespace":false}',
 ]
 
 
@@ -177,6 +178,7 @@ inference_engine_params = [
 # Merged Granite 4.2 3B status candidate; prompt/tokenizer artifacts are pinned locally.
 slug = "foi_status"
 model_ref = "foi_status"
+inference_engine_version = "0.32.0"
 gpu_type = "gpua5000"
 gpu_count = 1
 replicas = 1
@@ -186,7 +188,7 @@ inference_engine_params = [
     "--dtype=bfloat16",
     "--enforce-eager",
     "--no-enable-prefix-caching",
-    '--structured-outputs-config={"backend":"xgrammar","disable_any_whitespace":true}',
+    '--structured-outputs-config={"backend":"xgrammar","disable_any_whitespace":false}',
 ]
 
 
