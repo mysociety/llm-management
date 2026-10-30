@@ -133,10 +133,9 @@ claim detection is exhaustive. FOI field-selection adapters depend on the small
 
 The Python names `ReconstructedQuestion` and `ResponseContextQuestion` distinguish
 request extraction from questions supplied to response analysis. Established
-`ExtractedQuestion` wire schema names remain unchanged. `models.py` is a small
-compatibility import facade; new code imports configuration, errors and state
-from their owning deployment modules. The SAR logistic compatibility import also
-delegates to the shared predictor.
+`ExtractedQuestion` wire schema names remain unchanged. Import deployment
+configuration, errors and state from their owning modules under `deployments/`.
+Both correspondence classifiers use the shared predictor in `inference/logistic_v1.py`.
 
 ## Direct Python use
 
@@ -320,3 +319,6 @@ existing array format, so configuration round trips do not change file structure
 There is no second cached index to synchronize. Slug fields are immutable after
 construction: to rename an entry, create its replacement under the new key and
 revalidate the catalog, including feature and group references.
+
+Management response contracts and action enums live in `deployments/contracts.py`;
+HTTP routes import them directly without re-exporting them.

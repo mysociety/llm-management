@@ -14,21 +14,24 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, TypeVar
 
-from pydantic import BaseModel
-
 from ..inference.resources import LocalResource, ResourceStatus
-from .errors import DeploymentServiceError, LLMManagementError
-from .slugs import is_group_slug
-from .types import (
+from .contracts import (
+    AllDeploymentsResponse,
+    CoolDownResponse,
+    DeploymentOverview,
+    DeploymentStatusResponse,
     GroupActionMemberOutcome,
     GroupActionOutcome,
     GroupMemberResult,
     GroupWarmUpResponse,
     LifecycleAction,
     LifecycleCommand,
+    ScaleToZeroResponse,
     WarmUpAction,
     WarmUpResponse,
 )
+from .errors import DeploymentServiceError, LLMManagementError
+from .slugs import is_group_slug
 
 if TYPE_CHECKING:
     from .service import DeploymentService
@@ -36,46 +39,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 MemberOutcome = TypeVar("MemberOutcome")
-
-
-class DeploymentStatusResponse(BaseModel):
-    slug: str
-    exists: bool
-    replicas: int
-
-
-class ScaleToZeroResponse(BaseModel):
-    slug: str
-    action: LifecycleAction
-
-
-class CoolDownResponse(BaseModel):
-    slug: str
-    action: LifecycleAction
-    seconds_until_scale_to_zero: float | None
-
-
-class DeploymentOverview(BaseModel):
-    """
-    Summary of a single deployment's current state and idle timer.
-    """
-
-    slug: str
-    deployment_name: str
-    exists: bool
-    replicas: int
-    idle_seconds: float | None
-    seconds_until_scale_to_zero: float | None
-
-
-class AllDeploymentsResponse(BaseModel):
-    """
-    Overview of all configured deployments with their current state
-    and time remaining before auto-scaling to zero.
-    """
-
-    idle_timeout_minutes: int
-    deployments: list[DeploymentOverview]
 
 
 class DeploymentManagement:
