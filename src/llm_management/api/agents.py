@@ -26,7 +26,8 @@ from ..agents.immigration_detection import (
     immigration_decision_agent,
     immigration_detection_agent,
 )
-from .dependencies import DependencyService
+from ..deployments.types import DeploymentInference
+from . import DependencyApplication
 
 
 class CapitalCityRequest(BaseModel):
@@ -46,7 +47,7 @@ router = APIRouter()
 
 @asynccontextmanager
 async def use_chat_model(
-    slug: str, service: DependencyService
+    slug: str, service: DeploymentInference
 ) -> AsyncGenerator[OpenAIChatModel, None]:
     """
     Hold a deployment lease while the caller runs its OpenAI-compatible agent.
@@ -67,20 +68,24 @@ async def use_chat_model(
 
 @router.post("/endpoint/misc/capital_city", tags=["Misc endpoints"])
 async def capital_city_endpoint(
-    service: DependencyService, body: CapitalCityRequest, deployment: str = "olmo3_7b"
+    application: DependencyApplication,
+    body: CapitalCityRequest,
+    deployment: str = "olmo3_7b",
 ) -> CapitalCityResponse:
     """
     Example agent endpoint. Takes a country name and returns its capital
     city as structured output via a pydantic-ai Agent running on the
     specified deployment.
     """
-    async with use_chat_model(deployment, service) as model:
+    async with use_chat_model(
+        slug=deployment, service=application.deployments.access
+    ) as model:
         return await capital_city_agent(model=model, country=body.country)
 
 
 @router.post("/endpoint/foi/immigration_detection", include_in_schema=False)
 async def immigration_detection_endpoint(
-    service: DependencyService,
+    application: DependencyApplication,
     body: FOIRequestContainer,
     deployment: str = "toast_llama",
 ) -> ClassificationResponse:
@@ -89,20 +94,22 @@ async def immigration_detection_endpoint(
     as a plain text response ("IMM" or "FOI") via a pydantic-ai Agent
     running on the specified deployment.
     """
-    async with use_chat_model(deployment, service) as model:
+    async with use_chat_model(
+        slug=deployment, service=application.deployments.access
+    ) as model:
         return await immigration_detection_agent(model=model, request=body.body)
 
 
 @router.post("/endpoint/foi/immigration_detection/clef", include_in_schema=False)
 async def clef_immigration_detection_endpoint(
-    service: DependencyService,
+    application: DependencyApplication,
     body: ClefImmigrationRequest,
     deployment: str = "clef",
 ) -> ClassificationResponse:
     """
     Classify a request with one Clef choice question using existing labels.
     """
-    async with service.use(deployment) as running:
+    async with application.deployments.use(deployment) as running:
         cfg = running.config
         state = running.state
         # The provider owns the /v1/systemone URL and response validation.

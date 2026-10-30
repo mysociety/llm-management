@@ -8,7 +8,7 @@ import httpx2
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from ..settings import settings
-from .dependencies import DependencyService
+from . import DependencyApplication
 
 router = APIRouter(tags=["Inference proxy"])
 
@@ -18,7 +18,7 @@ router = APIRouter(tags=["Inference proxy"])
     methods=["POST"],
 )
 async def proxy_to_deployment(
-    service: DependencyService, slug: str, path: str, request: Request
+    application: DependencyApplication, slug: str, path: str, request: Request
 ) -> Response:
     """
     Forward any request under /deployments/{slug}/v1/... to the
@@ -35,7 +35,7 @@ async def proxy_to_deployment(
         or any(ord(c) < 32 or ord(c) == 127 for c in path)
     ):
         raise HTTPException(status_code=400, detail="Invalid inference path")
-    async with service.use(slug) as running:
+    async with application.deployments.use(slug) as running:
         state = running.state
 
         target_url = f"{state.deployment_url.rstrip('/')}/{path}"

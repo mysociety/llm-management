@@ -8,7 +8,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from .. import automatic, sar
-from .dependencies import DependencyAutomaticClassifier, DependencySARClassifier
+from . import DependencyApplication
 
 
 class SARDetectionRequest(BaseModel):
@@ -26,7 +26,7 @@ router = APIRouter(tags=["FOI endpoints"])
 
 @router.post("/endpoint/foi/sar_detection", response_model=sar.SARResult)
 async def sar_detection_endpoint(
-    sar_classifier: DependencySARClassifier, body: SARDetectionRequest
+    application: DependencyApplication, body: SARDetectionRequest
 ) -> sar.SARResult:
     """
     Given an FOI request text, returns a quick indication of whether it is
@@ -37,7 +37,7 @@ async def sar_detection_endpoint(
 
     Relevant deployment group: `group_sar_pipeline_cpu`.
     """
-    return await sar_classifier.detect(body.body, fast=body.fast)
+    return await application.sar.detect(body.body, fast=body.fast)
 
 
 @router.post(
@@ -45,7 +45,7 @@ async def sar_detection_endpoint(
     response_model=automatic.AutomaticResult,
 )
 async def automatic_response_detection_endpoint(
-    automatic_classifier: DependencyAutomaticClassifier,
+    application: DependencyApplication,
     body: AutomaticResponseRequest,
 ) -> automatic.AutomaticResult:
     """
@@ -57,4 +57,4 @@ async def automatic_response_detection_endpoint(
 
     Relevant deployment group: `group_automatic_pipeline_cpu`.
     """
-    return await automatic_classifier.detect(body.body, fast=body.fast)
+    return await application.automatic.detect(body.body, fast=body.fast)

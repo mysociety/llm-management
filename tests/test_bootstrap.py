@@ -85,7 +85,7 @@ def test_http_dependencies_use_the_serving_application(monkeypatch):
 
     from starlette.testclient import TestClient
 
-    from llm_management.api.dependencies import get_service
+    from llm_management.api import get_application
     from llm_management.server import create_app
     from llm_management.settings import settings
 
@@ -107,7 +107,7 @@ def test_http_dependencies_use_the_serving_application(monkeypatch):
     for call in calls:
         call.assert_awaited_once_with("example", None)
 
-    apps[0].dependency_overrides[get_service] = lambda: second.deployments
+    apps[0].dependency_overrides[get_application] = lambda: second
     assert clients[0].post("/deployments/example/warm-up").json()["action"] == "second"
     assert clients[1].post("/deployments/example/warm-up").json()["action"] == "second"
     assert calls[0].await_count == 1
