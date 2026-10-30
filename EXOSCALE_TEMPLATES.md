@@ -220,3 +220,17 @@ inference continues scaling to zero. Active HTTP requests prevent idle teardown 
 fails, the durable manifest and logs support retrying `destroy clef`. An existing
 VM that fails reconnection remains discoverable for idle cleanup or explicit
 teardown. Templates remain until separately retired.
+
+
+### Provisioning capacity failures
+
+An authorized instance type in a zone does not guarantee an available host.
+An operation reporting `Insufficient capacity: no suitable host found` failed
+before the VM could start; this is separate from template loading or model health.
+Retry later, or explicitly choose another instance type or zone after checking
+template availability and cost.
+
+Some Exoscale SDK versions expect operation failure details in `reason`, while
+the API supplies `message`. The shared Compute wait helper recovers the terminal
+operation and reports its ID, state and message instead of the SDK's
+`KeyError: 'reason'`. It retains the normal polling limit and cleanup behaviour.
