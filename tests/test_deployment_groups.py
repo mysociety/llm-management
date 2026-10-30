@@ -8,9 +8,9 @@ from starlette.testclient import TestClient
 
 from llm_management import server
 from llm_management.deployments import DeploymentCatalog
-from llm_management.deployments.cache import DeploymentCache
 from llm_management.deployments.errors import DeploymentServiceError
-from llm_management.deployments.types import DeploymentState, RunningDeployment
+from llm_management.deployments.status import DeploymentStatusCache
+from llm_management.deployments.types import DeploymentSnapshot, RunningDeployment
 from llm_management.inference.resources import LocalResource, ResourceRegistry
 
 
@@ -66,7 +66,8 @@ def test_group_runs_concurrently_and_reports_each_result(monkeypatch, fail):
             if fail and slug == "foi_topic":
                 raise RuntimeError("private provider detail")
             return RunningDeployment(
-                config=None, state=DeploymentState(slug=slug, exists=True, replicas=1)
+                config=None,
+                state=DeploymentSnapshot(slug=slug, exists=True, replicas=1),
             )
 
         monkeypatch.setattr(
@@ -100,11 +101,11 @@ def test_unknown_group_starts_nothing(monkeypatch):
 
 
 def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(monkeypatch):
-    cache = DeploymentCache()
-    state = DeploymentState(slug="foi_topic")
+    cache = DeploymentStatusCache()
+    state = DeploymentSnapshot(slug="foi_topic")
     calls = []
     cfg = SimpleNamespace(create_or_resume=lambda: calls.append("start"))
-    monkeypatch.setattr(server.app.state.application.deployments, "cache", cache)
+    monkeypatch.setattr(server.app.state.application.deployments, "status", cache)
     monkeypatch.setattr(server.app.state.application.deployments, "auto_ensure", False)
     monkeypatch.setattr(
         server.app.state.application.deployments, "get_config", lambda slug: cfg
@@ -112,7 +113,7 @@ def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(monkeypatch):
     server.app.state.application.deployments.backends[state.slug] = SimpleNamespace(
         config=cfg, create_or_resume=cfg.create_or_resume
     )
-    monkeypatch.setattr(cache.status, "ensure", lambda cfg: state)
+    monkeypatch.setattr(cache, "ensure", lambda cfg: state)
 
     def refresh(cfg):
         state.exists = True
@@ -120,7 +121,7 @@ def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(monkeypatch):
         cache.set(state)
         return state
 
-    monkeypatch.setattr(cache.status, "refresh", refresh)
+    monkeypatch.setattr(cache, "refresh", refresh)
 
     async def run():
         with pytest.raises(DeploymentServiceError):
@@ -137,7 +138,12 @@ def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(monkeypatch):
     results = asyncio.run(run())
     assert calls == ["start"]
     assert all(result.state.replicas == 1 for result in results)
-    assert cache.activity.get(state.slug).last_request_time > 0
+    assert (
+        server.app.state.application.deployments.activity.get(
+            state.slug
+        ).last_request_time
+        > 0
+    )
 
 
 def test_group_endpoint_contract_and_auth(monkeypatch):
@@ -145,7 +151,7 @@ def test_group_endpoint_contract_and_auth(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {"test": "test-token"})
     ensure = AsyncMock(
         return_value=RunningDeployment(
-            config=None, state=DeploymentState(slug="unused", replicas=1)
+            config=None, state=DeploymentSnapshot(slug="unused", replicas=1)
         )
     )
     monkeypatch.setattr(
@@ -190,7 +196,7 @@ def test_mixed_group_resolves_arbitrary_registered_local_resource(
     monkeypatch.setattr(server.app.state.application.deployments, "catalog", mixed)
     remote = AsyncMock(
         return_value=RunningDeployment(
-            config=None, state=DeploymentState(slug="foi_topic", replicas=1)
+            config=None, state=DeploymentSnapshot(slug="foi_topic", replicas=1)
         )
     )
     monkeypatch.setattr(
@@ -345,11 +351,11 @@ def test_group_lifecycle_handles_local_and_remote_members(monkeypatch, action):
     resource.warmup()
     monkeypatch.setattr(service, "resources", registry)
     backend = SimpleNamespace(scale_to_zero=Mock())
-    state = DeploymentState(slug="foi_topic", exists=True, replicas=1)
+    state = DeploymentSnapshot(slug="foi_topic", exists=True, replicas=1)
     monkeypatch.setattr(service, "get_backend", lambda slug: backend)
     monkeypatch.setattr(service.status, "ensure", lambda backend: state)
     monkeypatch.setattr(service.status, "refresh", Mock())
-    service.cache.set(state)
+    service.status.set(state)
     result = asyncio.run(service.change_group("group_mixed", action))
     assert result.success
     assert [member.slug for member in result.deployments] == ["presidio", "foi_topic"]
@@ -378,7 +384,7 @@ def test_group_busy_local_member_does_not_block_remote(monkeypatch, action):
     monkeypatch.setattr(service, "resources", registry)
     backend = SimpleNamespace(scale_to_zero=Mock())
     monkeypatch.setattr(service, "get_backend", lambda slug: backend)
-    state = DeploymentState(slug="foi_topic", exists=False)
+    state = DeploymentSnapshot(slug="foi_topic", exists=False)
     monkeypatch.setattr(service.status, "ensure", lambda backend: state)
     monkeypatch.setattr(service.status, "refresh", Mock())
     with resource.use():

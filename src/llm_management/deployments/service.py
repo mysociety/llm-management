@@ -20,7 +20,6 @@ from ..inference.errors import ClassifierBusy, ClassifierUnavailable
 from ..inference.resources import LocalResource, ResourceRegistry, ResourceStatus
 from .activity import DeploymentActivityTracker
 from .backends import DeploymentBackend, backend_for
-from .cache import DeploymentCache
 from .catalog import DeploymentCatalog
 from .config import DeploymentConfig
 from .errors import DeploymentServiceError, LLMManagementError
@@ -55,9 +54,8 @@ class DeploymentService:
     def __init__(
         self,
         catalog: DeploymentCatalog,
-        cache: DeploymentCache | None = None,
-        resources: ResourceRegistry | None = None,
         *,
+        resources: ResourceRegistry | None = None,
         status: DeploymentStatusCache | None = None,
         activity: DeploymentActivityTracker | None = None,
         auto_ensure: bool = True,
@@ -71,51 +69,25 @@ class DeploymentService:
         All timeout values are seconds. Remote inactivity uses wall-clock request times;
         local resource expiry uses the guards' monotonic activity times. Construction
         creates no cloud backends and starts no cleanup task. Assembly supplies status
-        and activity independently. The positional cache argument is retained for
-        older callers; mixing it with separate state dependencies is rejected.
+        and activity independently.
         """
         self.management = DeploymentManagement(self)
         self.catalog = catalog
         self.backends: dict[str, DeploymentBackend] = {}
         self._backend_lock = threading.Lock()
-        if cache is not None and (status is not None or activity is not None):
-            raise ValueError(
-                "Supply either a legacy cache or separate status and activity"
-            )
-        self._cache: DeploymentCache | None = None
-        if cache is not None:
-            self.cache = cache
-        else:
-            self.status = status if status is not None else DeploymentStatusCache()
-            self.activity = (
-                activity if activity is not None else DeploymentActivityTracker()
-            )
+        self.status = status if status is not None else DeploymentStatusCache()
+        self.activity = (
+            activity if activity is not None else DeploymentActivityTracker()
+        )
         self.resources = resources if resources is not None else ResourceRegistry()
         self.auto_ensure = auto_ensure
         self.idle_seconds = idle_seconds
         self.cpu_idle_seconds = cpu_idle_seconds
         self.check_interval = check_interval
+
         self.request_deployments: ContextVar[set[str] | None] = ContextVar(
             "request_deployments", default=None
         )
-
-    @property
-    def cache(self) -> DeploymentCache:
-        """
-        Legacy combined-state adapter; core execution uses status and activity directly.
-        """
-        if self._cache is None:
-            self._cache = DeploymentCache(status=self.status, activity=self.activity)
-        return self._cache
-
-    @cache.setter
-    def cache(self, value: DeploymentCache) -> None:
-        """
-        Preserve explicit cache replacement while binding its independent dependencies.
-        """
-        self._cache = value
-        self.status = value.status
-        self.activity = value.activity
 
     @asynccontextmanager
     async def use(self, slug: str) -> AsyncGenerator[RunningDeployment, None]:
@@ -203,7 +175,7 @@ class DeploymentService:
             if leases is not None and slug not in leases:
                 self.activity.begin_request(slug)
                 leases.add(slug)
-        return RunningDeployment(running.config, self.cache.state(running.state))
+        return running
 
     async def _prepare_locked(
         self, slug: str, *, allow_start: bool = False, replicas: int | None = None

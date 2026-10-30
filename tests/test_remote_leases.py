@@ -13,10 +13,10 @@ from unittest.mock import Mock
 import pytest
 
 from llm_management.bootstrap import assemble_service
-from llm_management.deployments.cache import DeploymentCache
 from llm_management.deployments.errors import DeploymentServiceError
 from llm_management.deployments.service import DeploymentService
-from llm_management.deployments.types import DeploymentQueryResult, DeploymentState
+from llm_management.deployments.status import DeploymentStatusCache
+from llm_management.deployments.types import DeploymentQueryResult, DeploymentSnapshot
 
 
 class RemoteFixture(NamedTuple):
@@ -29,7 +29,7 @@ class RemoteFixture(NamedTuple):
     slug: str
 
 
-def cached_state(cache: DeploymentCache, slug: str) -> DeploymentState:
+def cached_state(cache: DeploymentStatusCache, slug: str) -> DeploymentSnapshot:
     """
     Require a cached state for assertions about a configured test deployment.
     """
@@ -132,7 +132,9 @@ def test_slow_status_refresh_cannot_replace_live_activity(remote):
     backend.query_status.side_effect = query
 
     async def run():
-        refresh = asyncio.create_task(asyncio.to_thread(service.cache.refresh, backend))
+        refresh = asyncio.create_task(
+            asyncio.to_thread(service.status.refresh, backend)
+        )
         try:
             assert await asyncio.to_thread(entered.wait, 5)
             async with service.use(slug):
@@ -140,7 +142,7 @@ def test_slow_status_refresh_cannot_replace_live_activity(remote):
                 finish.set()
                 await refresh
                 assert service.activity.get(slug) == before
-                assert cached_state(service.cache, slug).requests_in_flight == 1
+                assert service.activity.get(slug).requests_in_flight == 1
         finally:
             finish.set()
             await refresh
@@ -155,11 +157,11 @@ def test_status_eviction_preserves_live_lease_and_lifecycle_lock(remote):
     async def run():
         async with service.use(slug):
             lock = service.activity.ensure_lock(slug)
-            service.cache.remove(slug)
-            assert service.cache.get(slug) is None
+            service.status.remove(slug)
+            assert service.status.get(slug) is None
             assert service.activity.get(slug).requests_in_flight == 1
             assert service.activity.ensure_lock(slug) is lock
-            service.cache.refresh(backend)
+            service.status.refresh(backend)
             with pytest.raises(DeploymentServiceError):
                 await service.scale_to_zero(slug)
         assert service.activity.get(slug).requests_in_flight == 0
@@ -173,13 +175,14 @@ def test_cached_views_are_detached_and_refresh_keeps_cooldown(remote, monkeypatc
     service.activity.touch(slug)
     service.activity.cooldown(slug, 900)
     before = service.activity.get(slug)
-    state = cached_state(service.cache, slug)
-    state.requests_in_flight = 99
+    state = cached_state(service.status, slug)
+    activity = service.activity.get(slug)
+    activity.requests_in_flight = 99
     state.replicas = 99
-    service.cache.refresh(backend)
+    service.status.refresh(backend)
     assert service.activity.get(slug) == before
-    assert cached_state(service.cache, slug).replicas == 1
-    assert cached_state(service.cache, slug).requests_in_flight == 0
+    assert cached_state(service.status, slug).replicas == 1
+    assert service.activity.get(slug).requests_in_flight == 0
 
 
 def test_cancelled_startup_finishes_and_remains_tracked(remote):
@@ -188,7 +191,7 @@ def test_cancelled_startup_finishes_and_remains_tracked(remote):
     backend.query_status.return_value = DeploymentQueryResult(
         exists=False, replicas=0, deployment_url="", api_key=""
     )
-    service.cache.refresh(backend)
+    service.status.refresh(backend)
 
     def start():
         entered.set()
@@ -219,7 +222,7 @@ def test_cancelled_startup_finishes_and_remains_tracked(remote):
         finally:
             finish.set()
         assert service.activity.get(slug).requests_in_flight == 0
-        assert service.cache.all_active()[0].slug == slug
+        assert service.active_deployments()[0].slug == slug
 
     asyncio.run(run())
 
@@ -229,7 +232,7 @@ def test_startup_failure_does_not_leak_lease(remote):
     backend.query_status.return_value = DeploymentQueryResult(
         exists=False, replicas=0, deployment_url="", api_key=""
     )
-    service.cache.refresh(backend)
+    service.status.refresh(backend)
     backend.create_or_resume.side_effect = RuntimeError("startup failed")
 
     async def run():
@@ -246,67 +249,15 @@ def test_activity_is_independent_of_cache_ttl_and_other_applications(remote):
     service, backend, slug = remote
     other = assemble_service()
     other.backends[slug] = backend
-    other.cache.refresh(backend)
+    other.status.refresh(backend)
     service.activity.begin_request(slug)
     assert other.activity.get(slug).requests_in_flight == 0
     assert service.activity.ensure_lock(slug) is not other.activity.ensure_lock(slug)
-    service.cache.cache_ttl_seconds = -1
-    service.cache.ensure(backend)
+    service.status.cache_ttl_seconds = -1
+    service.status.ensure(backend)
     assert service.activity.get(slug).requests_in_flight == 1
-    assert service.cache.is_stale(slug)
+    assert service.status.is_stale(slug)
     service.activity.end_request(slug)
-
-
-def test_legacy_cache_operations_delegate_to_activity():
-    cache = DeploymentCache()
-    cache.set(DeploymentState(slug="test", exists=True, replicas=1))
-    cache.begin_request("test")
-    assert cached_state(cache, "test").requests_in_flight == 1
-    cache.end_request("test")
-    assert cached_state(cache, "test").requests_in_flight == 0
-    assert cache.all_active()[0].slug == "test"
-    assert cache.ensure_lock("test") is cache.activity.ensure_lock("test")
-
-
-def test_explicit_use_never_reads_legacy_context_or_constructs_cache_adapter(
-    remote, monkeypatch
-):
-    service, _, slug = remote
-    forbidden = Mock(
-        side_effect=AssertionError("Normal inference must not enter compatibility code")
-    )
-    monkeypatch.setattr(service, "track_requests", forbidden)
-    monkeypatch.setattr(service, "ensure_running", forbidden)
-    monkeypatch.setattr(service, "request_deployments", Mock(get=forbidden))
-    assert service._cache is None
-
-    async def run():
-        async with service.use(slug) as running:
-            assert type(running.state).__name__ == "DeploymentSnapshot"
-            assert service.activity.get(slug).requests_in_flight == 1
-        assert service.activity.get(slug).requests_in_flight == 0
-
-    asyncio.run(run())
-    forbidden.assert_not_called()
-    assert service._cache is None
-
-
-def test_explicit_and_legacy_scopes_hold_independent_leases(remote):
-    service, _, slug = remote
-
-    async def run():
-        with service.track_requests():
-            legacy = await service.ensure_running(slug)
-            assert isinstance(legacy.state, DeploymentState)
-            assert legacy.state.requests_in_flight == 1
-            async with service.use(slug):
-                assert service.activity.get(slug).requests_in_flight == 2
-                await service.ensure_running(slug)
-                assert service.activity.get(slug).requests_in_flight == 2
-            assert service.activity.get(slug).requests_in_flight == 1
-        assert service.activity.get(slug).requests_in_flight == 0
-
-    asyncio.run(run())
 
 
 def test_independent_status_replacement_preserves_activity(remote):
@@ -320,36 +271,19 @@ def test_independent_status_replacement_preserves_activity(remote):
     assert service.activity is tracker
     assert service.activity.get(slug).requests_in_flight == 1
     assert service.status.get(slug) is not None
-    assert service._cache is None
     service.activity.end_request(slug)
 
 
-def test_legacy_callback_adapter_satisfies_feature_protocol(remote: RemoteFixture):
-    from llm_management.deployments.types import DeploymentAccess, DeploymentInference
-
-    service, _, slug = remote
-    legacy = DeploymentAccess(
-        service.get_config, service.ensure_running, service.activity.touch
-    )
-    client: DeploymentInference = legacy
-
-    async def run():
-        with service.track_requests():
-            async with client.use(slug) as running:
-                assert running.config.slug == slug
-                assert service.activity.get(slug).requests_in_flight == 1
-        assert service.activity.get(slug).requests_in_flight == 0
-
-    asyncio.run(run())
-
-
-def test_status_cache_accepts_combined_values_without_storing_activity():
+def test_status_cache_returns_detached_snapshots():
     from llm_management.deployments.status import DeploymentStatusCache
     from llm_management.deployments.types import DeploymentSnapshot
 
     status = DeploymentStatusCache()
-    status.set(DeploymentState(slug="test", replicas=1, requests_in_flight=3))
+    original = DeploymentSnapshot(slug="test", replicas=1)
+    status.set(original)
+    original.replicas = 99
     snapshot = status.get("test")
+    assert snapshot.replicas == 1
     assert type(snapshot) is DeploymentSnapshot
     assert "requests_in_flight" not in snapshot.model_dump()
     snapshot.replicas = 99

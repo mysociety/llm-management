@@ -17,10 +17,11 @@ import pytest
 from starlette.testclient import TestClient
 
 from llm_management import server
-from llm_management.deployments.cache import DeploymentCache
+from llm_management.deployments.activity import DeploymentActivityTracker
 from llm_management.deployments.client import get_client
 from llm_management.deployments.compute import close_tunnel
 from llm_management.deployments.config import ComputeDeploymentConfig
+from llm_management.deployments.status import DeploymentStatusCache
 
 pytestmark = pytest.mark.external
 
@@ -45,10 +46,12 @@ def test_compute_lifecycle_and_agents_live():
     destination = Path(
         os.environ.get("LLM_COMPUTE_SMOKE_REPORT", "compute-smoke-results.json")
     )
-    old_cache = server.app.state.application.deployments.cache
+    old_status = server.app.state.application.deployments.status
+    old_activity = server.app.state.application.deployments.activity
     old_auth = server.settings.auth_tokens
     server.settings.auth_tokens = {"live-smoke": secrets.token_urlsafe(32)}
-    server.app.state.application.deployments.cache = DeploymentCache()
+    server.app.state.application.deployments.status = DeploymentStatusCache()
+    server.app.state.application.deployments.activity = DeploymentActivityTracker()
     headers = {"Authorization": "Bearer " + server.settings.auth_tokens["live-smoke"]}
 
     def record(name, response):
@@ -108,7 +111,7 @@ def test_compute_lifecycle_and_agents_live():
 
             # Drop only the local connection, then reconnect using the durable key.
             close_tunnel(backend.runtime_key)
-            server.app.state.application.deployments.cache.remove("clef")
+            server.app.state.application.deployments.status.remove("clef")
             start = time.monotonic()
             record(
                 "reconnect", client.post("/deployments/clef/warm-up", headers=headers)
@@ -144,6 +147,7 @@ def test_compute_lifecycle_and_agents_live():
             )
             report["cleanup_verified"] = True
         finally:
-            server.app.state.application.deployments.cache = old_cache
+            server.app.state.application.deployments.status = old_status
+            server.app.state.application.deployments.activity = old_activity
             server.settings.auth_tokens = old_auth
             destination.write_text(json.dumps(report, indent=2) + "\n")

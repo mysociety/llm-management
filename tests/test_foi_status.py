@@ -13,7 +13,7 @@ import httpx2
 import pytest
 
 from llm_management import server
-from llm_management.deployments.types import DeploymentState, RunningDeployment
+from llm_management.deployments.types import DeploymentSnapshot, RunningDeployment
 from llm_management.foi import response_model
 from llm_management.foi.response_schemas import ExtractionInput
 from llm_management.inference.resources import LocalResource
@@ -84,7 +84,7 @@ def serving(monkeypatch, output):
     ensure = AsyncMock(
         return_value=RunningDeployment(
             config=cfg,
-            state=DeploymentState(
+            state=DeploymentSnapshot(
                 slug=cfg.slug,
                 replicas=1,
                 deployment_url="https://status.test/v1/",
