@@ -14,23 +14,23 @@ if TYPE_CHECKING:
     from .config import DeploymentConfig
 
 
-class EnsureOutcome(BaseModel):
+class WarmUpResponse(BaseModel):
     slug: str
     action: str
     replicas: int | None
 
 
-class GroupMemberOutcome(BaseModel):
+class GroupMemberResult(BaseModel):
     slug: str
     success: bool
     replicas: int | None = None
     error: str | None = None
 
 
-class GroupOutcome(BaseModel):
+class GroupWarmUpResponse(BaseModel):
     slug: str
     success: bool
-    deployments: list[GroupMemberOutcome]
+    deployments: list[GroupMemberResult]
 
 
 class GroupActionMemberOutcome(BaseModel):

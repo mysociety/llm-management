@@ -28,12 +28,12 @@ from .management import DeploymentManagement
 from .status import DeploymentStatusCache
 from .types import (
     DeploymentSnapshot,
-    EnsureOutcome,
     GroupActionMemberOutcome,
     GroupActionOutcome,
-    GroupMemberOutcome,
-    GroupOutcome,
+    GroupMemberResult,
+    GroupWarmUpResponse,
     RunningDeployment,
+    WarmUpResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -439,7 +439,7 @@ class DeploymentService:
 
     async def ensure_deployment(
         self, slug: str, replicas: int | None = None
-    ) -> EnsureOutcome:
+    ) -> WarmUpResponse:
         """
         Warm one configured resource and report the resulting management action.
 
@@ -454,7 +454,7 @@ class DeploymentService:
                     status_code=422, detail="Local resources do not support replicas."
                 )
             await self._warmup_local(target)
-            return EnsureOutcome(slug=slug, action="warmed", replicas=None)
+            return WarmUpResponse(slug=slug, action="warmed", replicas=None)
         backend = self.get_backend(slug)
         previous = await asyncio.to_thread(self.status.ensure, backend)
         running = await self.ensure_running(slug, allow_start=True, replicas=replicas)
@@ -470,7 +470,7 @@ class DeploymentService:
             if previous.exists
             else "created"
         )
-        return EnsureOutcome(slug=slug, action=action, replicas=actual)
+        return WarmUpResponse(slug=slug, action=action, replicas=actual)
 
     async def run_group(
         self, slug: str, operation: Callable[[str], Awaitable[MemberOutcome]]
@@ -491,7 +491,7 @@ class DeploymentService:
             await asyncio.gather(*(operation(member) for member in group.deployments))
         )
 
-    async def ensure_group(self, slug: str) -> GroupOutcome:
+    async def ensure_group(self, slug: str) -> GroupWarmUpResponse:
         """
         Warm all group members concurrently and report their individual outcomes.
 
@@ -500,23 +500,23 @@ class DeploymentService:
         exception messages; overall success requires every member to succeed.
         """
 
-        async def ensure_member(member: str) -> GroupMemberOutcome:
+        async def ensure_member(member: str) -> GroupMemberResult:
             """
             Capture one member's failure without cancelling its successful peers.
             """
             try:
                 replicas = await self.warmup_resource(member)
-                return GroupMemberOutcome(slug=member, success=True, replicas=replicas)
+                return GroupMemberResult(slug=member, success=True, replicas=replicas)
             except Exception as exc:
                 logger.warning(
                     "Group ensure failed for %s: %s", member, type(exc).__name__
                 )
-                return GroupMemberOutcome(
+                return GroupMemberResult(
                     slug=member, success=False, error="Resource could not be warmed"
                 )
 
         members = await self.run_group(slug, ensure_member)
-        return GroupOutcome(
+        return GroupWarmUpResponse(
             slug=slug,
             success=all(member.success for member in members),
             deployments=members,
