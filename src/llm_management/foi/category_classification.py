@@ -1,5 +1,11 @@
 """
-Repository-owned MiniLM encoder and frozen FOI/EIR category scoring.
+Match FOI/EIR topic descriptions to categories using a pinned MiniLM encoder.
+
+Read the inference path from classify_categories(): it selects eligible topics,
+resolves the application's CategoryMatcher through an injected provider, and
+calls predict() in a worker thread. The matcher holds a resource lease while it
+loads artifacts if needed, encodes topics and applies predict_vectors(). Results
+are attached to questions only after the complete batch succeeds.
 
 Only data and safetensors are retrieved from pinned Hub revisions. No upstream
 Python is downloaded or executed, and Transformers remote code is disabled.
@@ -14,11 +20,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
-from ..deployments.catalog import (
-    CategoryMatcherDeployment,
-    DeploymentCatalog,
-    ModelCheckpoint,
-)
+from ..deployments.catalog import DeploymentCatalog, ModelCheckpoint
+from ..deployments.local_config import CategoryMatcherDeployment
 from ..inference.errors import ClassifierOutputError, ClassifierUnavailable
 from ..inference.resources import LocalResource, ResourceRegistry
 from ..settings import settings
@@ -118,7 +121,12 @@ def predict_vectors(
     matrices: CategoryMatrices | None = None,
 ) -> list[QuestionCategory | None]:
     """
-    Apply the published float32 scoring, abstention and label-order tie rules.
+    Score one normalized embedding per topic against the published category vectors.
+
+    Rank categories by the mean of centroid and description similarity. Decide
+    whether to abstain separately, using the best centroid similarity across all
+    categories. A topic below that threshold returns None. NumPy's first-maximum
+    rule breaks ranking ties in the index's validated label order.
     """
     import numpy as np
 
@@ -134,20 +142,103 @@ def predict_vectors(
     if matrices is None:
         matrices = category_matrices(index)
     centroid_scores = vectors @ matrices.centroids.T
-    scores = (centroid_scores + vectors @ matrices.descriptions.T) / 2
-    winners = scores.argmax(axis=1)
-    maximum = centroid_scores.max(axis=1)
+    description_scores = vectors @ matrices.descriptions.T
+    combined_scores = (centroid_scores + description_scores) / 2
+    winning_labels = combined_scores.argmax(axis=1)
+    best_centroid_similarity = centroid_scores.max(axis=1)
     return [
         None
-        if maximum[i] < index.no_match.threshold
-        else QuestionCategory(category_slug=categories[int(winner)].slug)
-        for i, winner in enumerate(winners)
+        if best_centroid_similarity[topic_index] < index.no_match.threshold
+        else QuestionCategory(category_slug=categories[int(label)].slug)
+        for topic_index, label in enumerate(winning_labels)
     ]
+
+
+def load_matcher_artifacts(
+    *,
+    index_checkpoint: ModelCheckpoint,
+    encoder_checkpoint: ModelCheckpoint,
+    index_sha256: str,
+) -> LoadedCategoryMatcher:
+    """
+    Build complete model state from verified, pinned index and encoder artifacts.
+
+    This is the expensive part of loading: it may download artifacts and imports
+    the ML libraries. Verify the index checksum, manifest and encoder identity
+    before downloading encoder files. Construct the tokenizer and model from
+    local files with remote code disabled and safetensors required for weights.
+
+    Return one complete state object without changing the owner's cache or guard.
+    CategoryMatcher.load() holds the lease, publishes this state only on success,
+    and translates loading errors into ClassifierUnavailable.
+    """
+    import torch
+    from huggingface_hub import snapshot_download
+    from transformers import AutoModel, AutoTokenizer
+
+    index_directory = Path(
+        snapshot_download(
+            repo_id=index_checkpoint.repo,
+            revision=index_checkpoint.revision,
+            allow_patterns=["index.json", "manifest.json"],
+            token=settings.huggingface_token or None,
+            cache_dir=settings.classifier_cache_dir,
+        )
+    )
+    index = load_index(
+        index_directory / "index.json",
+        index_directory / "manifest.json",
+        checksum=index_sha256,
+        encoder=encoder_checkpoint,
+    )
+    encoder_directory = snapshot_download(
+        repo_id=encoder_checkpoint.repo,
+        revision=encoder_checkpoint.revision,
+        allow_patterns=[
+            "config.json",
+            "model.safetensors",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "vocab.txt",
+            "added_tokens.json",
+        ],
+        token=settings.huggingface_token or None,
+        cache_dir=settings.classifier_cache_dir,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        encoder_directory, local_files_only=True, trust_remote_code=False
+    )
+    model = AutoModel.from_pretrained(
+        encoder_directory,
+        local_files_only=True,
+        trust_remote_code=False,
+        use_safetensors=True,
+    ).eval()
+    if model.config.hidden_size != 384:
+        raise ValueError("Category encoder must produce 384 dimensions")
+    matrices = category_matrices(index)
+    torch.set_num_threads(settings.cpu_inference_threads)
+    return LoadedCategoryMatcher(
+        category_index=index,
+        tokenizer=tokenizer,
+        model=model,
+        matrices=matrices,
+    )
 
 
 class CategoryMatcher:
     """
-    Cache the encoder, tokenizer and matrices under one process-local lease.
+    Own one application's category model state and its lifecycle guard.
+
+    Construction retains pinned configuration and registers a LocalResource;
+    loaded remains None until warm-up or predict() calls load(). A successful
+    load stores one LoadedCategoryMatcher containing the model, tokenizer, index
+    and scoring matrices. unload() drops that state, keeping this controller
+    available to load it again on a later request.
+
+    resource is the lifecycle guard. predict() holds its lease for both loading
+    and scoring, so idle cleanup cannot clear loaded while inference uses it.
     """
 
     def __init__(
@@ -157,6 +248,13 @@ class CategoryMatcher:
         catalog: DeploymentCatalog,
         registry: ResourceRegistry,
     ) -> None:
+        """
+        Retain index/encoder identities and register callbacks without loading either.
+
+        checkpoint identifies the category index; encoder identifies the embedding
+        checkpoint. They are configuration records, not loaded model objects.
+        Loaded runtime objects are held together in loaded.
+        """
         self.checkpoint = catalog.model[config.model_ref]
         self.encoder = catalog.model[config.encoder_ref]
         self.checksum = config.index_sha256
@@ -168,76 +266,36 @@ class CategoryMatcher:
             encoder_model=self.encoder.repo,
             encoder_revision=self.encoder.revision,
         )
-        self.resource = registry.register(
+        self.resource: LocalResource[None] = registry.register(
             LocalResource(config.slug, self.load, self.unload)
         )
 
     def unload(self) -> None:
         """
-        Clear encoder and index references; callers hold the resource lease.
+        Drop loaded state after the guard has excluded concurrent inference.
+
+        LocalResource invokes this callback under its lock during idle cleanup
+        or an explicit stop. Checkpoint configuration and provenance are retained.
         """
         self.loaded = None
 
     def load(self) -> None:
         """
-        Retrieve only explicit data/model files, then load with remote code disabled.
+        Reuse cached state or load all artifacts while holding the resource lease.
+
+        Warm-up enters here through the guard's load callback; predict() calls it
+        under an outer lease that continues through scoring. Nested leases on the
+        same thread are supported. Mark readiness only after the complete state
+        is available; a failed initial load leaves loaded as None for a later retry.
         """
         with self.resource.use():
             if self.loaded is not None:
                 return
             try:
-                import torch
-                from huggingface_hub import snapshot_download
-                from transformers import AutoModel, AutoTokenizer
-
-                artifact_dir = Path(
-                    snapshot_download(
-                        repo_id=self.checkpoint.repo,
-                        revision=self.checkpoint.revision,
-                        allow_patterns=["index.json", "manifest.json"],
-                        token=settings.huggingface_token or None,
-                        cache_dir=settings.classifier_cache_dir,
-                    )
-                )
-                index = load_index(
-                    artifact_dir / "index.json",
-                    artifact_dir / "manifest.json",
-                    checksum=self.checksum,
-                    encoder=self.encoder,
-                )
-                snapshot = snapshot_download(
-                    repo_id=self.encoder.repo,
-                    revision=self.encoder.revision,
-                    allow_patterns=[
-                        "config.json",
-                        "model.safetensors",
-                        "tokenizer.json",
-                        "tokenizer_config.json",
-                        "special_tokens_map.json",
-                        "vocab.txt",
-                        "added_tokens.json",
-                    ],
-                    token=settings.huggingface_token or None,
-                    cache_dir=settings.classifier_cache_dir,
-                )
-                tokenizer = AutoTokenizer.from_pretrained(
-                    snapshot, local_files_only=True, trust_remote_code=False
-                )
-                model = AutoModel.from_pretrained(
-                    snapshot,
-                    local_files_only=True,
-                    trust_remote_code=False,
-                    use_safetensors=True,
-                ).eval()
-                if model.config.hidden_size != 384:
-                    raise ValueError("Category encoder must produce 384 dimensions")
-                matrices = category_matrices(index)
-                torch.set_num_threads(settings.cpu_inference_threads)
-                self.loaded = LoadedCategoryMatcher(
-                    category_index=index,
-                    tokenizer=tokenizer,
-                    model=model,
-                    matrices=matrices,
+                self.loaded = load_matcher_artifacts(
+                    index_checkpoint=self.checkpoint,
+                    encoder_checkpoint=self.encoder,
+                    index_sha256=self.checksum,
                 )
                 self.resource.mark_ready()
             except Exception as exc:
@@ -247,7 +305,13 @@ class CategoryMatcher:
 
     def predict(self, texts: list[str]) -> list[QuestionCategory | None]:
         """
-        Encode descriptions in batches, with the pinned pooling and truncation.
+        Return one category or abstention per topic, preserving input order.
+
+        Hold the lease across loading, tokenization, embedding and scoring. Encode
+        batches of 16 with the index's wordpiece limit, take attention-masked mean
+        pooling, then normalize each embedding before applying predict_vectors().
+        Topic selection and attaching these results to questions belong to
+        classify_categories(), rather than this model controller.
         """
         if not texts or any(
             not isinstance(text, str) or not text.strip() for text in texts
@@ -261,7 +325,7 @@ class CategoryMatcher:
 
             assert self.loaded is not None
             loaded = self.loaded
-            vectors: list[NDArray[np.float32]] = []
+            embedding_batches: list[NDArray[np.float32]] = []
             with torch.inference_mode():
                 for start in range(0, len(texts), 16):
                     batch = loaded.tokenizer(
@@ -271,14 +335,18 @@ class CategoryMatcher:
                         max_length=loaded.category_index.embedding_model.max_wordpieces,
                         return_tensors="pt",
                     )
-                    hidden = loaded.model(**batch).last_hidden_state.float()
-                    mask = batch["attention_mask"].unsqueeze(-1)
-                    pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
-                    vectors.append(
-                        functional.normalize(pooled, p=2, dim=1).cpu().numpy()
+                    token_embeddings = loaded.model(**batch).last_hidden_state.float()
+                    attention_mask = batch["attention_mask"].unsqueeze(-1)
+                    mean_embeddings = (token_embeddings * attention_mask).sum(
+                        dim=1
+                    ) / attention_mask.sum(dim=1).clamp(min=1)
+                    embedding_batches.append(
+                        functional.normalize(mean_embeddings, p=2, dim=1).cpu().numpy()
                     )
             return predict_vectors(
-                loaded.category_index, np.concatenate(vectors), matrices=loaded.matrices
+                loaded.category_index,
+                np.concatenate(embedding_batches),
+                matrices=loaded.matrices,
             )
 
 
@@ -298,7 +366,16 @@ async def classify_categories(
     topics: TopicOutput, provider: Callable[[], CategoryMatcher]
 ) -> CategoryMetadata:
     """
-    Fill question categories after successful inference; retain nulls otherwise.
+    Enrich non-SAR questions with category matches after a complete successful batch.
+
+    Clear existing categories first and skip the provider entirely if no eligible
+    questions remain. Predict once for each distinct topic in a worker thread;
+    the provider returns this application's retained CategoryMatcher.
+
+    An inference/setup failure returns unavailable metadata and leaves categories
+    null. Apply completed assignments on the event loop, so a failing or cancelled
+    worker cannot partially modify the caller's questions. A completed prediction
+    may still be None when its topic does not meet the match threshold.
     """
     for question in topics.questions:
         question.category = None
@@ -307,7 +384,10 @@ async def classify_categories(
         return CategoryMetadata(status="not_applicable")
     texts = list(dict.fromkeys(question.topic for question in eligible))
 
-    def run() -> CategoryAssignments:
+    def predict_topics() -> CategoryAssignments:
+        """
+        Resolve the cold matcher and return a complete batch without mutating questions.
+        """
         matcher = provider()
         assignments = dict(zip(texts, matcher.predict(texts), strict=True))
         return CategoryAssignments(
@@ -315,7 +395,7 @@ async def classify_categories(
         )
 
     try:
-        completed = await asyncio.to_thread(run)
+        completed = await asyncio.to_thread(predict_topics)
     except Exception as exc:
         logger.warning("FOI category matching unavailable: %s", type(exc).__name__)
         return CategoryMetadata(status="unavailable")
