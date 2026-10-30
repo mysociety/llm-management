@@ -112,7 +112,10 @@ checks belong with the loader/owner. The factory must return the concrete owner
 class declared in the registration. Existing convenience functions may return a
 broader protocol; register a concrete construction factory directly. A class with
 the required constructor signature can itself be the factory, as with both logistic
-detectors. Keep default-application convenience wrappers outside this assembly path.
+detectors. Construction requires explicit configuration, catalog and registry;
+it never chooses the default application. The SAR, Automatic and QuestionSlice
+convenience accessors take no arguments and only retrieve a default application's
+retained owner. Use the constructor or `create_*` factory for isolated resources.
 
 ### 3. Declare the registration beside its lazy binding
 

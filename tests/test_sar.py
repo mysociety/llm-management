@@ -161,7 +161,13 @@ def test_logistic_load_once_and_idle_reload(monkeypatch):
     monkeypatch.setattr(sar_resources, "load_model_v1", loader)
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", download)
     # Use an isolated controller without replacing the application's registry entry.
-    detector = sar_resources.LogisticDetector()
+    detector = sar_resources.LogisticDetector(
+        config=get_catalog().local.get(
+            get_catalog().require_sar().logistic, sar_resources.SARLogisticDeployment
+        ),
+        catalog=get_catalog(),
+        registry=sar_resources.ResourceRegistry(),
+    )
     detector.resource.warmup()
     detector.resource.warmup()
     loader.assert_called_once()
@@ -189,7 +195,13 @@ def test_unexpected_logistic_cutoff_is_rejected(monkeypatch):
     )
     monkeypatch.setattr(sar_resources, "load_model_v1", lambda path: artifact)
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda *a, **kw: "/unused")
-    detector = sar_resources.LogisticDetector()
+    detector = sar_resources.LogisticDetector(
+        config=get_catalog().local.get(
+            get_catalog().require_sar().logistic, sar_resources.SARLogisticDeployment
+        ),
+        catalog=get_catalog(),
+        registry=sar_resources.ResourceRegistry(),
+    )
     with pytest.raises(ClassifierUnavailable, match="artifact policy"):
         detector.resource.warmup()
     assert detector._model is None

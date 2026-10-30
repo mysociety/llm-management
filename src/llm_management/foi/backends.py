@@ -236,61 +236,21 @@ def create_question_classifier(
     )
 
 
-def question_classification_head(
-    config: QuestionSliceHeadDeployment | None = None,
-    *,
-    catalog: DeploymentCatalog | None = None,
-    registry: ResourceRegistry | None = None,
-) -> ModernBertClassificationHead:
+def question_classification_head() -> ModernBertClassificationHead:
     """
-    Resolve the default application's retained owner or construct an explicit one.
-
-    An explicit registry requires both configuration and catalog. Without a registry,
-    use the default assembly's provider and reject explicit resource configuration.
-    Construction registers a cold guard; loading remains a warm-up or inference operation.
+    Return the default application's retained resource owner without loading it.
     """
-    if registry is not None:
-        if config is None or catalog is None:
-            raise ValueError(
-                "Explicit resource construction requires config and catalog"
-            )
-        return create_question_classification_head(
-            config, catalog=catalog, registry=registry
-        )
     from ..bootstrap import default_application
 
-    if config is not None:
-        raise ValueError(
-            "Explicit resource configuration requires catalog and registry"
-        )
     return default_application().foi.head()
 
 
-def question_classifier(
-    config: SequenceClassifierDeployment | None = None,
-    *,
-    catalog: DeploymentCatalog | None = None,
-    registry: ResourceRegistry | None = None,
-) -> LocalSequenceClassifier:
+def question_classifier() -> LocalSequenceClassifier:
     """
-    Resolve the default application's retained owner or construct an explicit one.
-
-    An explicit registry requires both configuration and catalog. Without a registry,
-    use the default assembly's provider and reject explicit resource configuration.
-    Construction registers a cold guard; loading remains a warm-up or inference operation.
+    Return the default application's retained resource owner without loading it.
     """
-    if registry is not None:
-        if config is None or catalog is None:
-            raise ValueError(
-                "Explicit resource construction requires config and catalog"
-            )
-        return create_question_classifier(config, catalog=catalog, registry=registry)
     from ..bootstrap import default_application
 
-    if config is not None:
-        raise ValueError(
-            "Explicit resource configuration requires catalog and registry"
-        )
     return default_application().foi.classifier()
 
 
