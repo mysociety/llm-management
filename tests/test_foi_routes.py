@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from starlette.testclient import TestClient
 
-from llm_management import server
 from llm_management.deployments import get_catalog
 from llm_management.deployments.types import RunningDeployment
 from llm_management.foi import backends
@@ -35,18 +34,18 @@ def category_inference_offline(monkeypatch):
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(http_app, monkeypatch):
     monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(
-        server.app.state.runtime.deployments, "active_deployments", lambda: []
+        http_app.state.runtime.deployments, "active_deployments", lambda: []
     )
     # The app lifespan must never manage real deployments in these tests.
-    with TestClient(server.app, raise_server_exceptions=True) as test_client:
+    with TestClient(http_app, raise_server_exceptions=True) as test_client:
         yield test_client
 
 
 @pytest.fixture
-def classifier(monkeypatch):
+def classifier(http_app, monkeypatch):
     model = SimpleNamespace(
         model_name="question-slice-test",
         revision="pinned",
@@ -54,18 +53,18 @@ def classifier(monkeypatch):
         classify=lambda texts: [[1.0, 0.0, 0.0, 0.0] for _ in texts],
         validate_inputs=lambda texts: None,
     )
-    monkeypatch.setattr(server.app.state.runtime.foi, "classifier", lambda: model)
+    monkeypatch.setattr(http_app.state.runtime.foi, "classifier", lambda: model)
     monkeypatch.setattr(
-        server.app.state.runtime.foi,
+        http_app.state.runtime.foi,
         "head",
         lambda: SimpleNamespace(load=lambda: None, classify=lambda vectors: vectors),
     )
     return model
 
 
-def test_no_questions_skips_all_remote_work(client, classifier, monkeypatch):
+def test_no_questions_skips_all_remote_work(http_app, client, classifier, monkeypatch):
     ensure = AsyncMock(side_effect=AssertionError("CPU must not provision a GPU"))
-    monkeypatch.setattr(server.app.state.runtime.deployments, "_prepare_locked", ensure)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "_prepare_locked", ensure)
     response = client.post(
         "/endpoint/foi/extract_questions/extract", json={"body": "Thank you."}
     )
@@ -92,10 +91,10 @@ def test_orphan_keeps_indices_and_does_not_invent_start(client, classifier):
     assert output["unit_predictions"][0]["confidence"] == 0.9
 
 
-def test_gpu_disabled_does_not_provision(client, classifier, monkeypatch):
+def test_gpu_disabled_does_not_provision(http_app, client, classifier, monkeypatch):
     monkeypatch.setattr(settings, "question_slice_gpu_enabled", False)
     ensure = AsyncMock()
-    monkeypatch.setattr(server.app.state.runtime.deployments, "_prepare_locked", ensure)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "_prepare_locked", ensure)
     response = client.post(
         "/endpoint/foi/extract_questions/extract?backend=exoscale",
         json={"body": "Please provide the report."},
@@ -104,17 +103,19 @@ def test_gpu_disabled_does_not_provision(client, classifier, monkeypatch):
     ensure.assert_not_called()
 
 
-def test_backend_switch_shares_reconstruction(client, classifier, monkeypatch):
+def test_backend_switch_shares_reconstruction(
+    http_app, client, classifier, monkeypatch
+):
     rows = [[0.0, 0.0, 1.0, 0.0]]
     classifier.classify = lambda texts: rows
     monkeypatch.setattr(settings, "question_slice_gpu_enabled", True)
     cfg = SimpleNamespace(model=classifier.model_name)
     state = SimpleNamespace(deployment_url="https://example.test/v1", api_key="secret")
     monkeypatch.setattr(
-        server.app.state.runtime.deployments, "get_config", lambda slug: cfg
+        http_app.state.runtime.deployments, "get_config", lambda slug: cfg
     )
     monkeypatch.setattr(
-        server.app.state.runtime.deployments,
+        http_app.state.runtime.deployments,
         "_prepare_locked",
         AsyncMock(return_value=RunningDeployment(config=cfg, state=state)),
     )
@@ -138,7 +139,9 @@ def test_backend_switch_shares_reconstruction(client, classifier, monkeypatch):
     ]
 
 
-def test_overlength_rejected_before_gpu_start(client, classifier, monkeypatch):
+def test_overlength_rejected_before_gpu_start(
+    http_app, client, classifier, monkeypatch
+):
     monkeypatch.setattr(settings, "question_slice_gpu_enabled", True)
 
     def reject(texts):
@@ -146,7 +149,7 @@ def test_overlength_rejected_before_gpu_start(client, classifier, monkeypatch):
 
     classifier.validate_inputs = reject
     ensure = AsyncMock()
-    monkeypatch.setattr(server.app.state.runtime.deployments, "_prepare_locked", ensure)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "_prepare_locked", ensure)
     response = client.post(
         "/endpoint/foi/extract_questions/extract?backend=exoscale",
         json={"body": "Long request."},
@@ -201,10 +204,10 @@ def topic_data():
 
 
 @pytest.fixture
-def pipeline(sanitizer, monkeypatch):
+def pipeline(http_app, sanitizer, monkeypatch):
     monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(
-        server.app.state.runtime.deployments, "active_deployments", lambda: []
+        http_app.state.runtime.deployments, "active_deployments", lambda: []
     )
     extractor = AsyncMock(return_value=extraction())
 
@@ -226,7 +229,7 @@ def pipeline(sanitizer, monkeypatch):
         model=get_catalog().get(get_catalog().require_foi().topic_deployment).model
     )
     monkeypatch.setattr(
-        server.app.state.runtime.deployments, "get_config", lambda slug: cfg
+        http_app.state.runtime.deployments, "get_config", lambda slug: cfg
     )
     ensure = AsyncMock(
         return_value=RunningDeployment(
@@ -237,9 +240,9 @@ def pipeline(sanitizer, monkeypatch):
     classify = AsyncMock(
         return_value=foi_topic.TopicOutput.model_validate(topic_data())
     )
-    monkeypatch.setattr(server.app.state.runtime.deployments, "_prepare_locked", ensure)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "_prepare_locked", ensure)
     monkeypatch.setattr(foi_topic, "classify_topics", classify)
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         yield SimpleNamespace(
             client=client,
             extractor=extractor,
@@ -304,11 +307,13 @@ def test_no_questions_never_starts_topic_model(pipeline):
     pipeline.classify.assert_not_called()
 
 
-def test_category_results_survive_http_and_response_analysis(pipeline, monkeypatch):
+def test_category_results_survive_http_and_response_analysis(
+    http_app, pipeline, monkeypatch
+):
     from llm_management.foi.category_schemas import QuestionCategory
     from llm_management.foi.response_schemas import ResponseAnalysisInput
 
-    matcher = server.app.state.runtime.foi.category_matcher()
+    matcher = http_app.state.runtime.foi.category_matcher()
     predict = Mock(
         side_effect=lambda texts: [
             QuestionCategory(category_slug="air_quality") for _ in texts
@@ -360,14 +365,14 @@ def test_category_failure_keeps_successful_summary(pipeline):
     assert response.json()["questions"][0]["category"] is None
 
 
-def test_sar_only_never_calls_category_provider(pipeline, monkeypatch):
+def test_sar_only_never_calls_category_provider(http_app, pipeline, monkeypatch):
     data = topic_data()
     data["questions"][0]["regime"] = "SAR"
     pipeline.classify.return_value = foi_topic.TopicOutput.model_validate(data)
     provider = Mock(
         side_effect=AssertionError("SAR must not load the category matcher")
     )
-    monkeypatch.setattr(server.app.state.runtime.foi, "category_matcher", provider)
+    monkeypatch.setattr(http_app.state.runtime.foi, "category_matcher", provider)
     response = pipeline.client.post(
         "/endpoint/foi/extract_questions", json={"body": "Please provide report 0."}
     )
@@ -378,8 +383,8 @@ def test_sar_only_never_calls_category_provider(pipeline, monkeypatch):
     provider.assert_not_called()
 
 
-def test_category_matching_can_be_disabled(pipeline, monkeypatch):
-    monkeypatch.setattr(server.app.state.runtime.foi, "category_matcher", None)
+def test_category_matching_can_be_disabled(http_app, pipeline, monkeypatch):
+    monkeypatch.setattr(http_app.state.runtime.foi, "category_matcher", None)
     response = pipeline.client.post(
         "/endpoint/foi/extract_questions", json={"body": "Please provide report 0."}
     )
@@ -434,8 +439,10 @@ def test_bad_upstream_returns_502(pipeline):
     )
 
 
-def test_old_flow_removed_from_api():
-    paths = server.app.openapi()["paths"]
+def test_old_flow_removed_from_api(
+    http_app,
+):
+    paths = http_app.openapi()["paths"]
     assert "/endpoint/foi/extract_questions/legacy" not in paths
     assert "/endpoint/foi/extract_questions/legacy/extract" not in paths
     assert "/endpoint/foi/extract_questions/metadata" not in paths

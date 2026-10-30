@@ -10,7 +10,6 @@ import httpx2
 import pytest
 from starlette.testclient import TestClient
 
-from llm_management import server
 from llm_management.api import mocks
 from llm_management.foi.email_finder.schemas import FOIResult, PublicAuthority
 from llm_management.foi.email_finder.service import FOIFinder
@@ -21,19 +20,19 @@ from llm_management.settings import settings
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(http_app, monkeypatch):
     """
     Fail if any mock route starts deployments or loads a local model.
     """
     monkeypatch.setattr(settings, "auth_tokens", {})
-    service = server.app.state.runtime.deployments
+    service = http_app.state.runtime.deployments
     monkeypatch.setattr(service, "active_deployments", lambda: [])
     monkeypatch.setattr(
         service,
         "_prepare_locked",
         AsyncMock(side_effect=AssertionError("Mock started a deployment")),
     )
-    resources = server.app.state.runtime.foi
+    resources = http_app.state.runtime.foi
     for name in (
         "classifier",
         "head",
@@ -48,7 +47,7 @@ def client(monkeypatch):
                 name,
                 Mock(side_effect=AssertionError("Mock loaded a local resource")),
             )
-    with TestClient(server.app) as connection:
+    with TestClient(http_app) as connection:
         yield connection
 
 
@@ -190,6 +189,7 @@ def test_mock_response_status_accepts_minimal_questions(client, monkeypatch, for
     [(None, None), ("FOI@COUNCIL.EXAMPLE", True), ("old@example.org", False)],
 )
 def test_mock_email_finder_returns_fictional_result_without_external_calls(
+    http_app,
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
     previous_email: str | None,
@@ -202,7 +202,7 @@ def test_mock_email_finder_returns_fictional_result_without_external_calls(
     monkeypatch.setattr(FOIFinder, "find", finder_call)
     monkeypatch.setattr(httpx2.AsyncClient, "send", network_call)
     monkeypatch.setattr(
-        server.app.state.runtime.foi_finder.catalog, "foi_email_finder", None
+        http_app.state.runtime.foi_finder.catalog, "foi_email_finder", None
     )
     authority = PublicAuthority(
         name="Example Council",

@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock
 import httpx2
 import pytest
 
-from llm_management import server
 from llm_management.deployments.types import DeploymentSnapshot, RunningDeployment
 from llm_management.foi import response_model
 from llm_management.foi.response_schemas import ExtractionInput
@@ -62,7 +61,7 @@ def output():
 
 
 @pytest.fixture
-def serving(monkeypatch, output):
+def serving(http_app, monkeypatch, output):
     monkeypatch.setattr(settings, "auth_tokens", {})
     calls = []
     clients = []
@@ -78,10 +77,8 @@ def serving(monkeypatch, output):
         lambda: SimpleNamespace(apply_chat_template=tokenize),
         lambda: None,
     )
-    monkeypatch.setattr(
-        server.app.state.runtime.foi, "response_tokenizer", lambda: guard
-    )
-    cfg = server.app.state.runtime.deployments.catalog.get("foi_status")
+    monkeypatch.setattr(http_app.state.runtime.foi, "response_tokenizer", lambda: guard)
+    cfg = http_app.state.runtime.deployments.catalog.get("foi_status")
     ensure = AsyncMock(
         return_value=RunningDeployment(
             config=cfg,
@@ -93,7 +90,7 @@ def serving(monkeypatch, output):
             ),
         )
     )
-    monkeypatch.setattr(server.app.state.runtime.deployments, "prepare", ensure)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "prepare", ensure)
     touch = []
     from contextlib import asynccontextmanager
 
@@ -104,7 +101,7 @@ def serving(monkeypatch, output):
         finally:
             touch.append(slug)
 
-    monkeypatch.setattr(server.app.state.runtime.deployments, "use", use)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "use", use)
     real_client = httpx2.AsyncClient
 
     def handle(request):
@@ -155,10 +152,10 @@ def serving(monkeypatch, output):
     )
 
 
-def test_exact_prompt_and_sanitized_transport(serving, body, output):
+def test_exact_prompt_and_sanitized_transport(http_app, serving, body, output):
     from starlette.testclient import TestClient
 
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 200, response.text
     assert response.json() == {**output, "process_states": None}
@@ -201,11 +198,11 @@ def test_exact_prompt_and_sanitized_transport(serving, body, output):
 
 
 @pytest.mark.parametrize("tokens,expected", [(6144, 200), (6145, 422)])
-def test_context_budget_before_startup(serving, body, tokens, expected):
+def test_context_budget_before_startup(http_app, serving, body, tokens, expected):
     from starlette.testclient import TestClient
 
     serving.control["tokens"] = tokens
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == expected, response.text
     if expected == 422:
@@ -230,7 +227,7 @@ def test_context_budget_before_startup(serving, body, tokens, expected):
     ],
 )
 def test_failed_status_generation_is_502_and_records_activity(
-    serving, body, output, failure
+    http_app, serving, body, output, failure
 ):
     from starlette.testclient import TestClient
 
@@ -257,7 +254,7 @@ def test_failed_status_generation_is_502_and_records_activity(
         serving.control["no_choices"] = True
     if failure in {"extra_states", "question", "source"}:
         serving.control["content"] = data
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 502, response.text
     assert serving.touch == ["foi_status"]
@@ -278,14 +275,16 @@ def test_status_transport_rejects_unattested_messages():
         )
 
 
-def test_tokenizer_failure_does_not_start_deployment(serving, body, monkeypatch):
+def test_tokenizer_failure_does_not_start_deployment(
+    http_app, serving, body, monkeypatch
+):
     from starlette.testclient import TestClient
 
     def failed():
         raise RuntimeError("private details")
 
-    monkeypatch.setattr(server.app.state.runtime.foi, "response_tokenizer", failed)
-    with TestClient(server.app) as client:
+    monkeypatch.setattr(http_app.state.runtime.foi, "response_tokenizer", failed)
+    with TestClient(http_app) as client:
         response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 503
     assert "private details" not in response.text
@@ -297,24 +296,26 @@ def test_canonical_input_is_a_valid_v4_record(body):
     assert ExtractionInput.model_validate(body).model_dump(mode="json") == body
 
 
-def test_changed_instruction_is_rejected_before_startup(serving, body, monkeypatch):
+def test_changed_instruction_is_rejected_before_startup(
+    http_app, serving, body, monkeypatch
+):
     from starlette.testclient import TestClient
 
     monkeypatch.setattr(response_model, "SYSTEM_PROMPT_SHA256", "0" * 64)
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 503
     serving.ensure.assert_not_called()
     assert not serving.calls
 
 
-def test_startup_failure_records_activity(serving, body):
+def test_startup_failure_records_activity(http_app, serving, body):
     from starlette.testclient import TestClient
 
     from llm_management.deployments.errors import LLMManagementError
 
     serving.ensure.side_effect = LLMManagementError("private provider details")
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 503
     assert "private provider details" not in response.text
@@ -322,14 +323,14 @@ def test_startup_failure_records_activity(serving, body):
     assert not serving.calls
 
 
-def test_missing_inference_credentials_are_503(serving, body):
+def test_missing_inference_credentials_are_503(http_app, serving, body):
     """
     Reject an unavailable connection before constructing a transport client.
     """
     from starlette.testclient import TestClient
 
     serving.ensure.return_value.state.api_key = ""
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 503
     assert serving.calls == []

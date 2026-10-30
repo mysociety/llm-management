@@ -6,7 +6,6 @@ import pytest
 from pydantic import ValidationError
 from starlette.testclient import TestClient
 
-from llm_management import server
 from llm_management.deployments import DeploymentCatalog
 from llm_management.deployments.errors import DeploymentServiceError
 from llm_management.deployments.status import DeploymentStatusCache
@@ -51,8 +50,8 @@ def test_groups_optional():
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_group_runs_concurrently_and_reports_each_result(monkeypatch, fail):
-    monkeypatch.setattr(server.app.state.runtime.deployments, "catalog", config())
+def test_group_runs_concurrently_and_reports_each_result(http_app, monkeypatch, fail):
+    monkeypatch.setattr(http_app.state.runtime.deployments, "catalog", config())
 
     async def run():
         entered = set()
@@ -71,13 +70,13 @@ def test_group_runs_concurrently_and_reports_each_result(monkeypatch, fail):
                 state=DeploymentSnapshot(slug=slug, exists=True, replicas=1),
             )
 
-        monkeypatch.setattr(server.app.state.runtime.deployments, "prepare", ensure)
+        monkeypatch.setattr(http_app.state.runtime.deployments, "prepare", ensure)
         monkeypatch.setattr(
-            server.app.state.runtime.deployments.status,
+            http_app.state.runtime.deployments.status,
             "ensure",
             lambda backend: DeploymentSnapshot(slug=backend.config.slug),
         )
-        return await server.app.state.runtime.management.warm_up_group(
+        return await http_app.state.runtime.management.warm_up_group(
             "group_foi_pipeline"
         )
 
@@ -90,32 +89,34 @@ def test_group_runs_concurrently_and_reports_each_result(monkeypatch, fail):
     assert "private provider detail" not in str(result.model_dump())
 
 
-def test_unknown_group_starts_nothing(monkeypatch):
-    monkeypatch.setattr(server.app.state.runtime.deployments, "catalog", config())
+def test_unknown_group_starts_nothing(http_app, monkeypatch):
+    monkeypatch.setattr(http_app.state.runtime.deployments, "catalog", config())
     ensure = AsyncMock()
-    monkeypatch.setattr(server.app.state.runtime.deployments, "prepare", ensure)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "prepare", ensure)
     monkeypatch.setattr(
-        server.app.state.runtime.deployments.status,
+        http_app.state.runtime.deployments.status,
         "ensure",
         lambda backend: DeploymentSnapshot(slug=backend.config.slug),
     )
     with pytest.raises(DeploymentServiceError) as exc:
-        asyncio.run(server.app.state.runtime.management.warm_up_group("group_missing"))
+        asyncio.run(http_app.state.runtime.management.warm_up_group("group_missing"))
     assert exc.value.status_code == 404
     ensure.assert_not_called()
 
 
-def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(monkeypatch):
+def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(
+    http_app, monkeypatch
+):
     cache = DeploymentStatusCache()
     state = DeploymentSnapshot(slug="foi_topic")
     calls = []
     cfg = SimpleNamespace(create_or_resume=lambda: calls.append("start"))
-    monkeypatch.setattr(server.app.state.runtime.deployments, "status", cache)
-    monkeypatch.setattr(server.app.state.runtime.deployments, "auto_ensure", False)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "status", cache)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "auto_ensure", False)
     monkeypatch.setattr(
-        server.app.state.runtime.deployments, "get_config", lambda slug: cfg
+        http_app.state.runtime.deployments, "get_config", lambda slug: cfg
     )
-    server.app.state.runtime.deployments.backends[state.slug] = SimpleNamespace(
+    http_app.state.runtime.deployments.backends[state.slug] = SimpleNamespace(
         config=cfg, create_or_resume=cfg.create_or_resume
     )
     monkeypatch.setattr(cache, "ensure", lambda cfg: state)
@@ -130,12 +131,10 @@ def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(monkeypatch):
 
     async def run():
         with pytest.raises(DeploymentServiceError):
-            await server.app.state.runtime.deployments.prepare(state.slug)
+            await http_app.state.runtime.deployments.prepare(state.slug)
         return await asyncio.gather(
             *(
-                server.app.state.runtime.deployments.prepare(
-                    state.slug, allow_start=True
-                )
+                http_app.state.runtime.deployments.prepare(state.slug, allow_start=True)
                 for _ in range(2)
             )
         )
@@ -144,27 +143,27 @@ def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(monkeypatch):
     assert calls == ["start"]
     assert all(result.state.replicas == 1 for result in results)
     assert (
-        server.app.state.runtime.deployments.activity.get(state.slug).last_request_time
+        http_app.state.runtime.deployments.activity.get(state.slug).last_request_time
         > 0
     )
 
 
-def test_group_endpoint_contract_and_auth(monkeypatch):
-    monkeypatch.setattr(server.app.state.runtime.deployments, "catalog", config())
+def test_group_endpoint_contract_and_auth(http_app, monkeypatch):
+    monkeypatch.setattr(http_app.state.runtime.deployments, "catalog", config())
     monkeypatch.setattr(settings, "auth_tokens", {"test": "test-token"})
     ensure = AsyncMock(
         return_value=RunningDeployment(
             config=None, state=DeploymentSnapshot(slug="unused", replicas=1)
         )
     )
-    monkeypatch.setattr(server.app.state.runtime.deployments, "prepare", ensure)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "prepare", ensure)
     monkeypatch.setattr(
-        server.app.state.runtime.deployments.status,
+        http_app.state.runtime.deployments.status,
         "ensure",
         lambda backend: DeploymentSnapshot(slug=backend.config.slug),
     )
     # No lifespan: these HTTP contract checks must not touch real deployments.
-    client = TestClient(server.app)
+    client = TestClient(http_app)
     url = "/deployments/group_foi_pipeline/warm-up"
     assert client.post(url).status_code == 401
     ensure.assert_not_called()
@@ -176,7 +175,7 @@ def test_group_endpoint_contract_and_auth(monkeypatch):
 
 @pytest.mark.parametrize("fail_local", [False, True])
 def test_mixed_group_resolves_arbitrary_registered_local_resource(
-    monkeypatch, fail_local
+    http_app, monkeypatch, fail_local
 ):
     data = DeploymentCatalog.load().model_dump()
     data["deployment_group"] = [
@@ -189,7 +188,7 @@ def test_mixed_group_resolves_arbitrary_registered_local_resource(
     registry.register_factory(
         "custom_cpu", lambda: LocalResource("custom_cpu", load, Mock())
     )
-    monkeypatch.setattr(server.app.state.runtime.deployments, "resources", registry)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "resources", registry)
     data["local"]["deployment"].append(
         {
             "slug": "custom_cpu",
@@ -199,21 +198,19 @@ def test_mixed_group_resolves_arbitrary_registered_local_resource(
         }
     )
     mixed = DeploymentCatalog.model_validate(data)
-    monkeypatch.setattr(server.app.state.runtime.deployments, "catalog", mixed)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "catalog", mixed)
     remote = AsyncMock(
         return_value=RunningDeployment(
             config=None, state=DeploymentSnapshot(slug="foi_topic", replicas=1)
         )
     )
-    monkeypatch.setattr(server.app.state.runtime.deployments, "prepare", remote)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "prepare", remote)
     monkeypatch.setattr(
-        server.app.state.runtime.deployments.status,
+        http_app.state.runtime.deployments.status,
         "ensure",
         lambda backend: DeploymentSnapshot(slug=backend.config.slug),
     )
-    result = asyncio.run(
-        server.app.state.runtime.management.warm_up_group("group_mixed")
-    )
+    result = asyncio.run(http_app.state.runtime.management.warm_up_group("group_mixed"))
     assert [member.slug for member in result.deployments] == [
         "custom_cpu",
         "foi_topic",
@@ -227,20 +224,20 @@ def test_mixed_group_resolves_arbitrary_registered_local_resource(
     assert "private local detail" not in str(result.model_dump())
 
 
-def test_single_ensure_resolves_registry_without_remote_calls(monkeypatch):
+def test_single_ensure_resolves_registry_without_remote_calls(http_app, monkeypatch):
     registry = ResourceRegistry()
     load = Mock()
     resource = registry.register(LocalResource("custom_cpu", load, Mock()))
-    monkeypatch.setattr(server.app.state.runtime.deployments, "resources", registry)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "resources", registry)
     remote = AsyncMock(side_effect=AssertionError("No remote startup"))
-    monkeypatch.setattr(server.app.state.runtime.deployments, "prepare", remote)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "prepare", remote)
     monkeypatch.setattr(
-        server.app.state.runtime.deployments.status,
+        http_app.state.runtime.deployments.status,
         "ensure",
         lambda backend: DeploymentSnapshot(slug=backend.config.slug),
     )
     result = asyncio.run(
-        server.app.state.runtime.management.warm_up_resource("custom_cpu")
+        http_app.state.runtime.management.warm_up_resource("custom_cpu")
     )
     assert result.model_dump() == {
         "slug": "custom_cpu",
@@ -271,7 +268,9 @@ def test_ambiguous_local_and_remote_names_rejected():
         DeploymentCatalog.model_validate(data)
 
 
-def test_question_slice_cpu_resources_share_the_deployment_name():
+def test_question_slice_cpu_resources_share_the_deployment_name(
+    http_app,
+):
     from llm_management.deployments import get_catalog
 
     catalog = get_catalog()
@@ -281,15 +280,17 @@ def test_question_slice_cpu_resources_share_the_deployment_name():
     assert {
         foi.classifier,
         foi.head,
-    } <= server.app.state.runtime.deployments.resources.names()
+    } <= http_app.state.runtime.deployments.resources.names()
     cpu_members = catalog.get_group("group_foi_pipeline_cpu").deployments
     assert foi.classifier in cpu_members
 
 
 @pytest.mark.parametrize("action", ["cool-down", "scale-to-zero"])
 @pytest.mark.parametrize("failure", [None, "busy", "provider"])
-def test_group_lifecycle_concurrent_results_and_auth(monkeypatch, action, failure):
-    service = server.app.state.runtime.deployments
+def test_group_lifecycle_concurrent_results_and_auth(
+    http_app, monkeypatch, action, failure
+):
+    service = http_app.state.runtime.deployments
     monkeypatch.setattr(service, "catalog", config())
     monkeypatch.setattr(settings, "auth_tokens", {"test": "test-token"})
     entered = set()
@@ -315,7 +316,7 @@ def test_group_lifecycle_concurrent_results_and_auth(monkeypatch, action, failur
     monkeypatch.setattr(
         service, "cooldown" if action == "cool-down" else "scale_to_zero", operation
     )
-    client = TestClient(server.app)
+    client = TestClient(http_app)
     url = f"/deployments/group_foi_pipeline/{action}"
     assert client.post(url).status_code == 401
     operation.assert_not_called()
@@ -347,8 +348,10 @@ def test_group_lifecycle_concurrent_results_and_auth(monkeypatch, action, failur
 
 
 @pytest.mark.parametrize("action", ["cool-down", "scale-to-zero"])
-def test_group_lifecycle_handles_local_and_remote_members(monkeypatch, action):
-    service = server.app.state.runtime.deployments
+def test_group_lifecycle_handles_local_and_remote_members(
+    http_app, monkeypatch, action
+):
+    service = http_app.state.runtime.deployments
     monkeypatch.setattr(
         service,
         "catalog",
@@ -366,7 +369,7 @@ def test_group_lifecycle_handles_local_and_remote_members(monkeypatch, action):
     monkeypatch.setattr(service.status, "refresh", Mock())
     service.status.set(state)
     result = asyncio.run(
-        server.app.state.runtime.management.change_group("group_mixed", action)
+        http_app.state.runtime.management.change_group("group_mixed", action)
     )
     assert result.success
     assert [member.slug for member in result.deployments] == ["presidio", "foi_topic"]
@@ -381,8 +384,8 @@ def test_group_lifecycle_handles_local_and_remote_members(monkeypatch, action):
 
 
 @pytest.mark.parametrize("action", ["cool-down", "scale-to-zero"])
-def test_group_busy_local_member_does_not_block_remote(monkeypatch, action):
-    service = server.app.state.runtime.deployments
+def test_group_busy_local_member_does_not_block_remote(http_app, monkeypatch, action):
+    service = http_app.state.runtime.deployments
     monkeypatch.setattr(
         service,
         "catalog",
@@ -400,7 +403,7 @@ def test_group_busy_local_member_does_not_block_remote(monkeypatch, action):
     monkeypatch.setattr(service.status, "refresh", Mock())
     with resource.use():
         result = asyncio.run(
-            server.app.state.runtime.management.change_group("group_mixed", action)
+            http_app.state.runtime.management.change_group("group_mixed", action)
         )
     assert not result.success
     assert not result.deployments[0].success
@@ -423,27 +426,27 @@ def test_individual_deployments_cannot_use_group_prefix(kind):
         DeploymentCatalog.model_validate(data)
 
 
-def test_group_warmup_replica_override_rejected_before_work(monkeypatch):
+def test_group_warmup_replica_override_rejected_before_work(http_app, monkeypatch):
     monkeypatch.setattr(settings, "auth_tokens", {})
     ensure = AsyncMock()
-    monkeypatch.setattr(server.app.state.runtime.management, "warm_up_group", ensure)
-    response = TestClient(server.app).post(
+    monkeypatch.setattr(http_app.state.runtime.management, "warm_up_group", ensure)
+    response = TestClient(http_app).post(
         "/deployments/group_foi_pipeline/warm-up?replicas=2"
     )
     assert response.status_code == 422
     ensure.assert_not_awaited()
 
 
-def test_merged_warmup_unknown_group_returns_404_without_startup(monkeypatch):
+def test_merged_warmup_unknown_group_returns_404_without_startup(http_app, monkeypatch):
     monkeypatch.setattr(settings, "auth_tokens", {})
     ensure = AsyncMock()
-    monkeypatch.setattr(server.app.state.runtime.deployments, "prepare", ensure)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "prepare", ensure)
     monkeypatch.setattr(
-        server.app.state.runtime.deployments.status,
+        http_app.state.runtime.deployments.status,
         "ensure",
         lambda backend: DeploymentSnapshot(slug=backend.config.slug),
     )
-    response = TestClient(server.app).post("/deployments/group_missing/warm-up")
+    response = TestClient(http_app).post("/deployments/group_missing/warm-up")
     assert response.status_code == 404
     assert "group" in response.json()["detail"].lower()
     ensure.assert_not_awaited()

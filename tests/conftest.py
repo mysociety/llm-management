@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
+    from fastapi import FastAPI
+
     from llm_management.bootstrap import ApplicationRuntime
     from llm_management.deployments.catalog import DeploymentCatalog
     from llm_management.foi.backends import FOIResources
@@ -65,19 +67,25 @@ def runtime() -> Generator[ApplicationRuntime, None, None]:
     asyncio.run(runtime.close())
 
 
-@pytest.fixture(autouse=True)
-def isolated_http_app(monkeypatch, request):
-    if request.node.get_closest_marker("external") or not hasattr(
-        request.module, "server"
-    ):
-        return
-    from llm_management import server
-    from llm_management.bootstrap import assemble_runtime
+@pytest.fixture
+def http_app(
+    runtime: ApplicationRuntime, monkeypatch: pytest.MonkeyPatch
+) -> Generator[FastAPI, None, None]:
+    """
+    Own an HTTP app and close its runtime before test patches are restored.
+
+    Tests request this fixture explicitly. TestClient may run the lifespan itself;
+    runtime.close() is idempotent, so teardown also covers clients without lifespan.
+    """
+    import asyncio
+
     from llm_management.http_app import create_app
 
-    monkeypatch.setattr(server, "app", create_app(runtime=assemble_runtime()))
-    sanitizer = server.app.state.runtime.sanitizer()
-    monkeypatch.setattr(sanitizer, "_analyzer", FakeAnalyzer())
+    app = create_app(runtime=runtime)
+    try:
+        yield app
+    finally:
+        asyncio.run(runtime.close())
 
 
 @pytest.fixture

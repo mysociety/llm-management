@@ -4,19 +4,18 @@ from unittest.mock import AsyncMock
 import pytest
 from starlette.testclient import TestClient
 
-from llm_management import server
 from llm_management.foi import response_analysis
 from llm_management.foi.response_schemas import ExtractionOutput
 from llm_management.settings import settings
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(http_app, monkeypatch):
     monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(
-        server.app.state.runtime.deployments, "active_deployments", lambda: []
+        http_app.state.runtime.deployments, "active_deployments", lambda: []
     )
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         yield client
 
 
@@ -60,10 +59,10 @@ def output():
     }
 
 
-def test_unconfigured_response_does_not_provision(client, body, monkeypatch):
+def test_unconfigured_response_does_not_provision(http_app, client, body, monkeypatch):
     ensure = AsyncMock(side_effect=AssertionError("must not provision"))
-    monkeypatch.setattr(server.app.state.runtime.deployments, "_prepare_locked", ensure)
-    foi = server.app.state.runtime.foi.catalog.require_foi()
+    monkeypatch.setattr(http_app.state.runtime.deployments, "_prepare_locked", ensure)
+    foi = http_app.state.runtime.foi.catalog.require_foi()
     monkeypatch.setattr(foi, "response_deployment", None)
     response = client.post("/endpoint/foi/response_status", json=body)
     assert response.status_code == 503
@@ -72,7 +71,7 @@ def test_unconfigured_response_does_not_provision(client, body, monkeypatch):
 
 @pytest.mark.parametrize("upstream", ["compact", "extraction", "full"])
 def test_request_output_is_projected_for_model(
-    client, body, output, monkeypatch, upstream
+    http_app, client, body, output, monkeypatch, upstream
 ):
     expected_request = deepcopy(body["request"])
     if upstream != "compact":
@@ -104,7 +103,7 @@ def test_request_output_is_projected_for_model(
     assert observed.request_text == ("Original request" if upstream == "full" else None)
     assert (
         predict.call_args.kwargs["model"]
-        == server.app.state.runtime.deployments.catalog.get("foi_status").model
+        == http_app.state.runtime.deployments.catalog.get("foi_status").model
     )
 
 
@@ -211,8 +210,10 @@ def test_no_questions_still_allows_whole_request_analysis(
     assert client.post("/endpoint/foi/response_status", json=body).status_code == 200
 
 
-def test_endpoint_exposes_output_contract():
-    operation = server.app.openapi()["paths"]["/endpoint/foi/response_status"]["post"]
+def test_endpoint_exposes_output_contract(
+    http_app,
+):
+    operation = http_app.openapi()["paths"]["/endpoint/foi/response_status"]["post"]
     assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/ExtractionOutput"
     }
