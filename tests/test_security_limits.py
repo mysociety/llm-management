@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from starlette.testclient import TestClient
 
 from llm_management.api.auth import require_bearer_auth_when_enabled
-from llm_management.api.classifiers import AutomaticResponseRequest
+from llm_management.api.classifiers import CorrespondenceClassificationRequest
 from llm_management.api.limits import HTTPRequestPolicy, RequestLimits
 from llm_management.settings import Settings, settings
 
@@ -36,9 +36,19 @@ def test_empty_and_nonascii_bearer_rejected_even_if_settings_mutated(monkeypatch
         )
 
 
-def test_automatic_text_limit():
+@pytest.mark.parametrize("body", ["", "x" * 100_001])
+def test_classifier_text_limits(body):
     with pytest.raises(ValidationError):
-        AutomaticResponseRequest(body="x" * 100_001)
+        CorrespondenceClassificationRequest(body=body)
+
+
+@pytest.mark.parametrize("endpoint", ["sar_detection", "automatic_response_detection"])
+def test_classifier_endpoints_reject_empty_text(http_app, endpoint):
+    with TestClient(http_app) as client:
+        response = client.post(f"/endpoint/foi/{endpoint}", json={"body": ""})
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "body"]
+    assert response.json()["detail"][0]["type"] == "string_too_short"
 
 
 def test_chunked_body_bound_and_admission(monkeypatch):
