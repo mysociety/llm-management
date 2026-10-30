@@ -33,6 +33,7 @@ from .types import (
     GroupMemberResult,
     GroupWarmUpResponse,
     RunningDeployment,
+    WarmUpAction,
     WarmUpResponse,
 )
 
@@ -454,22 +455,20 @@ class DeploymentService:
                     status_code=422, detail="Local resources do not support replicas."
                 )
             await self._warmup_local(target)
-            return WarmUpResponse(slug=slug, action="warmed", replicas=None)
+            return WarmUpResponse(slug=slug, action=WarmUpAction.WARMED, replicas=None)
         backend = self.get_backend(slug)
         previous = await asyncio.to_thread(self.status.ensure, backend)
         running = await self.ensure_running(slug, allow_start=True, replicas=replicas)
         actual = running.state.replicas
-        action = (
-            "scaled"
-            if previous.replicas > 0
-            and replicas is not None
-            and previous.replicas != replicas
-            else "already_running"
-            if previous.replicas > 0
-            else "resumed"
-            if previous.exists
-            else "created"
-        )
+        if previous.replicas > 0:
+            if replicas is not None and previous.replicas != replicas:
+                action = WarmUpAction.SCALED
+            else:
+                action = WarmUpAction.ALREADY_RUNNING
+        elif previous.exists:
+            action = WarmUpAction.RESUMED
+        else:
+            action = WarmUpAction.CREATED
         return WarmUpResponse(slug=slug, action=action, replicas=actual)
 
     async def run_group(

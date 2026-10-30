@@ -68,3 +68,18 @@ def test_email_finder_mock_uses_the_live_input_and_response_contract() -> None:
     mock = paths["/mock/endpoint/foi/find_email"]["post"]
     assert mock["requestBody"] == live["requestBody"]
     assert mock["responses"]["200"] == live["responses"]["200"]
+
+
+def test_warmup_action_schema_lists_supported_outcomes() -> None:
+    schemas = server.app.openapi()["components"]["schemas"]
+    assert schemas["WarmUpResponse"]["properties"]["action"] == {
+        "$ref": "#/components/schemas/WarmUpAction"
+    }
+    assert schemas["WarmUpAction"]["type"] == "string"
+    assert set(schemas["WarmUpAction"]["enum"]) == {
+        "warmed",
+        "scaled",
+        "already_running",
+        "resumed",
+        "created",
+    }

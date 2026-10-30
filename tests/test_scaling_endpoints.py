@@ -70,8 +70,11 @@ def deployment(monkeypatch):
     return TestClient(server.app), cfg, cloud, client, cache
 
 
-@pytest.mark.parametrize("initial", [None, 0, 1, 3])
-def test_custom_replicas_create_resume_and_resize(deployment, initial):
+@pytest.mark.parametrize(
+    "initial,expected_action",
+    [(None, "created"), (0, "resumed"), (1, "scaled"), (3, "already_running")],
+)
+def test_custom_replicas_create_resume_and_resize(deployment, initial, expected_action):
     http, cfg, cloud, client, cache = deployment
     if initial is not None:
         cloud["deployment"] = {"id": "test-id", "name": "test", "replicas": initial}
@@ -80,13 +83,7 @@ def test_custom_replicas_create_resume_and_resize(deployment, initial):
     assert response.json() == {
         "slug": "test",
         "replicas": 3,
-        "action": "created"
-        if initial is None
-        else "resumed"
-        if initial == 0
-        else "scaled"
-        if initial != 3
-        else "already_running",
+        "action": expected_action,
     }
     assert cfg.replicas == 2
     assert cache.get("test").replicas == 3

@@ -78,12 +78,12 @@ def test_separate_catalogs_and_registries_warm_their_own_checkpoint(monkeypatch)
 
 
 def test_http_dependencies_use_the_serving_application(monkeypatch):
-    from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     from starlette.testclient import TestClient
 
     from llm_management.api import get_application
+    from llm_management.deployments.types import WarmUpAction, WarmUpResponse
     from llm_management.server import create_app
     from llm_management.settings import settings
 
@@ -93,7 +93,9 @@ def test_http_dependencies_use_the_serving_application(monkeypatch):
     calls = []
     for application, label in [(first, "first"), (second, "second")]:
         call = AsyncMock(
-            return_value=SimpleNamespace(slug="example", action=label, replicas=1)
+            return_value=WarmUpResponse(
+                slug=label, action=WarmUpAction.WARMED, replicas=1
+            )
         )
         monkeypatch.setattr(application.deployments, "ensure_deployment", call)
         calls.append(call)
@@ -101,13 +103,13 @@ def test_http_dependencies_use_the_serving_application(monkeypatch):
     # No lifespan needed: mocked lifecycle actions never load resources.
     clients = [TestClient(app) for app in apps]
     for client, label in zip(clients, ["first", "second"]):
-        assert client.post("/deployments/example/warm-up").json()["action"] == label
+        assert client.post("/deployments/example/warm-up").json()["slug"] == label
     for call in calls:
         call.assert_awaited_once_with("example", None)
 
     apps[0].dependency_overrides[get_application] = lambda: second
-    assert clients[0].post("/deployments/example/warm-up").json()["action"] == "second"
-    assert clients[1].post("/deployments/example/warm-up").json()["action"] == "second"
+    assert clients[0].post("/deployments/example/warm-up").json()["slug"] == "second"
+    assert clients[1].post("/deployments/example/warm-up").json()["slug"] == "second"
     assert calls[0].await_count == 1
     assert calls[1].await_count == 3
     for client in clients:
