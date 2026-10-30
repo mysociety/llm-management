@@ -1,9 +1,9 @@
 """Explicit live tests for the prepared Compute server; creates billed resources.
 
-Run only with pytest -m external tests/test_compute_external.py. Uses the Clef
+Run with pytest --run-external -m external tests/test_compute_external.py. Uses the Clef
 recipe, exercises real HTTP/System One calls, and deletes the owned VM in finally.
-Use SERVER_ROLE=test and persistent COMPUTE_STATE_DIR for sequential runs.
-Concurrent isolated runs can use SERVER_ROLE=test_<run> with separate state directories.
+The session assigns a fresh test role and recovery directory. Existing resources
+are never adopted; incomplete creation records are retained for manual recovery.
 """
 
 import json
@@ -22,18 +22,20 @@ from llm_management.deployments.compute import close_tunnel
 from llm_management.deployments.config import ComputeDeploymentConfig
 from llm_management.deployments.status import DeploymentStatusCache
 from llm_management.settings import settings
+from tests.external_safety import OwnedComputeDeployment
 
 pytestmark = pytest.mark.external
 
 
 def test_compute_lifecycle_and_agents_live(
     http_app,
+    external_test_run,
 ):
-    if settings.server_role != "test" and not settings.server_role.startswith("test_"):
-        pytest.skip("Set SERVER_ROLE=test (or test_<run> for concurrent isolated runs)")
     cfg = http_app.state.runtime.deployments.get_config("clef")
-    backend = http_app.state.runtime.deployments.get_backend("clef")
     assert isinstance(cfg, ComputeDeploymentConfig)
+    backend = OwnedComputeDeployment(cfg, external_test_run)
+    backend.require_empty(get_client(cfg.zone))
+    http_app.state.runtime.deployments.backends[cfg.slug] = backend
     report = {
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "template_name": cfg.recipe.name,

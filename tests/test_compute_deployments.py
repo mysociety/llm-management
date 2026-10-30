@@ -122,6 +122,7 @@ def deployed(http_app, tmp_path, monkeypatch):
     )
     config.__dict__["recipe"] = recipe
     monkeypatch.setattr(module.settings, "compute_state_dir", tmp_path)
+    monkeypatch.setattr(module.settings, "server_role", "test")
     cloud = Cloud(recipe)
     monkeypatch.setattr(module, "get_client", lambda zone: cloud)
     adapter = module.ComputeDeployment(config)

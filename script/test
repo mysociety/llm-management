@@ -3,7 +3,7 @@ set -e
 
 if [[ "$1" == "--all" ]]; then
     shift
-    poetry run pytest "$@"
+    poetry run pytest --run-external "$@"
 else
     poetry run pytest -m "not external" "$@"
 fi
