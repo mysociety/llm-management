@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import Any, Generic, TypeVar
 
@@ -91,7 +91,7 @@ class LocalResource(Generic[T]):
         self._cooldown_at: float | None = None
 
     @contextmanager
-    def use(self) -> Iterator[None]:
+    def use(self) -> Generator[None, None, None]:
         """Lease the resource for the complete duration of synchronous work.
 
         Waits for other threads using this resource, then prevents unloading

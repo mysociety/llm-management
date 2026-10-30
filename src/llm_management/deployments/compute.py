@@ -16,7 +16,7 @@ import socket
 import subprocess
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, NamedTuple, TextIO
 
@@ -117,7 +117,7 @@ class ComputeDeployment:
         self._thread_lock = threading.RLock()
 
     @contextmanager
-    def locked(self) -> Iterator[None]:
+    def locked(self) -> Generator[None, None, None]:
         """
         Serialize lifecycle changes across threads and cooperating local processes.
 
