@@ -18,6 +18,7 @@ from llm_management.deployments.managed import ManagedDeployment
 from llm_management.deployments.status import DeploymentStatusCache
 from llm_management.deployments.types import DeploymentActivity, DeploymentSnapshot
 from llm_management.inference.resources import LocalResource, ResourceRegistry
+from llm_management.settings import settings
 
 
 @pytest.fixture
@@ -58,11 +59,11 @@ def deployment(monkeypatch):
     client.reveal_deployment_api_key.side_effect = AssertionError(
         "Deployment credentials must not be queried"
     )
-    monkeypatch.setattr(server.settings, "exoscale_inference_api_key", "test-secret")
+    monkeypatch.setattr(settings, "exoscale_inference_api_key", "test-secret")
     monkeypatch.setattr(ManagedDeployment, "client", lambda self: client)
     monkeypatch.setattr(ManagedDeployment, "ensure_model", lambda *a, **kw: None)
-    monkeypatch.setattr(server.settings, "server_role", "")
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "server_role", "")
+    monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(
         server.app.state.runtime.deployments, "get_config", lambda slug: cfg
     )
@@ -273,7 +274,7 @@ def test_missing_inference_key_keeps_status_readable(deployment, monkeypatch):
 
     _, cfg, cloud, client, _ = deployment
     cloud["deployment"] = {"id": "test-id", "name": cfg.deployment_name, "replicas": 1}
-    monkeypatch.setattr(server.settings, "exoscale_inference_api_key", "")
+    monkeypatch.setattr(settings, "exoscale_inference_api_key", "")
     backend = ManagedDeployment(cfg)
 
     status = backend.query_status()

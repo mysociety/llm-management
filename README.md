@@ -338,8 +338,8 @@ these extraction tests. These smoke tests do not establish production accuracy.
 | [VM template preparation](EXOSCALE_TEMPLATES.md) | Preparing and verifying reusable model-server templates |
 | [Shared GPU serving proposal](docs/proposals/shared-gpu-serving.md) | Proposed Compute extraction and LoRA serving; not implemented |
 
-Start reading application code at `bootstrap.py` and `server.py`. HTTP contracts
-live under `api/`; deployment lifecycle and cloud operations live under
+Start with `bootstrap.py` for runtime assembly and `http_app.py` for HTTP construction.
+`server.py` is the ASGI entry point that binds them together. HTTP contracts live under `api/`; deployment lifecycle and cloud operations live under
 `deployments/`; reusable execution and resource guards live under `inference/`.
 FOI, SAR and automatic classification each keep their own decisions and schemas.
 

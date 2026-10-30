@@ -6,7 +6,7 @@ from starlette.testclient import TestClient
 from llm_management.bootstrap import assemble_runtime
 from llm_management.foi.examples import ExtractionExpectation, validation_examples
 from llm_management.foi.schemas import QuestionSliceResult
-from llm_management.server import create_app
+from llm_management.http_app import create_app
 from tests.foi_validation import assert_extraction_matches, post_example
 
 pytestmark = pytest.mark.external

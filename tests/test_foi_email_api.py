@@ -19,6 +19,7 @@ from llm_management.inference.external import (
     ExternalFailure,
     ExternalUnavailable,
 )
+from llm_management.settings import settings
 
 
 @pytest.mark.parametrize(
@@ -34,7 +35,7 @@ from llm_management.inference.external import (
 def test_route_errors(
     monkeypatch: pytest.MonkeyPatch, error: Exception, status: int
 ) -> None:
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(FOIFinder, "find", AsyncMock(side_effect=error))
     client = TestClient(server.app)
     response = client.post("/endpoint/foi/find_email", json={"name": "Council"})
@@ -45,7 +46,7 @@ def test_route_errors(
     "path", ["/endpoint/foi/find_email", "/mock/endpoint/foi/find_email"]
 )
 def test_route_input_and_auth(monkeypatch: pytest.MonkeyPatch, path: str) -> None:
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
     method = AsyncMock()
     monkeypatch.setattr(FOIFinder, "find", method)
     client = TestClient(server.app)
@@ -57,5 +58,5 @@ def test_route_input_and_auth(monkeypatch: pytest.MonkeyPatch, path: str) -> Non
     ]:
         assert client.post(path, json=body).status_code == 422
     method.assert_not_called()
-    monkeypatch.setattr(server.settings, "auth_tokens", {"test": "secret"})
+    monkeypatch.setattr(settings, "auth_tokens", {"test": "secret"})
     assert client.post(path, json={"name": "Council"}).status_code == 401

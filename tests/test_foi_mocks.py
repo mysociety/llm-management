@@ -17,6 +17,7 @@ from llm_management.foi.email_finder.service import FOIFinder
 from llm_management.foi.examples import ExtractionExpectation, validation_examples
 from llm_management.foi.response_schemas import ExtractionOutput
 from llm_management.foi.schemas import ExtractQuestionsResponse, QuestionSliceResult
+from llm_management.settings import settings
 
 
 @pytest.fixture
@@ -24,7 +25,7 @@ def client(monkeypatch):
     """
     Fail if any mock route starts deployments or loads a local model.
     """
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
     service = server.app.state.runtime.deployments
     monkeypatch.setattr(service, "active_deployments", lambda: [])
     monkeypatch.setattr(
@@ -145,9 +146,7 @@ def test_mock_uses_normal_authentication(client, monkeypatch):
     """
     Require configured bearer authentication for the FOI mock routes.
     """
-    monkeypatch.setattr(
-        server.settings, "auth_tokens", {"integration": "mock-test-token"}
-    )
+    monkeypatch.setattr(settings, "auth_tokens", {"integration": "mock-test-token"})
     bodies = {
         "extract_questions/extract": {"body": "Hello"},
         "extract_questions": {"body": "Hello"},

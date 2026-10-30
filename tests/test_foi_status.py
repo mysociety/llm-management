@@ -17,6 +17,7 @@ from llm_management.deployments.types import DeploymentSnapshot, RunningDeployme
 from llm_management.foi import response_model
 from llm_management.foi.response_schemas import ExtractionInput
 from llm_management.inference.resources import LocalResource
+from llm_management.settings import settings
 
 
 @pytest.fixture
@@ -62,7 +63,7 @@ def output():
 
 @pytest.fixture
 def serving(monkeypatch, output):
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
     calls = []
     clients = []
     tokenization = []

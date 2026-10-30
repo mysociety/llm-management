@@ -9,11 +9,12 @@ from starlette.testclient import TestClient
 
 from llm_management import server
 from llm_management.deployments.types import RunningDeployment
+from llm_management.settings import settings
 
 
 @pytest.fixture
 def clef_client(monkeypatch):
-    monkeypatch.setattr(server.settings, "auth_tokens", {"client": "client-secret"})
+    monkeypatch.setattr(settings, "auth_tokens", {"client": "client-secret"})
     monkeypatch.setattr(
         server.app.state.runtime.deployments, "active_deployments", lambda: []
     )
@@ -301,6 +302,6 @@ def test_proxy_rejects_unsafe_paths_before_startup(clef_client, path):
 
 def test_proxy_bounds_upstream_response(clef_client, monkeypatch):
     client, _, replies = clef_client
-    monkeypatch.setattr(server.settings, "proxy_max_response_bytes", 8)
+    monkeypatch.setattr(settings, "proxy_max_response_bytes", 8)
     replies.append(httpx2.Response(200, content=b"x" * 9))
     assert post(client, "/deployments/clef/v1/systemone", json={}).status_code == 502

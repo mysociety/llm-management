@@ -16,7 +16,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from starlette.testclient import TestClient
 
 from llm_management.bootstrap import assemble_runtime
-from llm_management.server import create_app
+from llm_management.http_app import create_app
 
 DEPLOYMENT = "olmo3_7b"
 BASE_URL = "http://test"

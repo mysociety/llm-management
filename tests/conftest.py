@@ -73,8 +73,9 @@ def isolated_http_app(monkeypatch, request):
         return
     from llm_management import server
     from llm_management.bootstrap import assemble_runtime
+    from llm_management.http_app import create_app
 
-    monkeypatch.setattr(server, "app", server.create_app(runtime=assemble_runtime()))
+    monkeypatch.setattr(server, "app", create_app(runtime=assemble_runtime()))
     sanitizer = server.app.state.runtime.sanitizer()
     monkeypatch.setattr(sanitizer, "_analyzer", FakeAnalyzer())
 

@@ -22,15 +22,13 @@ from llm_management.deployments.client import get_client
 from llm_management.deployments.compute import close_tunnel
 from llm_management.deployments.config import ComputeDeploymentConfig
 from llm_management.deployments.status import DeploymentStatusCache
+from llm_management.settings import settings
 
 pytestmark = pytest.mark.external
 
 
 def test_compute_lifecycle_and_agents_live():
-    if (
-        server.settings.server_role != "test"
-        and not server.settings.server_role.startswith("test_")
-    ):
+    if settings.server_role != "test" and not settings.server_role.startswith("test_"):
         pytest.skip("Set SERVER_ROLE=test (or test_<run> for concurrent isolated runs)")
     cfg = server.app.state.runtime.deployments.get_config("clef")
     backend = server.app.state.runtime.deployments.get_backend("clef")
@@ -48,11 +46,11 @@ def test_compute_lifecycle_and_agents_live():
     )
     old_status = server.app.state.runtime.deployments.status
     old_activity = server.app.state.runtime.deployments.activity
-    old_auth = server.settings.auth_tokens
-    server.settings.auth_tokens = {"live-smoke": secrets.token_urlsafe(32)}
+    old_auth = settings.auth_tokens
+    settings.auth_tokens = {"live-smoke": secrets.token_urlsafe(32)}
     server.app.state.runtime.deployments.status = DeploymentStatusCache()
     server.app.state.runtime.deployments.activity = DeploymentActivityTracker()
-    headers = {"Authorization": "Bearer " + server.settings.auth_tokens["live-smoke"]}
+    headers = {"Authorization": "Bearer " + settings.auth_tokens["live-smoke"]}
 
     def record(name, response):
         report["checks"].append(
@@ -149,5 +147,5 @@ def test_compute_lifecycle_and_agents_live():
         finally:
             server.app.state.runtime.deployments.status = old_status
             server.app.state.runtime.deployments.activity = old_activity
-            server.settings.auth_tokens = old_auth
+            settings.auth_tokens = old_auth
             destination.write_text(json.dumps(report, indent=2) + "\n")

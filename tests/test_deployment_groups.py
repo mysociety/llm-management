@@ -12,6 +12,7 @@ from llm_management.deployments.errors import DeploymentServiceError
 from llm_management.deployments.status import DeploymentStatusCache
 from llm_management.deployments.types import DeploymentSnapshot, RunningDeployment
 from llm_management.inference.resources import LocalResource, ResourceRegistry
+from llm_management.settings import settings
 
 
 def config(groups=None):
@@ -150,7 +151,7 @@ def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(monkeypatch):
 
 def test_group_endpoint_contract_and_auth(monkeypatch):
     monkeypatch.setattr(server.app.state.runtime.deployments, "catalog", config())
-    monkeypatch.setattr(server.settings, "auth_tokens", {"test": "test-token"})
+    monkeypatch.setattr(settings, "auth_tokens", {"test": "test-token"})
     ensure = AsyncMock(
         return_value=RunningDeployment(
             config=None, state=DeploymentSnapshot(slug="unused", replicas=1)
@@ -290,7 +291,7 @@ def test_question_slice_cpu_resources_share_the_deployment_name():
 def test_group_lifecycle_concurrent_results_and_auth(monkeypatch, action, failure):
     service = server.app.state.runtime.deployments
     monkeypatch.setattr(service, "catalog", config())
-    monkeypatch.setattr(server.settings, "auth_tokens", {"test": "test-token"})
+    monkeypatch.setattr(settings, "auth_tokens", {"test": "test-token"})
     entered = set()
 
     async def run_member(slug):
@@ -423,7 +424,7 @@ def test_individual_deployments_cannot_use_group_prefix(kind):
 
 
 def test_group_warmup_replica_override_rejected_before_work(monkeypatch):
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
     ensure = AsyncMock()
     monkeypatch.setattr(server.app.state.runtime.management, "warm_up_group", ensure)
     response = TestClient(server.app).post(
@@ -434,7 +435,7 @@ def test_group_warmup_replica_override_rejected_before_work(monkeypatch):
 
 
 def test_merged_warmup_unknown_group_returns_404_without_startup(monkeypatch):
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
     ensure = AsyncMock()
     monkeypatch.setattr(server.app.state.runtime.deployments, "prepare", ensure)
     monkeypatch.setattr(

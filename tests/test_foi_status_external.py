@@ -13,7 +13,7 @@ from starlette.testclient import TestClient
 from llm_management.bootstrap import assemble_runtime
 from llm_management.foi.examples import validation_examples
 from llm_management.foi.response_schemas import ExtractionOutput
-from llm_management.server import create_app
+from llm_management.http_app import create_app
 from tests.foi_validation import assert_response_matches, post_example
 
 pytestmark = pytest.mark.external
