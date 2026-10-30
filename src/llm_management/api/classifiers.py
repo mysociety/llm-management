@@ -11,13 +11,14 @@ from .. import automatic, sar
 from . import DependencyRuntime
 
 
-class SARDetectionRequest(BaseModel):
+class CorrespondenceClassificationRequest(BaseModel):
+    """
+    Correspondence text and inference mode shared by the local classifiers.
+
+    Both endpoints require nonempty text.
+    """
+
     body: str = Field(min_length=1, max_length=100_000)
-    fast: bool = False
-
-
-class AutomaticResponseRequest(BaseModel):
-    body: str = Field(max_length=100_000)
     fast: bool = False
 
 
@@ -26,7 +27,7 @@ router = APIRouter(tags=["FOI endpoints"])
 
 @router.post("/endpoint/foi/sar_detection", response_model=sar.SARResult)
 async def sar_detection_endpoint(
-    runtime: DependencyRuntime, body: SARDetectionRequest
+    runtime: DependencyRuntime, body: CorrespondenceClassificationRequest
 ) -> sar.SARResult:
     """
     Given an FOI request text, returns a quick indication of whether it is
@@ -46,7 +47,7 @@ async def sar_detection_endpoint(
 )
 async def automatic_response_detection_endpoint(
     runtime: DependencyRuntime,
-    body: AutomaticResponseRequest,
+    body: CorrespondenceClassificationRequest,
 ) -> automatic.AutomaticResult:
     """
     Given a response to an FOI request, returns a quick indication of whether

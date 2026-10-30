@@ -152,7 +152,14 @@ class TopicOutput(StrictModel):
     @classmethod
     def from_generated(cls, generated: GeneratedTopicOutput) -> Self:
         return cls(
-            questions=[TopicQuestion(**q.model_dump()) for q in generated.questions]
+            questions=[
+                TopicQuestion(
+                    question_id=q.question_id,
+                    regime=q.regime,
+                    topic=q.topic,
+                )
+                for q in generated.questions
+            ]
         )
 
 
@@ -205,13 +212,23 @@ class ExtractQuestionsResponse(StrictModel):
             request_text=result.request_text,
             questions=[
                 ClassifiedQuestion(
-                    **classifications[q.question_id].model_dump(), text=q.text
+                    question_id=q.question_id,
+                    regime=classifications[q.question_id].regime,
+                    topic=classifications[q.question_id].topic,
+                    category=classifications[q.question_id].category,
+                    text=q.text,
                 )
                 for q in result.questions
             ],
             extraction_status=result.extraction_status,
             additional_text=result.additional_text,
-            meta=ExtractionMetadata.model_validate(
-                result.model_dump(include=set(ExtractionMetadata.model_fields))
+            meta=ExtractionMetadata(
+                extraction_backend=result.extraction_backend,
+                extraction_model=result.extraction_model,
+                extraction_revision=result.extraction_revision,
+                classification_model=result.classification_model,
+                ignored_text=result.ignored_text,
+                promoted_continuation_index=result.promoted_continuation_index,
+                category_classification=result.category_classification,
             ),
         )

@@ -172,7 +172,15 @@ async def process_information_request(
     )
     extraction = extracted.original
     result = InformationRequestResult(
-        **extraction.model_dump(),
+        questions=extraction.questions,
+        extraction_status=extraction.extraction_status,
+        additional_text=extraction.additional_text,
+        ignored_text=extraction.ignored_text,
+        unit_predictions=extraction.unit_predictions,
+        extraction_backend=extraction.extraction_backend,
+        extraction_model=extraction.extraction_model,
+        extraction_revision=extraction.extraction_revision,
+        promoted_continuation_index=extraction.promoted_continuation_index,
         request_text=request_text,
         classification=None,
         classification_model=None,
