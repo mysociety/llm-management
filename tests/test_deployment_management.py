@@ -32,7 +32,7 @@ def test_direct_group_warmup_preserves_order_and_partial_failure(monkeypatch):
         ],
     )
     ensure = AsyncMock(return_value=outcome)
-    monkeypatch.setattr(service, "ensure_group", ensure)
+    monkeypatch.setattr(service.management, "warm_up_group", ensure)
     result = asyncio.run(service.management.warm_up("group_example"))
     assert isinstance(result, GroupWarmUpResponse)
     assert result.model_dump() == outcome.model_dump()
@@ -43,7 +43,7 @@ def test_direct_group_warmup_preserves_order_and_partial_failure(monkeypatch):
 def test_direct_group_replica_override_is_rejected_before_execution(monkeypatch):
     service = assemble_service()
     ensure = AsyncMock()
-    monkeypatch.setattr(service, "ensure_group", ensure)
+    monkeypatch.setattr(service.management, "warm_up_group", ensure)
     with pytest.raises(DeploymentServiceError) as caught:
         asyncio.run(service.management.warm_up("group_example", 2))
     assert caught.value.status_code == 422
@@ -67,7 +67,7 @@ def test_direct_group_actions_use_shared_service_execution(
         ],
     )
     change = AsyncMock(return_value=outcome)
-    monkeypatch.setattr(service, "change_group", change)
+    monkeypatch.setattr(service.management, "change_group", change)
     result = asyncio.run(getattr(service.management, command)("group_example"))
     assert result == outcome
     change.assert_awaited_once_with("group_example", action)

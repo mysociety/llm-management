@@ -47,8 +47,8 @@ curl 'http://localhost:8000/endpoint/foi/immigration_detection/clef?deployment=c
 # {"classification":"IMM"}
 ```
 
-Both endpoints use normal server authentication and `ensure_running`, which
-updates the shared idle timer. Unknown deployment slugs return 404; transport
+Both endpoints use normal server authentication and explicit `use()` leases, which
+update the shared idle timer. Unknown deployment slugs return 404; transport
 failures return 503 and timeouts return 504. The immigration endpoint returns
 502 for upstream errors or malformed classifications. The original
 `/endpoint/foi/immigration_detection?deployment=toast_llama` remains available.

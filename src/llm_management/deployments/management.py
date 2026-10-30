@@ -8,18 +8,32 @@ warms a local model or starts a remote deployment.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 from pydantic import BaseModel
 
-from ..inference.resources import ResourceStatus
-from .errors import DeploymentServiceError
+from ..inference.resources import LocalResource, ResourceStatus
+from .errors import DeploymentServiceError, LLMManagementError
 from .slugs import is_group_slug
-from .types import GroupActionOutcome, GroupWarmUpResponse, WarmUpResponse
+from .types import (
+    GroupActionMemberOutcome,
+    GroupActionOutcome,
+    GroupMemberResult,
+    GroupWarmUpResponse,
+    WarmUpAction,
+    WarmUpResponse,
+)
 
 if TYPE_CHECKING:
     from .service import DeploymentService
+
+
+logger = logging.getLogger(__name__)
+MemberOutcome = TypeVar("MemberOutcome")
 
 
 class DeploymentStatusResponse(BaseModel):
@@ -67,8 +81,8 @@ class DeploymentManagement:
     Application-scoped management operations backed by one deployment service.
 
     Direct callers use the same commands, validation and results as HTTP routes.
-    Group execution remains in the service so its existing public methods keep
-    working. No models or cloud controllers are constructed by this wrapper.
+    Single-resource and group commands share result construction here. The service
+    owns resource execution and leases. Binding this facade constructs no backends.
     """
 
     def __init__(self, service: DeploymentService) -> None:
@@ -88,15 +102,21 @@ class DeploymentManagement:
                 raise DeploymentServiceError(
                     status_code=422, detail="Groups do not support replica overrides."
                 )
-            return await self.service.ensure_group(slug)
-        return await self.service.ensure_deployment(slug, replicas)
+            return await self.warm_up_group(slug)
+        return await self.warm_up_resource(slug, replicas)
 
     async def stop(self, slug: str) -> ScaleToZeroResponse | GroupActionOutcome:
         """
         Stop one resource or all group members, preserving per-member failures.
         """
         if is_group_slug(slug):
-            return await self.service.change_group(slug, "scale-to-zero")
+            return await self.change_group(slug, "scale-to-zero")
+        return await self.stop_resource(slug)
+
+    async def stop_resource(self, slug: str) -> ScaleToZeroResponse:
+        """
+        Stop one resource and describe the completed action.
+        """
         await self.service.scale_to_zero(slug)
         return ScaleToZeroResponse(slug=slug, action="scaled_to_zero")
 
@@ -105,12 +125,145 @@ class DeploymentManagement:
         Shorten idle timers without interrupting work or immediately stopping models.
         """
         if is_group_slug(slug):
-            return await self.service.change_group(slug, "cool-down")
+            return await self.change_group(slug, "cool-down")
+        return await self.cool_down_resource(slug)
+
+    async def cool_down_resource(self, slug: str) -> CoolDownResponse:
+        """
+        Shorten one idle timer and describe whether the resource was already stopped.
+        """
         remaining = await self.service.cooldown(slug)
         return CoolDownResponse(
             slug=slug,
             action="already_stopped" if remaining is None else "cooling_down",
             seconds_until_scale_to_zero=remaining,
+        )
+
+    async def warm_up_resource(
+        self, slug: str, replicas: int | None = None
+    ) -> WarmUpResponse:
+        """
+        Warm one configured resource and report the resulting management action.
+
+        Local guards return a warmed outcome with no replica count and reject explicit
+        replicas. Remote outcomes distinguish creation, resumption, resizing and an
+        already-running deployment using its prior cached status.
+        """
+        target = self.service.resolve_resource(slug)
+        if isinstance(target, LocalResource):
+            if replicas is not None:
+                raise DeploymentServiceError(
+                    status_code=422, detail="Local resources do not support replicas."
+                )
+            await self.service.warmup_local(target)
+            return WarmUpResponse(slug=slug, action=WarmUpAction.WARMED, replicas=None)
+        backend = self.service.get_backend(slug)
+        previous = await asyncio.to_thread(self.service.status.ensure, backend)
+        running = await self.service.prepare(slug, allow_start=True, replicas=replicas)
+        actual = running.state.replicas
+        if previous.replicas > 0:
+            if replicas is not None and previous.replicas != replicas:
+                action = WarmUpAction.SCALED
+            else:
+                action = WarmUpAction.ALREADY_RUNNING
+        elif previous.exists:
+            action = WarmUpAction.RESUMED
+        else:
+            action = WarmUpAction.CREATED
+        return WarmUpResponse(slug=slug, action=action, replicas=actual)
+
+    async def run_group(
+        self, slug: str, operation: Callable[[str], Awaitable[MemberOutcome]]
+    ) -> list[MemberOutcome]:
+        """
+        Resolve a group once and execute members concurrently in configured order.
+
+        Each operation defines its own public failure result. Keeping that policy
+        in the operation preserves the distinct warm-up and lifecycle error contracts.
+        """
+        try:
+            group = self.service.catalog.get_group(slug)
+        except LLMManagementError as exc:
+            raise DeploymentServiceError(
+                status_code=404, detail=f"Deployment group '{slug}' not found"
+            ) from exc
+        return list(
+            await asyncio.gather(*(operation(member) for member in group.deployments))
+        )
+
+    async def warm_up_group(self, slug: str) -> GroupWarmUpResponse:
+        """
+        Warm all group members concurrently and report their individual outcomes.
+
+        Members may be local or remote. Preserve configured order in the result and
+        report failures without rolling back successful members. Hide arbitrary loading
+        exception messages; overall success requires every member to succeed.
+        """
+
+        async def ensure_member(member: str) -> GroupMemberResult:
+            """
+            Capture one member's failure without cancelling its successful peers.
+            """
+            try:
+                replicas = await self.service.warmup_resource(member)
+                return GroupMemberResult(slug=member, success=True, replicas=replicas)
+            except Exception as exc:
+                logger.warning(
+                    "Group ensure failed for %s: %s", member, type(exc).__name__
+                )
+                return GroupMemberResult(
+                    slug=member, success=False, error="Resource could not be warmed"
+                )
+
+        members = await self.run_group(slug, ensure_member)
+        return GroupWarmUpResponse(
+            slug=slug,
+            success=all(member.success for member in members),
+            deployments=members,
+        )
+
+    async def change_group(
+        self, slug: str, action: Literal["cool-down", "scale-to-zero"]
+    ) -> GroupActionOutcome:
+        """
+        Apply a lifecycle action concurrently, preserving per-member failures.
+        """
+
+        async def change_member(member: str) -> GroupActionMemberOutcome:
+            try:
+                match action:
+                    case "cool-down":
+                        result = await self.cool_down_resource(member)
+                        return GroupActionMemberOutcome(
+                            slug=member,
+                            success=True,
+                            action=result.action,
+                            seconds_until_scale_to_zero=result.seconds_until_scale_to_zero,
+                        )
+                    case "scale-to-zero":
+                        stopped = await self.stop_resource(member)
+                        return GroupActionMemberOutcome(
+                            slug=member,
+                            success=True,
+                            action=stopped.action,
+                        )
+            except DeploymentServiceError as exc:
+                return GroupActionMemberOutcome(
+                    slug=member, success=False, error=exc.detail
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Group %s failed for %s: %s", action, member, type(exc).__name__
+                )
+                return GroupActionMemberOutcome(
+                    slug=member, success=False, error="Resource lifecycle action failed"
+                )
+
+        members = await self.run_group(slug, change_member)
+        return GroupActionOutcome(
+            slug=slug,
+            success=all(member.success for member in members),
+            deployments=members,
         )
 
     def status(self, slug: str) -> DeploymentStatusResponse:

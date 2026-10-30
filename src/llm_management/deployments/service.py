@@ -11,9 +11,9 @@ import asyncio
 import logging
 import threading
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, Literal, TypeVar
+from typing import Any
 
 from ..inference.errors import ClassifierBusy, ClassifierUnavailable
 from ..inference.resources import LocalResource, ResourceRegistry, ResourceStatus
@@ -26,18 +26,10 @@ from .management import DeploymentManagement
 from .status import DeploymentStatusCache
 from .types import (
     DeploymentSnapshot,
-    GroupActionMemberOutcome,
-    GroupActionOutcome,
-    GroupMemberResult,
-    GroupWarmUpResponse,
     RunningDeployment,
-    WarmUpAction,
-    WarmUpResponse,
 )
 
 logger = logging.getLogger(__name__)
-
-MemberOutcome = TypeVar("MemberOutcome")
 
 
 class DeploymentService:
@@ -282,12 +274,12 @@ class DeploymentService:
         """
         target = self.resolve_resource(name)
         if isinstance(target, LocalResource):
-            await self._warmup_local(target)
+            await self.warmup_local(target)
             return None
         running = await self.prepare(target.slug, allow_start=True)
         return running.state.replicas
 
-    async def _warmup_local(self, resource: LocalResource[Any]) -> None:
+    async def warmup_local(self, resource: LocalResource[Any]) -> None:
         """
         Load a resolved guard with the shared public warm-up error contract.
         """
@@ -373,131 +365,6 @@ class DeploymentService:
                 await asyncio.to_thread(backend.scale_to_zero)
             except Exception:
                 logger.exception("Failed to scale %s to zero on shutdown.", state.slug)
-
-    async def ensure_deployment(
-        self, slug: str, replicas: int | None = None
-    ) -> WarmUpResponse:
-        """
-        Warm one configured resource and report the resulting management action.
-
-        Local guards return a warmed outcome with no replica count and reject explicit
-        replicas. Remote outcomes distinguish creation, resumption, resizing and an
-        already-running deployment using its prior cached status.
-        """
-        target = self.resolve_resource(slug)
-        if isinstance(target, LocalResource):
-            if replicas is not None:
-                raise DeploymentServiceError(
-                    status_code=422, detail="Local resources do not support replicas."
-                )
-            await self._warmup_local(target)
-            return WarmUpResponse(slug=slug, action=WarmUpAction.WARMED, replicas=None)
-        backend = self.get_backend(slug)
-        previous = await asyncio.to_thread(self.status.ensure, backend)
-        running = await self.prepare(slug, allow_start=True, replicas=replicas)
-        actual = running.state.replicas
-        if previous.replicas > 0:
-            if replicas is not None and previous.replicas != replicas:
-                action = WarmUpAction.SCALED
-            else:
-                action = WarmUpAction.ALREADY_RUNNING
-        elif previous.exists:
-            action = WarmUpAction.RESUMED
-        else:
-            action = WarmUpAction.CREATED
-        return WarmUpResponse(slug=slug, action=action, replicas=actual)
-
-    async def run_group(
-        self, slug: str, operation: Callable[[str], Awaitable[MemberOutcome]]
-    ) -> list[MemberOutcome]:
-        """
-        Resolve a group once and execute members concurrently in configured order.
-
-        Each operation defines its own public failure result. Keeping that policy
-        in the operation preserves the distinct warm-up and lifecycle error contracts.
-        """
-        try:
-            group = self.catalog.get_group(slug)
-        except LLMManagementError as exc:
-            raise DeploymentServiceError(
-                status_code=404, detail=f"Deployment group '{slug}' not found"
-            ) from exc
-        return list(
-            await asyncio.gather(*(operation(member) for member in group.deployments))
-        )
-
-    async def ensure_group(self, slug: str) -> GroupWarmUpResponse:
-        """
-        Warm all group members concurrently and report their individual outcomes.
-
-        Members may be local or remote. Preserve configured order in the result and
-        report failures without rolling back successful members. Hide arbitrary loading
-        exception messages; overall success requires every member to succeed.
-        """
-
-        async def ensure_member(member: str) -> GroupMemberResult:
-            """
-            Capture one member's failure without cancelling its successful peers.
-            """
-            try:
-                replicas = await self.warmup_resource(member)
-                return GroupMemberResult(slug=member, success=True, replicas=replicas)
-            except Exception as exc:
-                logger.warning(
-                    "Group ensure failed for %s: %s", member, type(exc).__name__
-                )
-                return GroupMemberResult(
-                    slug=member, success=False, error="Resource could not be warmed"
-                )
-
-        members = await self.run_group(slug, ensure_member)
-        return GroupWarmUpResponse(
-            slug=slug,
-            success=all(member.success for member in members),
-            deployments=members,
-        )
-
-    async def change_group(
-        self, slug: str, action: Literal["cool-down", "scale-to-zero"]
-    ) -> GroupActionOutcome:
-        """
-        Apply a lifecycle action concurrently, preserving per-member failures.
-        """
-
-        async def change_member(member: str) -> GroupActionMemberOutcome:
-            try:
-                if action == "cool-down":
-                    remaining = await self.cooldown(member)
-                    return GroupActionMemberOutcome(
-                        slug=member,
-                        success=True,
-                        action="already_stopped"
-                        if remaining is None
-                        else "cooling_down",
-                        seconds_until_scale_to_zero=remaining,
-                    )
-                await self.scale_to_zero(member)
-                return GroupActionMemberOutcome(
-                    slug=member, success=True, action="scaled_to_zero"
-                )
-            except DeploymentServiceError as exc:
-                return GroupActionMemberOutcome(
-                    slug=member, success=False, error=exc.detail
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Group %s failed for %s: %s", action, member, type(exc).__name__
-                )
-                return GroupActionMemberOutcome(
-                    slug=member, success=False, error="Resource lifecycle action failed"
-                )
-
-        members = await self.run_group(slug, change_member)
-        return GroupActionOutcome(
-            slug=slug,
-            success=all(member.success for member in members),
-            deployments=members,
-        )
 
     async def ensure_local(self, name: str) -> ResourceStatus:
         """

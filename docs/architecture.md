@@ -291,7 +291,9 @@ status snapshots directly. A slow cloud refresh cannot overwrite a live lease,
 and status eviction does not remove activity.
 
 Status and activity are separate records throughout the application. Seeding or
-refreshing status cannot replace live activity. Both dependencies remain cold.
+refreshing status cannot replace live activity. Management owns single-resource and
+group command interpretation, typed outcomes and ordered group results; the service
+owns execution, locks, leases and shutdown. HTTP state stores only the application.
 
 ### Response-analysis dependencies
 

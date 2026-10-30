@@ -97,7 +97,9 @@ def test_http_dependencies_use_the_serving_application(monkeypatch):
                 slug=label, action=WarmUpAction.WARMED, replicas=1
             )
         )
-        monkeypatch.setattr(application.deployments, "ensure_deployment", call)
+        monkeypatch.setattr(
+            application.deployments.management, "warm_up_resource", call
+        )
         calls.append(call)
 
     # No lifespan needed: mocked lifecycle actions never load resources.
