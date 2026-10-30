@@ -25,7 +25,7 @@ pytestmark = pytest.mark.external
 
 
 @pytest.fixture(scope="session")
-def client() -> Iterator[TestClient]:
+def client(external_test_run: str) -> Iterator[TestClient]:
     with TestClient(create_app(runtime=assemble_runtime())) as c:
         resp = c.post(f"/deployments/{DEPLOYMENT}/warm-up")
         resp.raise_for_status()

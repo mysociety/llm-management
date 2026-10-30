@@ -13,7 +13,7 @@ pytestmark = pytest.mark.external
 
 
 @pytest.fixture(scope="module")
-def client():
+def client(external_test_run: str):
     # App shutdown scales deployments touched by this client back to zero.
     with TestClient(create_app(runtime=assemble_runtime())) as test_client:
         yield test_client
