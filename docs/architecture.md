@@ -292,11 +292,8 @@ lease counts and startup/scaling locks. Preparation, management and cleanup read
 status snapshots directly. A slow cloud refresh cannot overwrite a live lease,
 and status eviction does not remove activity.
 
-`service.cache` lazily provides the older `DeploymentCache` adapter when requested.
-It combines status and activity into detached `DeploymentState` views, delegates
-legacy activity methods, and supports explicit seeding with `cache.set(state)`.
-The older positional service constructor accepting a cache remains supported;
-new assembly injects status and activity directly. All forms remain cold.
+Status and activity are separate records throughout the application. Seeding or
+refreshing status cannot replace live activity. Both dependencies remain cold.
 
 ### Response-analysis dependencies
 

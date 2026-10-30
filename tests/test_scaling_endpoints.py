@@ -12,11 +12,11 @@ import pytest
 from starlette.testclient import TestClient
 
 from llm_management import server
-from llm_management.deployments.cache import DeploymentCache
 from llm_management.deployments.config import ExoscaleDeploymentConfig
 from llm_management.deployments.errors import DeploymentServiceError
 from llm_management.deployments.managed import ManagedDeployment
-from llm_management.deployments.types import DeploymentState
+from llm_management.deployments.status import DeploymentStatusCache
+from llm_management.deployments.types import DeploymentActivity, DeploymentSnapshot
 from llm_management.inference.resources import LocalResource, ResourceRegistry
 
 
@@ -69,8 +69,8 @@ def deployment(monkeypatch):
     monkeypatch.setattr(
         server.app.state.application.deployments, "resources", ResourceRegistry()
     )
-    cache = DeploymentCache()
-    monkeypatch.setattr(server.app.state.application.deployments, "cache", cache)
+    cache = DeploymentStatusCache()
+    monkeypatch.setattr(server.app.state.application.deployments, "status", cache)
     return TestClient(server.app), cfg, cloud, client, cache
 
 
@@ -147,28 +147,47 @@ def test_cooldown_shortens_timer_and_traffic_resets_it(
 ):
     http, _, _, client, cache = deployment
     monkeypatch.setattr(time, "time", lambda: 10_000.0)
-    state = DeploymentState(
+    state = DeploymentSnapshot(
         slug="test",
         exists=True,
         replicas=2,
         last_refreshed=10_000,
-        last_request_time=0 if remaining is None else 10_000 - 900 + remaining,
     )
     cache.set(state)
+    server.app.state.application.deployments.activity.set(
+        "test",
+        DeploymentActivity(
+            last_request_time=0 if remaining is None else 10_000 - 900 + remaining,
+        ),
+    )
     response = http.post("/deployments/test/cool-down")
     assert response.status_code == 200
     expected = 60 if remaining is None else max(0, min(60, remaining))
     assert response.json()["seconds_until_scale_to_zero"] == expected
-    assert 900 - (10_000 - cache.activity.get("test").last_request_time) <= 60
+    assert (
+        900
+        - (
+            10_000
+            - server.app.state.application.deployments.activity.get(
+                "test"
+            ).last_request_time
+        )
+        <= 60
+    )
     client.scale_deployment.assert_not_called()
-    cache.touch("test")
-    assert cache.activity.get("test").last_request_time == 10_000
+    server.app.state.application.deployments.activity.touch("test")
+    assert (
+        server.app.state.application.deployments.activity.get("test").last_request_time
+        == 10_000
+    )
 
 
 @pytest.mark.parametrize("exists", [False, True])
 def test_cooldown_stopped_deployment_does_not_start_it(deployment, exists):
     http, _, _, client, cache = deployment
-    cache.set(DeploymentState(slug="test", exists=exists, last_refreshed=time.time()))
+    cache.set(
+        DeploymentSnapshot(slug="test", exists=exists, last_refreshed=time.time())
+    )
     response = http.post("/deployments/test/cool-down")
     assert response.json()["action"] == "already_stopped"
     assert response.json()["seconds_until_scale_to_zero"] is None
@@ -178,18 +197,22 @@ def test_cooldown_stopped_deployment_does_not_start_it(deployment, exists):
 def test_cooldown_rejects_active_requests(deployment):
     http, _, _, _, cache = deployment
     cache.set(
-        DeploymentState(
+        DeploymentSnapshot(
             slug="test",
             exists=True,
             replicas=1,
-            requests_in_flight=1,
             last_refreshed=time.time(),
-            last_request_time=time.time(),
         )
     )
-    before = cache.get("test").last_request_time
+    server.app.state.application.deployments.activity.begin_request("test")
+    before = server.app.state.application.deployments.activity.get(
+        "test"
+    ).last_request_time
     assert http.post("/deployments/test/cool-down").status_code == 409
-    assert cache.get("test").last_request_time == before
+    assert (
+        server.app.state.application.deployments.activity.get("test").last_request_time
+        == before
+    )
 
 
 @pytest.mark.parametrize("elapsed,stopped", [(59, False), (61, True)])

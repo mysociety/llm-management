@@ -85,15 +85,6 @@ class DeploymentSnapshot(BaseModel):
     last_refreshed: float = 0.0
 
 
-class DeploymentState(DeploymentSnapshot, DeploymentActivity):
-    """
-    Compatibility view combining cloud status and application activity.
-
-    Cache reads return detached values. Use the activity tracker to update leases
-    or idle timers; cloud refreshes update only DeploymentSnapshot records.
-    """
-
-
 class RunningDeployment(NamedTuple):
     """
     Configuration and observed connection/status for a prepared deployment.

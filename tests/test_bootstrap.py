@@ -55,7 +55,7 @@ def test_separate_catalogs_and_registries_warm_their_own_checkpoint(monkeypatch)
     second_application = assemble_application(second, second_registry)
     first_service = first_application.deployments
     second_service = second_application.deployments
-    assert first_service.cache is not second_service.cache
+    assert first_service.status is not second_service.status
     assert first_registry.all() == second_registry.all() == []
 
     # Replace actual artifact loading, retaining the real factory and owner path.
