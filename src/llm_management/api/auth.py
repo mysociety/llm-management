@@ -18,7 +18,7 @@ bearer_auth = HTTPBearer(
     scheme_name="BearerAuth",
     description=(
         "Enter a token value from AUTH_TOKENS, without the Bearer prefix. "
-        "Authentication is optional when AUTH_TOKENS is empty."
+        "Local testing without tokens requires ALLOW_UNAUTHENTICATED=true."
     ),
     auto_error=False,
 )
@@ -34,7 +34,9 @@ async def require_bearer_auth_when_enabled(
 
     Health and API documentation routes are always public.
     """
-    if request.url.path in PUBLIC_PATHS or not settings.auth_tokens:
+    if request.url.path in PUBLIC_PATHS or (
+        not settings.auth_tokens and settings.allow_unauthenticated
+    ):
         return await call_next(request)
 
     auth_header = request.headers.get("authorization", "")

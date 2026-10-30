@@ -28,10 +28,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Run idle cleanup and release the app's resources on shutdown.
     """
     if not settings.auth_tokens:
+        if not settings.allow_unauthenticated:
+            raise RuntimeError(
+                "AUTH_TOKENS must be configured. For local testing only, "
+                "set ALLOW_UNAUTHENTICATED=true."
+            )
         logger.warning(
-            "AUTH_TOKENS is empty — the server API is open to unauthenticated "
-            "requests. Ensure this instance is protected at the network level "
-            "before exposing it to internet traffic."
+            "ALLOW_UNAUTHENTICATED is enabled with no AUTH_TOKENS. "
+            "The API accepts unauthenticated requests; use only for local testing."
         )
     async with app.state.runtime:
         yield

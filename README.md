@@ -18,7 +18,8 @@ Set the following via environment variables or a `.env` file in the working dire
 - `EXOSCALE_API_KEY` — Your Exoscale API key
 - `EXOSCALE_API_SECRET` — Your Exoscale API secret
 - `EXOSCALE_SERVER_ROLE` — Role suffix appended to deployment names on Exoscale (e.g. `test`, `production`). Defaults to `test`
-- `AUTH_TOKENS` — Optional JSON mapping of client names to bearer tokens. Defaults to an empty mapping (no auth)
+- `AUTH_TOKENS` — JSON mapping of client names to bearer tokens. Required to start the HTTP server unless local testing is explicitly enabled.
+- `ALLOW_UNAUTHENTICATED` — Defaults to `false`. Set to `true` only for local testing with an empty `AUTH_TOKENS` mapping.
 - `COMPUTE_STATE_DIR` — Persistent directory for Compute manifests and private SSH keys; defaults to `.state/compute`
 
 ### Deployment config
@@ -129,15 +130,29 @@ The server provides interactive API docs at the root URL (`/`).
 
 ### Server authentication
 
-If `AUTH_TOKENS` is an empty JSON object, the FastAPI server does not require authentication.
+The HTTP server refuses to start with an empty `AUTH_TOKENS` mapping unless
+`ALLOW_UNAUTHENTICATED=true` is explicitly set. CLI cloud-management commands
+do not require HTTP authentication settings.
 
-If the mapping contains any items, API requests must include a token from the mapping:
+For testing without tokens, explicitly set these values in `.env`:
+
+```dotenv
+AUTH_TOKENS={}
+ALLOW_UNAUTHENTICATED=true
+```
+
+`ALLOW_UNAUTHENTICATED` defaults to `false`. This setting controls authentication
+only; the existing bind addresses and Docker port mappings are unchanged.
+
+If the mapping contains any items, API requests must include a token from the mapping,
+even when the testing flag is enabled:
 
 ```bash
 AUTH_TOKENS='{"analysis-service":"token-one","admin-tool":"token-two"}'
 ```
 
 Give each client its own clearly named token so it can be revoked independently.
+All tokens intentionally have the same inference and management permissions.
 Generate with `openssl rand -hex 32`
 
 ```http
@@ -246,8 +261,12 @@ The compose setup loads environment variables from `.env`:
 EXOSCALE_API_KEY=your_key
 EXOSCALE_API_SECRET=your_secret
 SERVER_ROLE=test
-AUTH_TOKENS={}
+AUTH_TOKENS={"production-client":"replace-with-a-generated-token"}
+ALLOW_UNAUTHENTICATED=false
 ```
+
+For testing without tokens, use `AUTH_TOKENS={}` and explicitly set
+`ALLOW_UNAUTHENTICATED=true` in `.env`. Compose publishes `8080:8080` as before.
 
 ### 2. Build and start
 
@@ -372,7 +391,8 @@ source text is limited to 100,000 characters, and combined model-input text to
 200,000 characters. Model token budgets still apply.
 
 Configured authentication token values must be nonblank ASCII strings. An empty
-`AUTH_TOKENS` mapping retains the existing unauthenticated mode.
+`AUTH_TOKENS` mapping requires the explicit `ALLOW_UNAUTHENTICATED=true` local
+testing opt-in; otherwise HTTP startup fails.
 
 The proxy rejects dot segments, backslashes and residual percent encoding in its
 path before starting a deployment. Query parameters remain supported.
