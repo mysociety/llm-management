@@ -87,7 +87,7 @@ def create_app(
         )
 
     @app.get("/health", include_in_schema=False)
-    def health() -> dict[str, str]:
+    async def health() -> dict[str, str]:
         """
         Report that the API process is running.
         """
