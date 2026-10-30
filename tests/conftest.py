@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Generator
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
 if TYPE_CHECKING:
+    from llm_management.bootstrap import Application
     from llm_management.deployments.catalog import DeploymentCatalog
+    from llm_management.foi.backends import FOIResources
+    from llm_management.sanitization import PresidioSanitizer
 
 
 class FakeAnalyzer:
@@ -29,13 +33,32 @@ class FakeAnalyzer:
         return results
 
 
-@pytest.fixture(autouse=True)
-def local_presidio_for_unit_tests(monkeypatch, request):
-    if request.node.get_closest_marker("external"):
-        return
-    from llm_management.bootstrap import default_application
+@pytest.fixture
+def sanitizer() -> Generator[PresidioSanitizer, None, None]:
+    """
+    Provide an isolated sanitizer with deterministic recognizers and no model loads.
+    """
+    from llm_management.sanitization import PresidioSanitizer
 
-    monkeypatch.setattr(default_application().sanitizer(), "_analyzer", FakeAnalyzer())
+    owner = PresidioSanitizer()
+    owner._analyzer = FakeAnalyzer()
+    yield owner
+    owner.resource.release()
+
+
+@pytest.fixture
+def application() -> Generator[Application, None, None]:
+    """
+    Assemble an isolated runtime and close its resources after the test.
+    """
+    import asyncio
+
+    from llm_management.bootstrap import assemble_application
+
+    runtime = assemble_application()
+    runtime.sanitizer()._analyzer = FakeAnalyzer()
+    yield runtime
+    asyncio.run(runtime.close())
 
 
 @pytest.fixture(autouse=True)
@@ -52,11 +75,11 @@ def isolated_application(monkeypatch, request):
 
 
 @pytest.fixture
-def foi_resources():
-    """Explicit FOI providers with the unit-test sanitizer and categories disabled."""
-    from llm_management.bootstrap import default_application
-
-    return default_application().foi.model_copy(update={"category_matcher": None})
+def foi_resources(application: Application) -> FOIResources:
+    """
+    Explicit FOI providers with the unit-test sanitizer and categories disabled.
+    """
+    return application.foi.model_copy(update={"category_matcher": None})
 
 
 @pytest.fixture

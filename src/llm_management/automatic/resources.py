@@ -19,7 +19,6 @@ from ..inference.logistic_v1 import (
 )
 from ..inference.resources import LocalResource, ResourceRegistry
 from ..settings import settings
-from .pipeline import Encoder
 
 GATE_CUTOFF = 0.4292739638892871
 POLICY_SHA256 = "47195de9b4cc57368a02b777dfc53dcb02a7c57c7de89f0f9cd5499b2f146d69"
@@ -131,15 +130,6 @@ class LogisticDetector:
         self.cascade = self.standalone = None
 
 
-def logistic_detector() -> LogisticDetector:
-    """
-    Return the default application's retained resource owner without loading it.
-    """
-    from ..bootstrap import default_application
-
-    return default_application().automatic.logistic_provider()
-
-
 def create_encoder_detector(
     config: AutoClassifierDeployment,
     *,
@@ -168,12 +158,3 @@ def create_encoder_detector(
         registry=registry,
     )
     return encoder
-
-
-def encoder_detector() -> Encoder:
-    """
-    Return the default application's retained resource owner without loading it.
-    """
-    from ..bootstrap import default_application
-
-    return default_application().automatic.encoder_provider()

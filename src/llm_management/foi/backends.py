@@ -16,7 +16,7 @@ from typing import Any, NamedTuple
 
 from pydantic import BaseModel, ConfigDict
 
-from ..deployments import get_catalog, resource_types
+from ..deployments import resource_types
 from ..deployments.catalog import DeploymentCatalog
 from ..deployments.local_config import (
     QuestionSliceHeadDeployment,
@@ -236,24 +236,6 @@ def create_question_classifier(
     )
 
 
-def question_classification_head() -> ModernBertClassificationHead:
-    """
-    Return the default application's retained resource owner without loading it.
-    """
-    from ..bootstrap import default_application
-
-    return default_application().foi.head()
-
-
-def question_classifier() -> LocalSequenceClassifier:
-    """
-    Return the default application's retained resource owner without loading it.
-    """
-    from ..bootstrap import default_application
-
-    return default_application().foi.classifier()
-
-
 class FOIResources(BaseModel):
     """
     Cold model providers supplied by the application assembly.
@@ -329,7 +311,7 @@ async def classify_question_units(
     *,
     backend: ExtractionBackend,
     deployments: DeploymentInference,
-    resources: FOIResources | None = None,
+    resources: FOIResources,
 ) -> ClassificationRows:
     """
     Classify attested contextual text using CPU weights or remote encoder embeddings.
@@ -340,9 +322,7 @@ async def classify_question_units(
     revision because repository-name serving does not establish its weight SHA.
     """
     clean_texts = require_sanitized(texts)
-    classifier = (
-        resources.classifier() if resources is not None else question_classifier()
-    )
+    classifier = resources.classifier()
     if backend == "cpu":
         rows = await asyncio.to_thread(classifier.classify, clean_texts)
         return ClassificationRows(rows, classifier.model_name, classifier.revision)
@@ -353,9 +333,9 @@ async def classify_question_units(
     await asyncio.to_thread(classifier.validate_inputs, clean_texts)
     # The managed gateway exposes embeddings, so the trained head runs locally.
     # A custom Compute template could serve the encoder and head together.
-    head = resources.head() if resources is not None else question_classification_head()
+    head = resources.head()
     await asyncio.to_thread(head.load)
-    catalog = resources.catalog if resources is not None else get_catalog()
+    catalog = resources.catalog
     slug = catalog.require_foi().extraction_deployment
     cfg = deployments.get_config(slug)
     if cfg.model != classifier.model_name:

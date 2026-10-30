@@ -90,10 +90,11 @@ retains their guards for warm-up, status and unloading. Both refer to the same
 resource. Tokenizer factories are a smaller variant: their callbacks hold cached
 state, and the returned `LocalResource` itself serves as the provider's owner.
 
-Public convenience calls outside an API app use one process-local default
-assembly. Standalone model-controller constructors use a private guard unless
-given a registry. Pass explicit application dependencies when processing batches
-or testing independent configurations.
+HTTP startup, batch entry points and test fixtures assemble their application.
+Feature functions receive the specific resources, providers or deployment client
+they need; they never look up a process-wide application. Batch callers use
+`async with assemble_application() as application` to own startup and shutdown.
+Tests can instead supply small provider or sanitizer doubles for isolated behaviour.
 
 The service coordinates locks, activity, startup cancellation, warm-up, scaling and
 shutdown. Managed and Compute backends implement the same lifecycle interface;
@@ -299,9 +300,7 @@ new assembly injects status and activity directly. All forms remain cold.
 
 ### Response-analysis dependencies
 
-`analyze_response()` resolves its application dependencies once. Direct callers can
-omit both `resources` and `deployments` to use the default application, or supply
-both to use an explicitly assembled runtime. Supplying only one is rejected to
-avoid mixing applications. An optional sanitizer overrides that runtime's sanitizer.
-The internal `predict()` operation requires explicit dependencies and retains the
+`analyze_response()` requires `resources` and `deployments` from its caller.
+An optional sanitizer overrides the resource container's sanitizer. The internal
+`predict()` operation also requires explicit dependencies and retains the
 sanitized-input check, checkpoint validation, remote lease and output validation.

@@ -97,15 +97,6 @@ class LogisticDetector:
             return predict_binary(raw_text, self.load())
 
 
-def logistic_detector() -> LogisticDetector:
-    """
-    Return the default application's retained resource owner without loading it.
-    """
-    from ..bootstrap import default_application
-
-    return default_application().sar.logistic_provider()
-
-
 def create_deberta_detector(
     config: SARClassifierDeployment,
     *,
@@ -133,12 +124,3 @@ def create_deberta_detector(
         resource_name=config.slug,
         registry=registry,
     )
-
-
-def deberta_detector() -> SARSequenceClassifier:
-    """
-    Return the default application's retained resource owner without loading it.
-    """
-    from ..bootstrap import default_application
-
-    return default_application().sar.encoder_provider()

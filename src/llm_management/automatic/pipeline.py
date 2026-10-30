@@ -109,15 +109,6 @@ class AutoDetector:
         return unresolved("deberta", reason, cpu.positive_score)
 
 
-async def detect_automatic(body: str, fast: bool = False) -> AutomaticResult:
-    """
-    Classify through the process-local default assembly for direct callers.
-    """
-    from ..bootstrap import default_application
-
-    return await default_application().automatic.detect(body, fast)
-
-
 class AutomaticClassifier:
     """
     Application-owned admission capacity and cold model providers.

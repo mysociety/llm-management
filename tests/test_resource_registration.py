@@ -41,7 +41,7 @@ def test_catalog_schema_serialization_and_all_registrations_agree():
 
 
 def test_fresh_process_keeps_catalog_and_assembly_cold():
-    # The suite's default application fixture already imports owners. A fresh
+    # Other tests and application fixtures may already import owners. A fresh
     # interpreter catches accidental eager imports, including library side effects.
     script = """
 import builtins

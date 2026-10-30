@@ -348,58 +348,27 @@ def test_enriched_questions_chain_to_response_status(
         )
 
 
-@pytest.mark.parametrize("explicit", [False, True])
-def test_response_dependencies_resolve_once(body, output, monkeypatch, explicit):
+def test_response_uses_supplied_application(body, output, monkeypatch, application):
     import asyncio
     from unittest.mock import Mock
 
     from llm_management import bootstrap
     from llm_management.foi.response_schemas import ResponseAnalysisInput
 
-    application = bootstrap.default_application()
-    default = Mock(
-        return_value=application,
-        side_effect=AssertionError("Explicit dependencies must stay isolated")
-        if explicit
-        else None,
-    )
-    monkeypatch.setattr(bootstrap, "default_application", default)
+    assemble = Mock(side_effect=AssertionError("Must use the supplied runtime"))
+    monkeypatch.setattr(bootstrap, "assemble_application", assemble)
     predict = AsyncMock(return_value=ExtractionOutput.model_validate(output))
     monkeypatch.setattr(response_analysis, "predict", predict)
-    kwargs = (
-        {"resources": application.foi, "deployments": application.deployments}
-        if explicit
-        else {}
-    )
+    sanitizer = Mock(wraps=application.sanitizer())
     asyncio.run(
         response_analysis.analyze_response(
-            ResponseAnalysisInput.model_validate(body), **kwargs
+            ResponseAnalysisInput.model_validate(body),
+            resources=application.foi,
+            deployments=application.deployments,
+            sanitizer=sanitizer,
         )
     )
-    assert default.call_count == (0 if explicit else 1)
+    assemble.assert_not_called()
+    sanitizer.sanitize_strings.assert_called_once()
     assert predict.call_args.kwargs["resources"] is application.foi
     assert predict.call_args.kwargs["deployments"] is application.deployments
-
-
-@pytest.mark.parametrize("dependency", ["resources", "deployments"])
-def test_response_rejects_partial_application_dependencies(
-    body, monkeypatch, dependency
-):
-    import asyncio
-    from unittest.mock import Mock
-
-    from llm_management import bootstrap
-    from llm_management.foi.response_schemas import ResponseAnalysisInput
-
-    default = Mock(side_effect=AssertionError("Must not resolve a second application"))
-    monkeypatch.setattr(bootstrap, "default_application", default)
-    predict = AsyncMock()
-    monkeypatch.setattr(response_analysis, "predict", predict)
-    with pytest.raises(ValueError, match="Supply resources and deployments together"):
-        asyncio.run(
-            response_analysis.analyze_response(
-                ResponseAnalysisInput.model_validate(body), **{dependency: Mock()}
-            )
-        )
-    default.assert_not_called()
-    predict.assert_not_called()

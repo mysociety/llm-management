@@ -17,11 +17,10 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from ..deployments import get_catalog
-from ..deployments.catalog import DeploymentCatalog
+from ..deployments.catalog import DeploymentCatalog, TopicBudget
 from ..deployments.local_config import TopicTokenizerDeployment
 from ..inference.resources import LocalResource, ResourceRegistry
-from ..sanitization import Sanitized, presidio, require_sanitized
+from ..sanitization import Sanitized, require_sanitized
 from ..sanitization.contracts import ChatSanitizer
 from ..settings import settings
 from .schemas import GeneratedTopicOutput, ReconstructedQuestion, TopicOutput
@@ -110,16 +109,13 @@ def topic_model(model: str, client: AsyncOpenAI) -> QuestionTopicChatModel:
     )
 
 
-def completion_budget(
-    question_count: int, *, catalog: DeploymentCatalog | None = None
-) -> int:
+def completion_budget(question_count: int, *, topic: TopicBudget) -> int:
     """
-    Calculate per-question output allowance within the configured deployment limit.
+    Calculate per-question output allowance from the explicitly supplied topic budget.
 
     Reject zero questions and requests exceeding the limit rather than truncating
     model output or silently reducing the per-question allowance.
     """
-    topic = (catalog if catalog is not None else get_catalog()).require_foi().topic
     budget = max(
         topic.min_output_tokens,
         topic.output_overhead + topic.output_tokens_per_question * question_count,
@@ -132,26 +128,17 @@ def completion_budget(
 
 
 def question_extractor_tokenizer(
-    config: TopicTokenizerDeployment | None = None,
+    config: TopicTokenizerDeployment,
     *,
-    catalog: DeploymentCatalog | None = None,
-    cache: dict[str, PreTrainedTokenizerBase] | None = None,
+    catalog: DeploymentCatalog,
+    cache: dict[str, PreTrainedTokenizerBase],
 ) -> PreTrainedTokenizerBase:
     """
     Load the pinned topic tokenizer through authenticated local-cache access.
 
-    Without a supplied cache, resolve the default application's tokenizer guard and
-    warm it. A supplied cache belongs to the explicit resource owner and retains the
-    tokenizer for later calls. Preserve the checkpoint's trained chat template.
+    The cache belongs to the supplied resource owner and retains the tokenizer
+    for later calls. Preserve the checkpoint's trained chat template.
     """
-    catalog = catalog if catalog is not None else get_catalog()
-    if cache is None:
-        from ..bootstrap import default_application
-
-        return default_application().foi.tokenizer().warmup()
-    config = config or catalog.local.get(
-        catalog.require_foi().tokenizer, TopicTokenizerDeployment
-    )
     if config.slug in cache:
         return cache[config.slug]
     checkpoint = catalog.model[config.model_ref]
@@ -184,49 +171,31 @@ def question_extractor_tokenizer(
 
 
 def tokenizer_resource(
-    config: TopicTokenizerDeployment | None = None,
+    config: TopicTokenizerDeployment,
     *,
-    catalog: DeploymentCatalog | None = None,
-    registry: ResourceRegistry | None = None,
+    catalog: DeploymentCatalog,
+    registry: ResourceRegistry,
 ) -> LocalResource[PreTrainedTokenizerBase]:
     """
-    Resolve the default application's retained owner or construct an explicit one.
-
-    An explicit registry requires both configuration and catalog. Without a registry,
-    use the default assembly's provider and reject explicit resource configuration.
-    Construction registers a cold guard; loading remains a warm-up or inference operation.
+    Register a cold topic tokenizer with cache lifetime owned by its resource guard.
     """
-    if registry is not None:
-        if config is None or catalog is None:
-            raise ValueError(
-                "Explicit resource construction requires config and catalog"
-            )
-        cache = {}
-        return registry.register(
-            LocalResource(
-                config.slug,
-                lambda: question_extractor_tokenizer(
-                    config, catalog=catalog, cache=cache
-                ),
-                cache.clear,
-            )
+    cache: dict[str, PreTrainedTokenizerBase] = {}
+    return registry.register(
+        LocalResource(
+            config.slug,
+            lambda: question_extractor_tokenizer(config, catalog=catalog, cache=cache),
+            cache.clear,
         )
-    from ..bootstrap import default_application
-
-    if config is not None:
-        raise ValueError(
-            "Explicit resource configuration requires catalog and registry"
-        )
-    return default_application().foi.tokenizer()
+    )
 
 
 def prepare_topic_request(
     request_text: str,
     questions: list[ReconstructedQuestion],
     *,
-    catalog: DeploymentCatalog | None = None,
-    sanitizer: ChatSanitizer | None = None,
-    tokenizer_guard: LocalResource[PreTrainedTokenizerBase] | None = None,
+    catalog: DeploymentCatalog,
+    sanitizer: ChatSanitizer,
+    tokenizer_guard: LocalResource[PreTrainedTokenizerBase],
 ) -> Sanitized[dict[str, Any]]:
     """
     Prepare an attested chat envelope and reject prompts outside the token budget.
@@ -236,9 +205,7 @@ def prepare_topic_request(
     strict topic output schema and the per-question completion allowance. This runs
     synchronously in a worker thread before a remote topic deployment is started.
     """
-    catalog = catalog if catalog is not None else get_catalog()
-    sanitizer = sanitizer if sanitizer is not None else presidio
-    budget = completion_budget(len(questions), catalog=catalog)
+    budget = completion_budget(len(questions), topic=catalog.require_foi().topic)
     schema = GeneratedTopicOutput.model_json_schema()
     messages = [
         {
@@ -275,9 +242,8 @@ def prepare_topic_request(
             },
         }
     )
-    resource = tokenizer_guard if tokenizer_guard is not None else tokenizer_resource()
-    with resource.use():
-        tokenizer = resource.warmup()
+    with tokenizer_guard.use():
+        tokenizer = tokenizer_guard.warmup()
         token_ids = tokenizer.apply_chat_template(
             payload.value["messages"],
             tokenize=True,

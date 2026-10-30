@@ -26,7 +26,6 @@ from llm_management.inference.resources import ResourceRegistry
 from llm_management.sanitization import (
     PresidioSanitizer,
     Sanitized,
-    presidio,
     require_sanitized,
 )
 
@@ -53,9 +52,9 @@ def observed():
     )
 
 
-def test_response_fields_share_mapping_preserve_metadata_and_snapshot():
+def test_response_fields_share_mapping_preserve_metadata_and_snapshot(sanitizer):
     original = observed()
-    sanitized = sanitize_extraction(presidio, original)
+    sanitized = sanitize_extraction(sanitizer, original)
     clean = require_sanitized(sanitized)
     assert clean.request_text == "<PERSON_1>: <EMAIL_ADDRESS_1>"
     assert clean.request.questions[0].text == "Records about <PERSON_1>"
@@ -72,8 +71,8 @@ def test_response_fields_share_mapping_preserve_metadata_and_snapshot():
         Sanitized(original)
 
 
-def test_existing_placeholders_and_request_scoped_mapping():
-    clean = presidio.sanitize_texts(
+def test_existing_placeholders_and_request_scoped_mapping(sanitizer):
+    clean = sanitizer.sanitize_texts(
         [
             "<PERSON_1> Alice Smith",
             "Alice Smith",
@@ -87,8 +86,8 @@ def test_existing_placeholders_and_request_scoped_mapping():
         "<EMAIL_ADDRESS_1>",
         "<EMAIL_ADDRESS_1>",
     ]
-    assert presidio.sanitize_texts(clean.value).value == clean.value
-    assert presidio.sanitize_text("Alice Smith").value == "<PERSON_1>"
+    assert sanitizer.sanitize_texts(clean.value).value == clean.value
+    assert sanitizer.sanitize_text("Alice Smith").value == "<PERSON_1>"
 
 
 def test_request_model_inputs_clean_results_original(monkeypatch, foi_resources):
@@ -111,7 +110,9 @@ def test_request_model_inputs_clean_results_original(monkeypatch, foi_resources)
     assert result.questions[0].text == original
 
 
-def test_topic_payload_is_sanitized_before_provisioning(monkeypatch, foi_resources):
+def test_topic_payload_is_sanitized_before_provisioning(
+    sanitizer, monkeypatch, foi_resources
+):
     monkeypatch.setattr(
         backends,
         "classify_question_units",
@@ -121,7 +122,7 @@ def test_topic_payload_is_sanitized_before_provisioning(monkeypatch, foi_resourc
 
     def prepare(text, questions, **kwargs):
         seen.extend([text, questions[0].text])
-        return presidio.sanitize_payload(
+        return sanitizer.sanitize_payload(
             {"messages": [{"role": "user", "content": text}]}
         )
 
@@ -156,14 +157,9 @@ def test_topic_payload_is_sanitized_before_provisioning(monkeypatch, foi_resourc
 
 
 def test_sanitizer_failure_prevents_request_and_response_inference(
-    monkeypatch, foi_resources
+    application, monkeypatch, foi_resources
 ):
     failure = Mock(side_effect=ClassifierUnavailable("unavailable"))
-    monkeypatch.setattr(
-        presidio,
-        "sanitize_strings",
-        failure,
-    )
     monkeypatch.setattr(foi_resources.sanitizer(), "sanitize_strings", failure)
     classify = AsyncMock()
     monkeypatch.setattr(backends, "classify_question_units", classify)
@@ -183,7 +179,9 @@ def test_sanitizer_failure_prevents_request_and_response_inference(
     with pytest.raises(pipeline.PipelineUnavailable):
         asyncio.run(
             response_analysis.analyze_response(
-                ResponseAnalysisInput.model_validate(observed().model_dump())
+                ResponseAnalysisInput.model_validate(observed().model_dump()),
+                resources=foi_resources,
+                deployments=application.deployments,
             )
         )
     predict.assert_not_called()
@@ -223,12 +221,19 @@ def test_external_adapters_reject_raw_input_before_http(monkeypatch):
         )
 
 
-def test_response_predict_receives_sanitized_input(monkeypatch):
+def test_response_predict_receives_sanitized_input(application, monkeypatch):
     output = ExtractionOutput(outcomes=[], events=[], process_references=[])
     predict = AsyncMock(return_value=output)
     monkeypatch.setattr(response_analysis, "predict", predict)
     body = ResponseAnalysisInput.model_validate(observed().model_dump())
-    assert asyncio.run(response_analysis.analyze_response(body)) == output
+    assert (
+        asyncio.run(
+            response_analysis.analyze_response(
+                body, resources=application.foi, deployments=application.deployments
+            )
+        )
+        == output
+    )
     assert isinstance(predict.call_args.args[0], Sanitized)
     assert "Alice Smith" not in predict.call_args.args[0].value.sources[0].text
 

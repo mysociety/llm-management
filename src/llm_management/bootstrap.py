@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 from builtins import BaseExceptionGroup
 from collections.abc import Callable
-from functools import lru_cache
 from types import TracebackType
 from typing import TYPE_CHECKING, NamedTuple, Self
 
@@ -248,14 +247,3 @@ def assemble_service(
     callers needing feature inference should use assemble_application().
     """
     return assemble_deployments(catalog=catalog, registry=registry).service
-
-
-@lru_cache(maxsize=1)
-def default_application() -> Application:
-    """
-    Process-local default for public convenience calls outside an API app.
-
-    Batch callers wanting explicit isolation should use assemble_application().
-    Controllers and loaded weights belong to this assembly's registry.
-    """
-    return assemble_application()

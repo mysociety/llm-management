@@ -17,7 +17,6 @@ from llm_management.deployments.types import (
 from llm_management.foi import backends, pipeline, topic_classification
 from llm_management.foi.backends import ClassificationRows, DeploymentAccess
 from llm_management.foi.schemas import TopicOutput
-from llm_management.sanitization import presidio
 
 
 def test_pipeline_can_run_without_http_and_skip_empty_classification(
@@ -43,7 +42,7 @@ def test_pipeline_can_run_without_http_and_skip_empty_classification(
 
 
 def test_waiting_topic_model_does_not_block_other_extractions(
-    monkeypatch, foi_resources
+    sanitizer, monkeypatch, foi_resources
 ):
     calls = 0
 
@@ -58,7 +57,7 @@ def test_waiting_topic_model_does_not_block_other_extractions(
     monkeypatch.setattr(
         topic_classification,
         "prepare_topic_request",
-        lambda *args, **kwargs: presidio.sanitize_payload({"messages": []}),
+        lambda *args, **kwargs: sanitizer.sanitize_payload({"messages": []}),
     )
     cfg = get_catalog().get(get_catalog().require_foi().topic_deployment)
     released = Mock()
