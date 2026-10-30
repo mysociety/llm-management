@@ -79,6 +79,34 @@
           },
           "reason": "Alternate topic wording describes the same requested subjects; question IDs, order and access regimes are unchanged.",
           "provenance": "Observed on both CPU and Exoscale extraction in paid validation 2026-10-12 (run 20261012_202716); reviewed as equivalent by the user. Topic model: mySociety/foi-topic-1b-2026-09-16-1."
+        },
+        {
+          "output": {
+            "questions": [
+              {
+                "question_id": "q1",
+                "regime": "FOI",
+                "topic": "regional transport budget allocation"
+              },
+              {
+                "question_id": "q2",
+                "regime": "FOI",
+                "topic": "highway maintenance budgets"
+              },
+              {
+                "question_id": "q3",
+                "regime": "FOI",
+                "topic": "police stop and search legal requirements"
+              }
+            ],
+            "request_topics": [
+              "regional transport budget allocation",
+              "highway maintenance budgets",
+              "police stop and search legal requirements"
+            ]
+          },
+          "reason": "User-approved shorter topic-label variation after controlled whitespace-generation comparisons; question IDs, order and access regimes are unchanged. Accepted for topic summaries rather than as a complete representation of request scope.",
+          "provenance": "Approved by the user on 2026-10-30 after exact-request R1/R5 replay. Engines 0.31.0 and 0.32.0 with disable_any_whitespace=false returned identical output on both repetitions. Also observed on CPU and Exoscale extraction in paid validation. Model: mySociety/foi-topic-1b-2026-09-16-1. Captures: .state/paid-tests/topic-engine-comparison/."
         }
       ]
     },
@@ -323,6 +351,28 @@
           },
           "reason": "Alternate topic wording describes the same requested subjects; question IDs, order and access regimes are unchanged.",
           "provenance": "Observed on both CPU and Exoscale extraction in paid validation 2026-10-12 (run 20261012_202716); reviewed as equivalent by the user. Topic model: mySociety/foi-topic-1b-2026-09-16-1."
+        },
+        {
+          "output": {
+            "questions": [
+              {
+                "question_id": "q1",
+                "regime": "SAR",
+                "topic": "care plan review minutes"
+              },
+              {
+                "question_id": "q2",
+                "regime": "EIR",
+                "topic": "preliminary land contamination reports"
+              }
+            ],
+            "request_topics": [
+              "care plan review minutes",
+              "preliminary land contamination reports"
+            ]
+          },
+          "reason": "User-approved shorter topic-label variation after controlled whitespace-generation comparisons; question IDs, order and access regimes are unchanged. Accepted for topic summaries rather than as a complete representation of request scope.",
+          "provenance": "Approved by the user on 2026-10-30 after exact-request R1/R5 replay. Engines 0.31.0 and 0.32.0 with disable_any_whitespace=false returned identical output on both repetitions. Also observed on CPU and Exoscale extraction in paid validation. Model: mySociety/foi-topic-1b-2026-09-16-1. Captures: .state/paid-tests/topic-engine-comparison/."
         }
       ]
     }
