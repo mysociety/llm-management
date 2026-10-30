@@ -79,7 +79,7 @@ class DeploymentStatusCache:
         observed = backend.query_status()
         snapshot = DeploymentSnapshot(
             slug=config.slug,
-            backend=getattr(config, "backend", "exoscale_managed"),
+            backend=config.backend,
             exists=observed.exists,
             replicas=observed.replicas,
             deployment_url=observed.deployment_url,

@@ -83,3 +83,16 @@ def test_warmup_action_schema_lists_supported_outcomes() -> None:
         "resumed",
         "created",
     }
+
+
+def test_lifecycle_action_schema_lists_supported_outcomes() -> None:
+    schemas = server.app.openapi()["components"]["schemas"]
+    for model in ("ScaleToZeroResponse", "CoolDownResponse"):
+        assert schemas[model]["properties"]["action"] == {
+            "$ref": "#/components/schemas/LifecycleAction"
+        }
+    assert set(schemas["LifecycleAction"]["enum"]) == {
+        "already_stopped",
+        "cooling_down",
+        "scaled_to_zero",
+    }
