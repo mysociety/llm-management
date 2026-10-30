@@ -5,77 +5,12 @@ Results of deployment lifecycle operations.
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
-from enum import StrEnum
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from .config import DeploymentConfig
-
-
-class WarmUpAction(StrEnum):
-    """
-    Outcome of warming a local resource or remote deployment.
-    """
-
-    WARMED = "warmed"
-    SCALED = "scaled"
-    ALREADY_RUNNING = "already_running"
-    RESUMED = "resumed"
-    CREATED = "created"
-
-
-class WarmUpResponse(BaseModel):
-    slug: str
-    action: WarmUpAction
-    replicas: int | None
-
-
-class GroupMemberResult(BaseModel):
-    slug: str
-    success: bool
-    replicas: int | None = None
-    error: str | None = None
-
-
-class GroupWarmUpResponse(BaseModel):
-    slug: str
-    success: bool
-    deployments: list[GroupMemberResult]
-
-
-class LifecycleCommand(StrEnum):
-    """
-    Management commands supported for a resource group.
-    """
-
-    COOL_DOWN = "cool-down"
-    STOP = "scale-to-zero"
-
-
-class LifecycleAction(StrEnum):
-    """
-    Outcome of stopping a resource or shortening its idle timer.
-    """
-
-    ALREADY_STOPPED = "already_stopped"
-    COOLING_DOWN = "cooling_down"
-    SCALED_TO_ZERO = "scaled_to_zero"
-
-
-class GroupActionMemberOutcome(BaseModel):
-    slug: str
-    success: bool
-    action: LifecycleAction | None = None
-    seconds_until_scale_to_zero: float | None = None
-    error: str | None = None
-
-
-class GroupActionOutcome(BaseModel):
-    slug: str
-    success: bool
-    deployments: list[GroupActionMemberOutcome]
 
 
 class DeploymentActivity(BaseModel):

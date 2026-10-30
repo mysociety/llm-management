@@ -8,33 +8,17 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from ..deployments.management import (
+from ..deployments.contracts import (
     AllDeploymentsResponse,
     CoolDownResponse,
-    DeploymentOverview,
     DeploymentStatusResponse,
-    ScaleToZeroResponse,
-)
-from ..deployments.types import (
     GroupActionOutcome,
-    GroupMemberResult,
     GroupWarmUpResponse,
+    ScaleToZeroResponse,
     WarmUpResponse,
 )
 from ..inference.resources import ResourceStatus
 from . import DependencyRuntime
-
-__all__ = [
-    "AllDeploymentsResponse",
-    "CoolDownResponse",
-    "DeploymentOverview",
-    "DeploymentStatusResponse",
-    "GroupMemberResult",
-    "GroupWarmUpResponse",
-    "ScaleToZeroResponse",
-    "WarmUpResponse",
-]
-
 
 router = APIRouter(tags=["Deployments"])
 

@@ -10,13 +10,13 @@ from unittest.mock import AsyncMock
 import pytest
 
 from llm_management.bootstrap import assemble_service
-from llm_management.deployments.errors import DeploymentServiceError
-from llm_management.deployments.types import (
+from llm_management.deployments.contracts import (
     GroupActionMemberOutcome,
     GroupActionOutcome,
     GroupMemberResult,
     GroupWarmUpResponse,
 )
+from llm_management.deployments.errors import DeploymentServiceError
 
 
 def test_direct_group_warmup_preserves_order_and_partial_failure(monkeypatch):
