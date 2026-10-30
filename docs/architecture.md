@@ -159,7 +159,7 @@ async def process_one(text: str):
 Reuse one assembly for an entire batch rather than constructing it per item.
 `runtime.sar.detect(text, fast=True)` and
 `runtime.automatic.detect(body, fast=True)` use the same local owners as
-`runtime.deployments.warmup_resource(slug)`. Exiting the runtime context stops idle cleanup,
+`runtime.deployments.management.warm_up(slug)`. Exiting the runtime context stops idle cleanup,
 drains classifier work, then unloads inactive local resources and scales down remote
 deployments used by that runtime. HTTP lifespan uses this same context manager.
 For manually managed lifetimes, call `await runtime.close()`; repeated calls
@@ -174,7 +174,8 @@ and `local_status` for both HTTP and direct callers. This layer interprets group
 addresses and returns the HTTP-compatible result models; the service executes
 operations under the existing resource leases and deployment locks. Group actions
 share resolution and concurrent execution while retaining their own failure
-contracts and configured result order.
+contracts and configured result order. Group warm-up uses the same member operation
+as individual warm-up.
 See [the FOI guide](foi.md) for HTTP batch examples.
 
 ## Classifier task lifetime
