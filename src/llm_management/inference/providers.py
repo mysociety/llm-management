@@ -8,7 +8,7 @@ access paths so both use the same owner and guard within an application.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable
 from functools import partial
 from typing import Any, cast
 
@@ -24,7 +24,7 @@ from ..deployments.resource_types import (
 from .resources import LocalResource, ResourceRegistry
 
 
-class ResourceProviders(Mapping[str, Callable[[], ResourceOwner]]):
+class ResourceProviders:
     """
     Keep an application's model controllers and provide deferred access to them.
 
@@ -67,10 +67,6 @@ class ResourceProviders(Mapping[str, Callable[[], ResourceOwner]]):
     container and registry. This container holds live Python objects; it is not
     a disk cache for model artifacts.
 
-    Mapping access preserves slug-based lookup for existing callers: indexing
-    returns a deferred callable, and iteration lists configured slugs. Feature
-    code should use provider() to check the deployment schema and retain static
-    knowledge of the returned owner type.
     """
 
     def __init__(self, catalog: DeploymentCatalog, registry: ResourceRegistry) -> None:
@@ -78,20 +74,18 @@ class ResourceProviders(Mapping[str, Callable[[], ResourceOwner]]):
         Register cold factories for every local deployment in the validated catalog.
 
         Bind each factory to its configuration and registration without resolving
-        its lazy Python imports. The callable map is populated immediately; the
-        owner map stays empty until a registry lookup constructs an owner. Use one
+        its lazy Python imports. The owner map stays empty until a registry lookup
+        constructs an owner. Use one
         provider container per application registry so ownership is unambiguous.
         """
         self.catalog = catalog
         self.registry = registry
         self._owners: dict[str, ResourceOwner] = {}
-        self._providers: dict[str, Callable[[], ResourceOwner]] = {}
         for config in catalog.local.deployment:
             resource_type = RESOURCE_TYPES[type(config)]
             registry.register_factory(
                 config.slug, partial(self._create_owner, config, resource_type)
             )
-            self._providers[config.slug] = partial(self._resolve_owner, config.slug)
 
     def _create_owner(
         self, config: Config, resource_type: ResourceType[Config, Owner]
@@ -124,31 +118,12 @@ class ResourceProviders(Mapping[str, Callable[[], ResourceOwner]]):
         """
         Resolve a configured owner through the registry's synchronized lookup.
 
-        This is the internal target of the callables exposed by mapping access
-        and provider(). The registry constructs a missing owner through _create_owner()
+        This is the internal target of the callables exposed by provider(). The registry constructs a missing owner through _create_owner()
         before this method reads it. A previous warm-up may already have done so.
         Construction errors propagate to the feature's existing failure handling.
         """
         self.registry.get(slug)
         return self._owners[slug]
-
-    def __getitem__(self, slug: str) -> Callable[[], ResourceOwner]:
-        """
-        Return a deferred owner lookup, raising KeyError for an unconfigured slug.
-        """
-        return self._providers[slug]
-
-    def __iter__(self) -> Iterator[str]:
-        """
-        Iterate configured deployment slugs without constructing their owners.
-        """
-        return iter(self._providers)
-
-    def __len__(self) -> int:
-        """
-        Count configured local deployments, including owners not yet constructed.
-        """
-        return len(self._providers)
 
     def provider(
         self,
@@ -185,8 +160,8 @@ class ResourceProviders(Mapping[str, Callable[[], ResourceOwner]]):
             if name is None:
                 raise ValueError(f"{resource_type.loader} resource is not configured")
             self.catalog.local.get(name, resource_type.config_type)
-            if name not in self:
+            if name not in self.registry.names():
                 raise LLMManagementError(f"No local provider found with slug {name!r}")
-            return cast(Owner, self[name]())
+            return cast(Owner, self._resolve_owner(name))
 
         return resolve
