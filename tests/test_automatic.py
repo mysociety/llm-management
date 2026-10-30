@@ -231,7 +231,9 @@ def test_endpoint_contract_and_auth(chain, monkeypatch):
         server.app.state.application.automatic, "encoder_provider", lambda: encoder
     )
     monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.app.state.service, "active_deployments", lambda: [])
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "active_deployments", lambda: []
+    )
     with TestClient(server.app) as client:
         response = client.post(
             "/endpoint/foi/automatic_response_detection",
@@ -349,7 +351,9 @@ def test_api_startup_does_not_load_automatic_models(monkeypatch):
     monkeypatch.setattr(
         server.app.state.application.automatic, "encoder_provider", encoder
     )
-    monkeypatch.setattr(server.app.state.service, "active_deployments", lambda: [])
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "active_deployments", lambda: []
+    )
     with TestClient(server.app) as client:
         assert client.get("/health").status_code == 200
     logistic.assert_not_called()
@@ -483,9 +487,11 @@ def test_warmup_group_reports_required_models(monkeypatch, fail_encoder):
         encoder_load.side_effect = ClassifierUnavailable("Missing model")
     registry.register(LocalResource(pipeline.logistic, logistic_load, Mock()))
     registry.register(LocalResource(pipeline.classifier, encoder_load, Mock()))
-    monkeypatch.setattr(server.app.state.service, "resources", registry)
+    monkeypatch.setattr(server.app.state.application.deployments, "resources", registry)
     result = asyncio.run(
-        server.app.state.service.ensure_group("group_automatic_pipeline_cpu")
+        server.app.state.application.deployments.ensure_group(
+            "group_automatic_pipeline_cpu"
+        )
     )
     assert result.success is (not fail_encoder)
     assert [r.slug for r in result.deployments] == [

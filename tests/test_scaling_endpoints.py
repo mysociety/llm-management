@@ -63,10 +63,14 @@ def deployment(monkeypatch):
     monkeypatch.setattr(ManagedDeployment, "ensure_model", lambda *a, **kw: None)
     monkeypatch.setattr(server.settings, "server_role", "")
     monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.app.state.service, "get_config", lambda slug: cfg)
-    monkeypatch.setattr(server.app.state.service, "resources", ResourceRegistry())
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "get_config", lambda slug: cfg
+    )
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "resources", ResourceRegistry()
+    )
     cache = DeploymentCache()
-    monkeypatch.setattr(server.app.state.service, "cache", cache)
+    monkeypatch.setattr(server.app.state.application.deployments, "cache", cache)
     return TestClient(server.app), cfg, cloud, client, cache
 
 
@@ -114,10 +118,12 @@ def test_invalid_replicas_rejected_before_startup(deployment, replicas):
 
 def test_compute_rejects_multiple_replicas(monkeypatch):
     cfg = SimpleNamespace(backend="exoscale_compute", create_or_resume=Mock())
-    monkeypatch.setattr(server.app.state.service, "get_config", lambda slug: cfg)
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "get_config", lambda slug: cfg
+    )
     with pytest.raises(DeploymentServiceError) as error:
         asyncio.run(
-            server.app.state.service.ensure_running(
+            server.app.state.application.deployments.ensure_running(
                 "compute", allow_start=True, replicas=2
             )
         )
@@ -130,7 +136,7 @@ def test_local_resource_rejects_replicas(deployment, monkeypatch):
     registry = ResourceRegistry()
     warm = Mock()
     registry.register(LocalResource("local", warm, Mock()))
-    monkeypatch.setattr(server.app.state.service, "resources", registry)
+    monkeypatch.setattr(server.app.state.application.deployments, "resources", registry)
     assert http.post("/deployments/local/warm-up?replicas=2").status_code == 422
     warm.assert_not_called()
 
@@ -194,7 +200,7 @@ def test_idle_scaler_observes_cooldown(deployment, monkeypatch, elapsed, stopped
     cloud["deployment"] = {"id": "test-id", "name": "test", "replicas": 2}
     assert http.post("/deployments/test/cool-down").status_code == 200
     # Refreshes must preserve the shortened idle timer.
-    cache.refresh(server.app.state.service.get_backend("test"))
+    cache.refresh(server.app.state.application.deployments.get_backend("test"))
     now[0] += elapsed
     sleeps = 0
 
@@ -206,10 +212,12 @@ def test_idle_scaler_observes_cooldown(deployment, monkeypatch, elapsed, stopped
 
     monkeypatch.setattr(asyncio, "sleep", sleep_once)
     monkeypatch.setattr(
-        server.app.state.service, "resources", SimpleNamespace(expire=Mock())
+        server.app.state.application.deployments,
+        "resources",
+        SimpleNamespace(expire=Mock()),
     )
     with pytest.raises(asyncio.CancelledError):
-        asyncio.run(server.app.state.service.idle_scaler())
+        asyncio.run(server.app.state.application.deployments.idle_scaler())
     assert client.scale_deployment.call_count == int(stopped)
     assert cache.get("test").replicas == (0 if stopped else 2)
 

@@ -124,7 +124,7 @@ def deployed(tmp_path, monkeypatch):
     cloud = Cloud(recipe)
     monkeypatch.setattr(module, "get_client", lambda zone: cloud)
     adapter = module.ComputeDeployment(config)
-    server.app.state.service.backends[config.slug] = adapter
+    server.app.state.application.deployments.backends[config.slug] = adapter
     processes = []
 
     def run(command, **kwargs):
@@ -259,17 +259,19 @@ def test_server_ensure_dispatches_compute_once_and_pauses_by_deletion(
 ):
     config, adapter, cloud, _ = deployed
     cache = DeploymentCache()
-    monkeypatch.setattr(server.app.state.service, "cache", cache)
-    monkeypatch.setattr(server.app.state.service, "get_config", lambda slug: config)
+    monkeypatch.setattr(server.app.state.application.deployments, "cache", cache)
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "get_config", lambda slug: config
+    )
 
     async def run():
         results = await asyncio.gather(
-            server.app.state.service.ensure_running("clef"),
-            server.app.state.service.ensure_running("clef"),
+            server.app.state.application.deployments.ensure_running("clef"),
+            server.app.state.application.deployments.ensure_running("clef"),
         )
         assert all(result.state.replicas == 1 for result in results)
         assert len(cloud.created) == 1
-        await server.app.state.service.scale_to_zero("clef")
+        await server.app.state.application.deployments.scale_to_zero("clef")
         assert cache.get("clef").exists is False
 
     asyncio.run(run())
@@ -281,14 +283,16 @@ def test_http_request_lease_prevents_teardown_and_releases_after_failure(
 ):
     config, adapter, _, _ = deployed
     cache = DeploymentCache()
-    monkeypatch.setattr(server.app.state.service, "cache", cache)
-    monkeypatch.setattr(server.app.state.service, "get_config", lambda slug: config)
+    monkeypatch.setattr(server.app.state.application.deployments, "cache", cache)
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "get_config", lambda slug: config
+    )
     monkeypatch.setattr(server.settings, "auth_tokens", {})
 
     async def send(*args, **kwargs):
         assert cache.get("clef").requests_in_flight == 1
         with pytest.raises(DeploymentServiceError) as error:
-            await server.app.state.service.scale_to_zero("clef")
+            await server.app.state.application.deployments.scale_to_zero("clef")
         assert error.value.status_code == 409
         raise httpx2.ConnectError("Test failure")
 
@@ -326,14 +330,18 @@ def test_cancelled_startup_is_tracked_for_idle_cleanup(monkeypatch):
             api_key="",
         ),
     )
-    monkeypatch.setattr(server.app.state.service, "cache", cache)
-    monkeypatch.setattr(server.app.state.service, "get_config", lambda slug: cfg)
-    server.app.state.service.backends["clef"] = SimpleNamespace(
+    monkeypatch.setattr(server.app.state.application.deployments, "cache", cache)
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "get_config", lambda slug: cfg
+    )
+    server.app.state.application.deployments.backends["clef"] = SimpleNamespace(
         config=cfg, create_or_resume=start, query_status=cfg.query_status
     )
 
     async def run():
-        task = asyncio.create_task(server.app.state.service.ensure_running("clef"))
+        task = asyncio.create_task(
+            server.app.state.application.deployments.ensure_running("clef")
+        )
         assert await asyncio.to_thread(entered.wait, 5)
         task.cancel()
         finish.set()
@@ -358,8 +366,10 @@ def test_idle_loop_deletes_compute_only_after_requests_finish(
     state.last_request_time = time.time() - 3600
     state.requests_in_flight = int(busy)
     cache.set(state)
-    monkeypatch.setattr(server.app.state.service, "cache", cache)
-    monkeypatch.setattr(server.app.state.service, "get_config", lambda slug: config)
+    monkeypatch.setattr(server.app.state.application.deployments, "cache", cache)
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "get_config", lambda slug: config
+    )
     sleeps = 0
 
     async def sleep_once(seconds):
@@ -372,7 +382,7 @@ def test_idle_loop_deletes_compute_only_after_requests_finish(
 
     async def run():
         with pytest.raises(asyncio.CancelledError):
-            await server.app.state.service.idle_scaler()
+            await server.app.state.application.deployments.idle_scaler()
 
     asyncio.run(run())
     assert any(i["id"] == "vm" for i in cloud.instances) is busy
@@ -412,8 +422,10 @@ def test_shutdown_tears_down_compute(deployed, monkeypatch):
     cache = DeploymentCache()
     cache.refresh(adapter)
     cache.touch("clef")
-    monkeypatch.setattr(server.app.state.service, "cache", cache)
-    monkeypatch.setattr(server.app.state.service, "get_config", lambda slug: config)
+    monkeypatch.setattr(server.app.state.application.deployments, "cache", cache)
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "get_config", lambda slug: config
+    )
 
     async def run():
         async with server.lifespan(server.app):
@@ -475,8 +487,12 @@ def test_compute_proxies_strip_client_credentials_and_use_v1_tunnel(
     deployed, monkeypatch
 ):
     config, adapter, _, _ = deployed
-    monkeypatch.setattr(server.app.state.service, "cache", DeploymentCache())
-    monkeypatch.setattr(server.app.state.service, "get_config", lambda slug: config)
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "cache", DeploymentCache()
+    )
+    monkeypatch.setattr(
+        server.app.state.application.deployments, "get_config", lambda slug: config
+    )
     monkeypatch.setattr(server.settings, "auth_tokens", {"caller": "client-token"})
     requests = []
 

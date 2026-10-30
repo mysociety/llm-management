@@ -55,9 +55,7 @@ def create_app(application: Application | None = None) -> FastAPI:
     Construct an API around explicit, cold application dependencies.
     """
     application = application if application is not None else assemble_application()
-    service = application.deployments
     app = FastAPI(title="LLM Management Proxy", docs_url="/", lifespan=lifespan)
-    app.state.service = service
     app.state.application = application
     app.add_exception_handler(LLMManagementError, deployment_error)
     app.add_exception_handler(DeploymentServiceError, service_error)

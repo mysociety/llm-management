@@ -31,8 +31,8 @@ def test_compute_lifecycle_and_agents_live():
         and not server.settings.server_role.startswith("test_")
     ):
         pytest.skip("Set SERVER_ROLE=test (or test_<run> for concurrent isolated runs)")
-    cfg = server.app.state.service.get_config("clef")
-    backend = server.app.state.service.get_backend("clef")
+    cfg = server.app.state.application.deployments.get_config("clef")
+    backend = server.app.state.application.deployments.get_backend("clef")
     assert isinstance(cfg, ComputeDeploymentConfig)
     report = {
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -45,10 +45,10 @@ def test_compute_lifecycle_and_agents_live():
     destination = Path(
         os.environ.get("LLM_COMPUTE_SMOKE_REPORT", "compute-smoke-results.json")
     )
-    old_cache = server.app.state.service.cache
+    old_cache = server.app.state.application.deployments.cache
     old_auth = server.settings.auth_tokens
     server.settings.auth_tokens = {"live-smoke": secrets.token_urlsafe(32)}
-    server.app.state.service.cache = DeploymentCache()
+    server.app.state.application.deployments.cache = DeploymentCache()
     headers = {"Authorization": "Bearer " + server.settings.auth_tokens["live-smoke"]}
 
     def record(name, response):
@@ -108,7 +108,7 @@ def test_compute_lifecycle_and_agents_live():
 
             # Drop only the local connection, then reconnect using the durable key.
             close_tunnel(backend.runtime_key)
-            server.app.state.service.cache.remove("clef")
+            server.app.state.application.deployments.cache.remove("clef")
             start = time.monotonic()
             record(
                 "reconnect", client.post("/deployments/clef/warm-up", headers=headers)
@@ -144,6 +144,6 @@ def test_compute_lifecycle_and_agents_live():
             )
             report["cleanup_verified"] = True
         finally:
-            server.app.state.service.cache = old_cache
+            server.app.state.application.deployments.cache = old_cache
             server.settings.auth_tokens = old_auth
             destination.write_text(json.dumps(report, indent=2) + "\n")
