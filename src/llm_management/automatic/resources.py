@@ -7,12 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NamedTuple
 
-from ..deployments import (
-    AutoClassifierDeployment,
-    AutoLogisticDeployment,
-    DeploymentCatalog,
-    get_catalog,
-)
+from ..deployments.catalog import DeploymentCatalog
+from ..deployments.local_config import AutoClassifierDeployment, AutoLogisticDeployment
 from ..inference.classifiers import AuthenticatedSequenceClassifier
 from ..inference.errors import ClassifierUnavailable
 from ..inference.logistic_v1 import (
@@ -23,7 +19,6 @@ from ..inference.logistic_v1 import (
 )
 from ..inference.resources import LocalResource, ResourceRegistry
 from ..settings import settings
-from .pipeline import Encoder
 
 GATE_CUTOFF = 0.4292739638892871
 POLICY_SHA256 = "47195de9b4cc57368a02b777dfc53dcb02a7c57c7de89f0f9cd5499b2f146d69"
@@ -51,21 +46,17 @@ class LogisticDetector:
         self,
         config: AutoLogisticDeployment,
         *,
-        catalog: DeploymentCatalog | None = None,
-        registry: ResourceRegistry | None = None,
+        catalog: DeploymentCatalog,
+        registry: ResourceRegistry,
     ) -> None:
         """
         Bind checkpoint metadata and register a cold guard without downloading files.
         """
         self.config = config
-        self.checkpoint = (catalog if catalog is not None else get_catalog()).model[
-            config.model_ref
-        ]
+        self.checkpoint = catalog.model[config.model_ref]
         self.cascade: BinaryTextLogisticModelV1 | None = None
         self.standalone: BinaryTextLogisticModelV1 | None = None
-        self.resource = (
-            registry if registry is not None else ResourceRegistry()
-        ).register(
+        self.resource = registry.register(
             LocalResource(
                 config.slug,
                 self.load,
@@ -139,34 +130,6 @@ class LogisticDetector:
         self.cascade = self.standalone = None
 
 
-def logistic_detector(
-    config: AutoLogisticDeployment | None = None,
-    *,
-    catalog: DeploymentCatalog | None = None,
-    registry: ResourceRegistry | None = None,
-) -> LogisticDetector:
-    """
-    Resolve the default application's retained owner or construct an explicit one.
-
-    An explicit registry requires both configuration and catalog. Without a registry,
-    use the default assembly's provider and reject explicit resource configuration.
-    Construction registers a cold guard; loading remains a warm-up or inference operation.
-    """
-    if registry is not None:
-        if config is None or catalog is None:
-            raise ValueError(
-                "Explicit resource construction requires config and catalog"
-            )
-        return LogisticDetector(config, catalog=catalog, registry=registry)
-    from ..bootstrap import default_application
-
-    if config is not None:
-        raise ValueError(
-            "Explicit resource configuration requires catalog and registry"
-        )
-    return default_application().automatic.logistic_provider()
-
-
 def create_encoder_detector(
     config: AutoClassifierDeployment,
     *,
@@ -195,31 +158,3 @@ def create_encoder_detector(
         registry=registry,
     )
     return encoder
-
-
-def encoder_detector(
-    config: AutoClassifierDeployment | None = None,
-    *,
-    catalog: DeploymentCatalog | None = None,
-    registry: ResourceRegistry | None = None,
-) -> Encoder:
-    """
-    Resolve the default application's retained owner or construct an explicit one.
-
-    An explicit registry requires both configuration and catalog. Without a registry,
-    use the default assembly's provider and reject explicit resource configuration.
-    Construction registers a cold guard; loading remains a warm-up or inference operation.
-    """
-    if registry is not None:
-        if config is None or catalog is None:
-            raise ValueError(
-                "Explicit resource construction requires config and catalog"
-            )
-        return create_encoder_detector(config, catalog=catalog, registry=registry)
-    from ..bootstrap import default_application
-
-    if config is not None:
-        raise ValueError(
-            "Explicit resource configuration requires catalog and registry"
-        )
-    return default_application().automatic.encoder_provider()

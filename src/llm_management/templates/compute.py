@@ -15,6 +15,7 @@ from typing import Any, Callable
 import httpx2
 from exoscale.api.v2 import Client
 
+from ..deployments.errors import LLMManagementError
 from .config import TemplateRecipe
 from .probes import probe, validate_health
 from .state import JsonRecord, TemplateState
@@ -27,8 +28,28 @@ def log(message: str) -> None:
 def wait(client: Client, operation: dict[str, Any]) -> dict[str, Any]:
     """
     Wait for a cloud operation with the template workflow's 1200-second limit.
+
+    Some SDK versions expect a failed operation's detail in "reason", while the
+    API returns "message". Recover that terminal failure without changing polling,
+    retry limits or the recovery manifest's operation identity.
     """
-    return client.wait(operation["id"], max_wait_time=1200)
+    operation_id = operation["id"]
+    try:
+        return client.wait(operation_id, max_wait_time=1200)
+    except KeyError as exc:
+        if exc.args != ("reason",):
+            raise
+        failed = client.get_operation(id=operation_id)
+        if failed.get("state") not in {"failure", "timeout"}:
+            raise
+        detail = (
+            failed.get("message")
+            or failed.get("reason")
+            or "Provider supplied no failure detail"
+        )
+        raise LLMManagementError(
+            f"Compute operation {operation_id} {failed['state']}: {detail}"
+        ) from exc
 
 
 def save(state: JsonRecord, path: Path) -> None:

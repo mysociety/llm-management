@@ -7,14 +7,16 @@ import pytest
 from fastapi import HTTPException
 from starlette.testclient import TestClient
 
-from llm_management import server
 from llm_management.deployments.types import RunningDeployment
+from llm_management.settings import settings
 
 
 @pytest.fixture
-def clef_client(monkeypatch):
-    monkeypatch.setattr(server.settings, "auth_tokens", {"client": "client-secret"})
-    monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
+def clef_client(http_app, monkeypatch):
+    monkeypatch.setattr(settings, "auth_tokens", {"client": "client-secret"})
+    monkeypatch.setattr(
+        http_app.state.runtime.deployments, "active_deployments", lambda: []
+    )
     ensure = AsyncMock(
         return_value=RunningDeployment(
             config=SimpleNamespace(model="Cloudflare/clef-flash"),
@@ -23,7 +25,7 @@ def clef_client(monkeypatch):
             ),
         )
     )
-    monkeypatch.setattr(server.app.state.service, "ensure_running", ensure)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "_prepare_locked", ensure)
     requests = []
     replies = []
 
@@ -41,7 +43,7 @@ def clef_client(monkeypatch):
         lambda **kwargs: real_client(transport=httpx2.MockTransport(handle), **kwargs),
     )
 
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         yield client, requests, replies
 
 
@@ -70,26 +72,28 @@ def test_proxy_preserves_payload_query_status_and_uses_upstream_auth(clef_client
     "path",
     ["/deployments/clef/v1/systemone", "/endpoint/foi/immigration_detection/clef"],
 )
-def test_auth_rejects_before_contacting_clef(clef_client, path):
+def test_auth_rejects_before_contacting_clef(http_app, clef_client, path):
     client, requests, _ = clef_client
     assert client.post(path, json={"body": "visa"}).status_code == 401
     assert requests == []
-    server.app.state.service.ensure_running.assert_not_awaited()
+    http_app.state.runtime.deployments._prepare_locked.assert_not_awaited()
 
 
-def test_selected_deployment_uses_shared_lifecycle(clef_client):
+def test_selected_deployment_uses_shared_lifecycle(http_app, clef_client):
     client, requests, replies = clef_client
     replies.append(httpx2.Response(200, json={"answers": {}}))
     assert (
         post(client, "/deployments/clef_flash/v1/systemone?tag=a", json={}).status_code
         == 200
     )
-    server.app.state.service.ensure_running.assert_awaited_once_with("clef_flash")
+    http_app.state.runtime.deployments._prepare_locked.assert_awaited_once_with(
+        "clef_flash"
+    )
     assert str(requests[0].url) == "https://clef.test/v1/systemone?tag=a"
 
 
 @pytest.mark.parametrize("label", ["IMM", "FOI"])
-def test_immigration_choice_contract(clef_client, label):
+def test_immigration_choice_contract(http_app, clef_client, label):
     client, requests, replies = clef_client
     replies.append(
         httpx2.Response(
@@ -120,7 +124,9 @@ def test_immigration_choice_contract(clef_client, label):
     assert response.json() == {"classification": label}
     payload = json.loads(requests[0].content)
     assert payload["model"] == "Cloudflare/clef-flash"
-    server.app.state.service.ensure_running.assert_awaited_once_with("clef_flash")
+    http_app.state.runtime.deployments._prepare_locked.assert_awaited_once_with(
+        "clef_flash"
+    )
     assert "My request text" in payload["state"]
     assert str(requests[0].url) == "https://clef.test/v1/systemone"
     assert requests[0].headers["authorization"] == "Bearer upstream-secret"
@@ -181,9 +187,9 @@ def test_transport_errors(clef_client, path, error, status):
     "path",
     ["/deployments/clef/v1/systemone", "/endpoint/foi/immigration_detection/clef"],
 )
-def test_unknown_deployment_returns_404(clef_client, path):
+def test_unknown_deployment_returns_404(http_app, clef_client, path):
     client, requests, _ = clef_client
-    server.app.state.service.ensure_running.side_effect = HTTPException(
+    http_app.state.runtime.deployments._prepare_locked.side_effect = HTTPException(
         status_code=404, detail="Unknown deployment"
     )
     response = post(client, path, json={"body": "visa"})
@@ -192,14 +198,14 @@ def test_unknown_deployment_returns_404(clef_client, path):
 
 
 @pytest.mark.parametrize("text", ["", "x" * 100_001])
-def test_invalid_immigration_input_does_not_contact_clef(clef_client, text):
+def test_invalid_immigration_input_does_not_contact_clef(http_app, clef_client, text):
     client, requests, _ = clef_client
     response = post(
         client, "/endpoint/foi/immigration_detection/clef", json={"body": text}
     )
     assert response.status_code == 422
     assert requests == []
-    server.app.state.service.ensure_running.assert_not_awaited()
+    http_app.state.runtime.deployments._prepare_locked.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -267,11 +273,11 @@ def test_generic_proxy_decoded_response_headers(clef_client):
     assert int(response.headers["content-length"]) == len(response.content)
 
 
-def test_systemone_alias_is_removed(clef_client):
+def test_systemone_alias_is_removed(http_app, clef_client):
     client, requests, _ = clef_client
     assert post(client, "/v1/systemone", json={}).status_code == 404
     assert requests == []
-    server.app.state.service.ensure_running.assert_not_awaited()
+    http_app.state.runtime.deployments._prepare_locked.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -285,16 +291,16 @@ def test_systemone_alias_is_removed(clef_client):
         "chat%3fadmin",
     ],
 )
-def test_proxy_rejects_unsafe_paths_before_startup(clef_client, path):
+def test_proxy_rejects_unsafe_paths_before_startup(http_app, clef_client, path):
     client, requests, _ = clef_client
     response = post(client, "/deployments/clef/v1/" + path, json={})
     assert response.status_code == 400
     assert not requests
-    server.app.state.service.ensure_running.assert_not_awaited()
+    http_app.state.runtime.deployments._prepare_locked.assert_not_awaited()
 
 
 def test_proxy_bounds_upstream_response(clef_client, monkeypatch):
     client, _, replies = clef_client
-    monkeypatch.setattr(server.settings, "proxy_max_response_bytes", 8)
+    monkeypatch.setattr(settings, "proxy_max_response_bytes", 8)
     replies.append(httpx2.Response(200, content=b"x" * 9))
     assert post(client, "/deployments/clef/v1/systemone", json={}).status_code == 502

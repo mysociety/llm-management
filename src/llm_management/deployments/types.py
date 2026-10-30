@@ -4,8 +4,8 @@ Results of deployment lifecycle operations.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, NamedTuple
+from contextlib import AbstractAsyncContextManager
+from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 from pydantic import BaseModel
 
@@ -13,43 +13,20 @@ if TYPE_CHECKING:
     from .config import DeploymentConfig
 
 
-class EnsureOutcome(BaseModel):
-    slug: str
-    action: str
-    replicas: int | None
-
-
-class GroupMemberOutcome(BaseModel):
-    slug: str
-    success: bool
-    replicas: int | None = None
-    error: str | None = None
-
-
-class GroupOutcome(BaseModel):
-    slug: str
-    success: bool
-    deployments: list[GroupMemberOutcome]
-
-
-class GroupActionMemberOutcome(BaseModel):
-    slug: str
-    success: bool
-    action: str | None = None
-    seconds_until_scale_to_zero: float | None = None
-    error: str | None = None
-
-
-class GroupActionOutcome(BaseModel):
-    slug: str
-    success: bool
-    deployments: list[GroupActionMemberOutcome]
-
-
-class DeploymentState(BaseModel):
+class DeploymentActivity(BaseModel):
     """
-    Cached state for a single deployment, including connection details
-    and the timestamp of the last forwarded request.
+    Application activity, independent of observations from the cloud provider.
+    """
+
+    last_request_time: float = 0.0
+    requests_in_flight: int = 0
+
+
+class DeploymentSnapshot(BaseModel):
+    """
+    Last observed cloud status and connection details for one deployment.
+
+    This record contains no request counts, idle timers or coordination locks.
     """
 
     slug: str
@@ -58,28 +35,37 @@ class DeploymentState(BaseModel):
     replicas: int = 0
     deployment_url: str = ""
     api_key: str = ""
-    last_request_time: float = 0.0
     last_refreshed: float = 0.0
-    requests_in_flight: int = 0
 
 
 class RunningDeployment(NamedTuple):
     """
-    Configuration and live state of a running deployment.
+    Configuration and observed connection/status for a prepared deployment.
     """
 
     config: DeploymentConfig
-    state: DeploymentState
+    state: DeploymentSnapshot
 
 
-class DeploymentAccess(NamedTuple):
+class DeploymentInference(Protocol):
     """
-    Deployment operations supplied to HTTP-independent feature pipelines.
+    The remote operations a feature needs: validate configuration and lease inference.
+
+    DeploymentService implements this directly. Features can accept small test doubles
+    without depending on management or caching.
     """
 
-    get_config: Callable[[str], DeploymentConfig]
-    ensure_running: Callable[[str], Awaitable[RunningDeployment]]
-    touch: Callable[[str], None]
+    def get_config(self, slug: str, /) -> DeploymentConfig:
+        """
+        Resolve configuration before input preparation or checkpoint validation.
+        """
+        ...
+
+    def use(self, slug: str) -> AbstractAsyncContextManager[RunningDeployment]:
+        """
+        Prepare a deployment and protect it until the inference block exits.
+        """
+        ...
 
 
 class DeploymentQueryResult(BaseModel):

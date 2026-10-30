@@ -9,9 +9,10 @@ describes resources; application assembly gives their runtime objects an owner.
 | Question | Starting point |
 | --- | --- |
 | How are dependencies connected? | [bootstrap.py](../src/llm_management/bootstrap.py) |
-| How is the API constructed? | [server.py](../src/llm_management/server.py) and [api/](../src/llm_management/api/) |
+| How is the API constructed? | [http_app.py](../src/llm_management/http_app.py), [server.py](../src/llm_management/server.py) and [api/](../src/llm_management/api/) |
 | How does startup, warm-up or scaling work? | [deployments/service.py](../src/llm_management/deployments/service.py) |
 | Where do configuration and cloud operations belong? | [deployments/config.py](../src/llm_management/deployments/config.py), [catalog.py](../src/llm_management/deployments/catalog.py), [managed.py](../src/llm_management/deployments/managed.py) and [compute.py](../src/llm_management/deployments/compute.py) |
+| How do resource types fit together, and how do I add one? | [Resource registration guide](resource-registration.md) |
 | How are local models protected and unloaded? | [inference/resources.py](../src/llm_management/inference/resources.py) |
 | How is an FOI request processed? | [foi/pipeline.py](../src/llm_management/foi/pipeline.py) |
 | Where are classifier decisions made? | [sar/pipeline.py](../src/llm_management/sar/pipeline.py) and [automatic/pipeline.py](../src/llm_management/automatic/pipeline.py) |
@@ -37,27 +38,75 @@ flowchart TD
 
 `DeploymentCatalog.load()` and `get_catalog()` validate configuration without
 registering models, loading weights or constructing cloud backends.
-`assemble_application()` creates the deployment service and registers cold
-factories. Each factory constructs a controller on first use. Model weights load
+`assemble_runtime()` creates the deployment service and registers cold
+factories. Default assembly loads a new validated catalog for each runtime, including
+independent nested models and slug dictionaries. Callers can deliberately share a
+catalog by passing it explicitly. `get_catalog()` remains a cached lookup for callers
+that request shared configuration; runtime assembly does not use it.
+Each factory constructs a controller on first use. Model weights load
 only during inference or explicit warm-up.
 
-HTTP routers are module-level objects. FastAPI dependencies in
-`api/dependencies.py` retrieve the shared service and feature owners from
-`request.app.state.application`; they do not construct resources per request.
-`create_app()` retains ownership and shutdown wiring, and separate app instances
-can use the same routes with independent assemblies. Tests can override the
-dependency providers using FastAPI's `dependency_overrides`.
+Catalog schemas validate each configuration entry. The named checks in
+[`catalog_validation.py`](../src/llm_management/deployments/catalog_validation.py)
+validate relationships between entries: deployment namespaces, checkpoint references,
+warm-up group membership and feature bindings. These checks use configuration types
+only. A new resource type needs a feature-binding check only when its feature imposes
+additional constraints, such as two resources sharing a checkpoint.
 
-An application owns its deployment cache, activity context, backend controllers,
+`ApplicationRuntime` owns services, resources and their lifecycle; `app` is the
+FastAPI HTTP interface hosting that runtime. The runtime also serves direct batch
+callers without FastAPI. It is a plain typed container. Its constructor retains injected
+dependencies by identity; it does not parse configuration, build a Pydantic schema
+or start tasks. Configuration validation belongs to `DeploymentCatalog`.
+Entering `async with runtime` starts idle cleanup. Closing stops that loop,
+drains SAR and automatic classifier work, then releases deployment resources.
+Concurrent closes share one cleanup task, and cancellation waits for cleanup before
+propagating. Each runtime has its own lifecycle; a closed instance cannot restart.
+
+HTTP routers are module-level objects. The single FastAPI dependency in
+`api/__init__.py` retrieves the typed runtime from
+`request.app.state.runtime`. Routes accept `DependencyRuntime` and select
+its service or feature owner directly, without constructing resources per request.
+Feature functions still receive their specific dependencies explicitly. Tests can
+override `get_runtime` to substitute the complete runtime.
+`create_app(runtime=...)` requires an existing runtime and delegates lifespan to
+its context manager. It configures HTTP routes and middleware; it does not assemble
+services. The server entry point uses `app = create_app(runtime=assemble_runtime())`.
+Separate FastAPI apps can use the same routes with independent runtimes.
+The factory and lifespan live in `http_app.py`; importing them does not construct a
+runtime. `server.py` is only the ASGI entry point that creates the served app.
+Tests request `http_app` explicitly, instead of mutating `server.app` or relying on
+module inspection. Its fixture closes the runtime before test patches are restored,
+including for clients that do not run the HTTP lifespan.
+
+An application owns its deployment status cache, activity tracker, backend controllers,
 local-resource registry and automatic-classifier admission capacity. Warm-up and
 inference resolve the same local controller. Idle unloading clears its weights;
 the retained controller can load them again. Separate assemblies have independent
 guards and caches, even when resource slugs match.
 
-Public convenience calls outside an API app use one process-local default
-assembly. Standalone model-controller constructors use a private guard unless
-given a registry. Pass explicit application dependencies when processing batches
-or testing independent configurations.
+Here, an **owner** is the ordinary Python model controller, such as
+`CategoryMatcher`. It holds configuration and, once loaded, the encoder, tokenizer
+and category index; it also implements `predict()`, `load()` and `unload()`. Creating
+the owner does not itself load those model objects.
+
+Its **guard** is the `LocalResource` available as `matcher.resource`. The guard
+holds load/unload callbacks, tracks readiness and recent activity, and coordinates
+access. A **lease** is the duration of a `with resource.use():` block: idle cleanup
+must skip that resource while the block is active. The model controller holds the
+loaded state; the guard protects its use.
+
+A **provider** is a zero-argument function that returns the controller when needed.
+`ResourceProviders` retains controllers for feature inference; `ResourceRegistry`
+retains their guards for warm-up, status and unloading. Both refer to the same
+resource. Tokenizer factories are a smaller variant: their callbacks hold cached
+state, and the returned `LocalResource` itself serves as the provider's owner.
+
+HTTP startup, batch entry points and test fixtures assemble their runtime.
+Feature functions receive the specific resources, providers or deployment client
+they need; they never look up a process-wide runtime. Batch callers use
+`async with assemble_runtime() as runtime` to own startup and shutdown.
+Tests can instead supply small provider or sanitizer doubles for isolated behaviour.
 
 The service coordinates locks, activity, startup cancellation, warm-up, scaling and
 shutdown. Managed and Compute backends implement the same lifecycle interface;
@@ -78,8 +127,9 @@ leases and probability validation.
 2. FOI segments the original text, sanitizes related fields with one mapping,
    classifies sanitized contextual inputs, and reconstructs both original and
    sanitized questions from the same predictions.
-3. When remote work is required, `DeploymentService` ensures the deployment and
-   tracks its activity. The selected backend performs the cloud operations.
+3. When remote work is required, the feature enters `deployments.use(slug)` for
+   startup and a lease covering inference. The selected backend performs cloud
+   operations; the lease protects the deployment until the feature leaves the block.
 4. Model owners hold local leases in their worker threads for loading and inference.
    Caller cancellation cannot release a model while its worker still uses it.
 5. The feature validates output and returns its own result schema. HTTP error
@@ -92,42 +142,87 @@ claim detection is exhaustive. FOI field-selection adapters depend on the small
 
 The Python names `ReconstructedQuestion` and `ResponseContextQuestion` distinguish
 request extraction from questions supplied to response analysis. Established
-`ExtractedQuestion` wire schema names remain unchanged. `models.py` is a small
-compatibility import facade; new code imports configuration, errors and state
-from their owning deployment modules. The SAR logistic compatibility import also
-delegates to the shared predictor.
+`ExtractedQuestion` wire schema names remain unchanged. Import deployment
+configuration, errors and state from their owning modules under `deployments/`.
+Both correspondence classifiers use the shared predictor in `inference/logistic_v1.py`.
 
 ## Direct Python use
 
 The same assembly used by HTTP callers can be supplied to the FOI pipeline:
 
 ```python
-from llm_management.bootstrap import assemble_application
-from llm_management.deployments.types import DeploymentAccess
+from llm_management.bootstrap import assemble_runtime
 from llm_management.foi.pipeline import process_information_request
 
 
 async def process_one(text: str):
-    application = assemble_application()
-    service = application.deployments
-    deployments = DeploymentAccess(
-        service.get_config, service.ensure_running, service.cache.touch
-    )
-    try:
-        with service.track_requests():
-            return await process_information_request(
-                text, deployments=deployments, resources=application.foi
-            )
-    finally:
-        await service.close()
+    async with assemble_runtime() as runtime:
+        return await process_information_request(
+            text,
+            deployments=runtime.deployments,
+            resources=runtime.foi,
+        )
 ```
 
 Reuse one assembly for an entire batch rather than constructing it per item.
-`application.sar.detect(text, fast=True)` and
-`application.automatic.detect(body, fast=True)` use the same local owners as
-`application.deployments.warmup_resource(slug)`. Closing the service unloads idle
-local resources and scales down remote deployments used by that application.
+`runtime.sar.detect(text, fast=True)` and
+`runtime.automatic.detect(body, fast=True)` use the same local owners as
+`runtime.management.warm_up(slug)`. Exiting the runtime context stops idle cleanup,
+drains classifier work, then unloads inactive local resources and scales down remote
+deployments used by that runtime. HTTP lifespan uses this same context manager.
+For manually managed lifetimes, call `await runtime.close()`; repeated calls
+share one shutdown operation, and cleanup finishes before cancellation propagates.
+A runtime lifetime is single-use; assemble another runtime after shutdown.
+
+`assemble_deployments()` creates the service, its management interface and typed local providers.
+Use `assembly.service` for execution and `assembly.management` for commands;
+this assembly does not construct feature pipelines.
+Management-only callers own the service's idle task and shutdown explicitly.
+`runtime.management` (or `assembly.management` for management-only callers) exposes `warm_up`, `stop`, `cool_down`, `status`, `overview`
+and `local_status` for both HTTP and direct callers. This layer interprets group
+addresses and returns the HTTP-compatible result models; the service executes
+operations under the existing resource leases and deployment locks. Group actions
+share resolution and concurrent execution while retaining their own failure
+contracts and configured result order. Group warm-up calls the same member operation
+as individual warm-up. Execution primitives stay in the service; bootstrap constructs
+the management interface alongside it, so the service does not depend on management.
+All management response models and action enums live in `deployments/contracts.py`;
+the HTTP routes import those contracts directly and do not re-export them.
 See [the FOI guide](foi.md) for HTTP batch examples.
+
+## Execution policy
+
+Bootstrap captures batching and logistic admission settings in an immutable
+`ClassifierExecutionPolicy`, injected into SAR and Automatic. `create_app()` captures
+HTTP body size, upload timeout and admission limits in `HTTPRequestPolicy`, or accepts
+an explicit policy. Changing process settings after construction does not change these
+limits for an existing runtime or HTTP app; construct a new instance to apply changes.
+Environment setting names and defaults are unchanged. These policies describe execution
+limits; feature input preparation, model decisions and failure results remain explicit
+in their pipelines. Authentication and provider configuration retain their existing
+settings access and are not part of these scheduling policies.
+
+## Classifier task lifetime
+
+SAR and automatic classification each own a `ClassifierTasks[Result]` instance
+from [inference/tasks.py](../src/llm_management/inference/tasks.py). It checks the
+configured pending limit before creating work, retains accepted tasks, and supplies
+a shielded result future. Cancelling an HTTP or batch caller does not cancel its
+worker or release admission early. Automatic classification still owns its separate
+concurrency semaphore; tasks waiting for that semaphore count towards admission.
+Model weights remain protected by their existing resource guards.
+
+Each feature submits its logistic operation and handles the returned result or
+exception itself. SAR retains its moderation flag on inference failure; automatic
+classification returns its unresolved result. Encoder batching and the decision to
+run it remain explicit in each pipeline. The task owner has no knowledge of these
+policies or model providers.
+
+Shutdown first stops new gate admission, then closes encoder batching and drains
+accepted gates. Late positive gates encounter the closed encoder queue and receive
+the feature's existing unavailable result. Gate draining still runs if encoder
+cleanup fails, and cancellation of the drain waits for accepted work to finish.
+A closed task owner cannot be reused; create a new application for a new lifetime.
 
 ## Adding or changing code
 
@@ -135,7 +230,7 @@ See [the FOI guide](foi.md) for HTTP batch examples.
 
 Keep its decision policy and results in the feature package. Supply the model and
 deployment operations it needs explicitly. Expose HTTP contracts through a router
-under `api/`, connected in `server.py`. Extend the application assembly when the
+under `api/`, connected in `http_app.py`. Extend the application assembly when the
 feature needs shared resource ownership. Keep package `__init__.py` files limited
 to deliberate public exports.
 
@@ -143,18 +238,17 @@ Test decisions directly with injected predictors, then test HTTP validation and
 error/result mapping separately. Avoid a generic cascade framework: features can
 share probability validation and execution while retaining different policies.
 
-### Add a local resource loader
+### Add or reuse a resource type
 
-Add a validated catalog loader schema and its references in
-`deployments/catalog.py`. Implement the controller in the feature's resources
-module, or in shared inference code when it is reusable. Give its load and unload
-callbacks a `LocalResource` guard. Register its cold factory in `bootstrap.py` and
-bind a provider into the relevant feature dependencies.
+Use the [resource registration guide](resource-registration.md) to choose between
+an existing local resource type, a new local loader, a remote deployment, or a
+hosted API model. It maps the current resource families, explains type versus
+instance versus feature role, and gives the declaration and integration steps.
 
-Constructors may establish a guard but must not download weights. Loading and
-inference run in worker threads under a lease. Unloading clears all owned model
-references. Test warm-up, inference, expiry and reload through the same owner, and
-verify that fast or negative paths do not load unused models.
+Local registrations are ordinary named values in `deployments/resource_types.py`.
+Each associates a schema with a lazy factory/owner binding. The catalog schema
+and application factory lookup derive from these declarations; feature policy
+stays explicit in the owning feature.
 
 ### Add a deployment backend
 
@@ -195,3 +289,58 @@ pinned v4 status prompt and tokenizer with validated, bounded remote generation;
 the checkpoint remains an integration candidate requiring independent evaluation.
 The [shared GPU/LoRA design](proposals/shared-gpu-serving.md) is a proposal; it is
 not an additional implemented FOI backend.
+
+
+## Remote inference lifetime
+
+Use `async with service.use(slug) as running` around the actual remote operation.
+The context ensures startup, acquires a lease under the deployment's lifecycle
+lock, and releases that lease on success, failure or cancellation. Nested and
+concurrent uses have independent leases. Idle cleanup, cool-down and explicit
+scale-to-zero check those leases before acting. The idle countdown restarts when
+inference finishes. HTTP middleware is no longer needed for deployment leases.
+
+Feature pipelines accept the `DeploymentInference` protocol: `get_config(slug)`
+and `use(slug)`. Pass `runtime.deployments` directly; the service implements
+this protocol, so features need only these two operations. Input preparation, checkpoint
+checks, output validation and error translation remain in each feature. Test clients
+can implement just these two operations.
+
+Inference uses `use()` to acquire and release its lease explicitly. Management uses
+`prepare()` to start or resize a deployment without holding an inference lease.
+Both operations share startup locking and cancellation handling. Feature test doubles
+implement `get_config()` and an asynchronous `use()` context manager directly.
+
+Assembly creates `DeploymentStatusCache` and `DeploymentActivityTracker` separately
+and passes both to the service. The status cache contains only `DeploymentSnapshot`
+records: observed cloud state and connection details. The tracker owns idle times,
+lease counts and startup/scaling locks. Preparation, management and cleanup read
+status snapshots directly. A slow cloud refresh cannot overwrite a live lease,
+and status eviction does not remove activity.
+
+Status and activity are separate records throughout the runtime. Seeding or
+refreshing status cannot replace live activity. Management owns single-resource and
+group command interpretation, typed outcomes and ordered group results; the service
+owns execution, locks, leases and shutdown. HTTP state stores only the runtime.
+
+### Response-analysis dependencies
+
+`analyze_response()` requires `resources` and `deployments` from its caller.
+An optional sanitizer overrides the resource container's sanitizer. The internal
+`predict()` operation also requires explicit dependencies and retains the
+sanitized-input check, checkpoint validation, remote lease and output validation.
+
+### Catalog collections
+
+Remote and local deployments, API model/search deployments and deployment groups
+are stored in typed dictionaries keyed by slug. Lookup methods retain their typed
+results and useful missing-entry errors. Iterate `.values()` to visit entries in
+configuration order; a group's member slugs remain an ordered list.
+
+The configuration boundary accepts the existing TOML arrays and validates every
+entry before building a dictionary, rejecting duplicate slugs. Keyed input is also
+accepted, provided each key matches its entry's slug. Catalog exports retain the
+existing array format, so configuration round trips do not change file structure.
+There is no second cached index to synchronize. Slug fields are immutable after
+construction: to rename an entry, create its replacement under the new key and
+revalidate the catalog, including feature and group references.

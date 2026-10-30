@@ -8,16 +8,17 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from .. import automatic, sar
-from .dependencies import DependencyAutomaticClassifier, DependencySARClassifier
+from . import DependencyRuntime
 
 
-class SARDetectionRequest(BaseModel):
+class CorrespondenceClassificationRequest(BaseModel):
+    """
+    Correspondence text and inference mode shared by the local classifiers.
+
+    Both endpoints require nonempty text.
+    """
+
     body: str = Field(min_length=1, max_length=100_000)
-    fast: bool = False
-
-
-class AutomaticResponseRequest(BaseModel):
-    body: str = Field(max_length=100_000)
     fast: bool = False
 
 
@@ -26,7 +27,7 @@ router = APIRouter(tags=["FOI endpoints"])
 
 @router.post("/endpoint/foi/sar_detection", response_model=sar.SARResult)
 async def sar_detection_endpoint(
-    sar_classifier: DependencySARClassifier, body: SARDetectionRequest
+    runtime: DependencyRuntime, body: CorrespondenceClassificationRequest
 ) -> sar.SARResult:
     """
     Given an FOI request text, returns a quick indication of whether it is
@@ -37,7 +38,7 @@ async def sar_detection_endpoint(
 
     Relevant deployment group: `group_sar_pipeline_cpu`.
     """
-    return await sar_classifier.detect(body.body, fast=body.fast)
+    return await runtime.sar.detect(body.body, fast=body.fast)
 
 
 @router.post(
@@ -45,8 +46,8 @@ async def sar_detection_endpoint(
     response_model=automatic.AutomaticResult,
 )
 async def automatic_response_detection_endpoint(
-    automatic_classifier: DependencyAutomaticClassifier,
-    body: AutomaticResponseRequest,
+    runtime: DependencyRuntime,
+    body: CorrespondenceClassificationRequest,
 ) -> automatic.AutomaticResult:
     """
     Given a response to an FOI request, returns a quick indication of whether
@@ -57,4 +58,4 @@ async def automatic_response_detection_endpoint(
 
     Relevant deployment group: `group_automatic_pipeline_cpu`.
     """
-    return await automatic_classifier.detect(body.body, fast=body.fast)
+    return await runtime.automatic.detect(body.body, fast=body.fast)

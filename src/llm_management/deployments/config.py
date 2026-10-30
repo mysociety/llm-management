@@ -5,11 +5,12 @@ Validated remote deployment configuration without cloud operations.
 from __future__ import annotations
 
 from functools import cached_property
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..settings import settings
+from .collections import SlugMappedList
 from .errors import LLMManagementError
 
 if TYPE_CHECKING:
@@ -20,17 +21,38 @@ class ExoscaleDeploymentConfig(BaseModel):
     model_config = {"extra": "forbid"}
     backend: Literal["exoscale_managed"] = "exoscale_managed"
     protocol: Literal["openai"] = "openai"
-    slug: str
+    slug: str = Field(frozen=True)
     model: str
     model_ref: str | None = None
     gpu_type: str
     gpu_count: int
-    replicas: int
+    replicas: int = Field(ge=1)
+    max_replicas: int = Field(default=1, ge=1)
     zone: str
     inference_engine_params: list[str] = []
     inference_engine_version: str | None = Field(
         default=None, pattern=r"^\d+\.\d+\.\d+$"
     )
+
+    @model_validator(mode="after")
+    def validate_replicas(self) -> Self:
+        """
+        Reject configured startup counts above the deployment's spending limit.
+        """
+        self.replica_target()
+        return self
+
+    def replica_target(self, replicas: int | None = None) -> int:
+        """
+        Bound explicit overrides and configured defaults before cloud operations.
+        """
+        target = self.replicas if replicas is None else replicas
+        if not 1 <= target <= self.max_replicas:
+            raise ValueError(
+                f"Replicas for '{self.slug}' must be between 1 and "
+                f"max_replicas={self.max_replicas}."
+            )
+        return target
 
     @property
     def deployment_name(self) -> str:
@@ -48,13 +70,19 @@ class ComputeDeploymentConfig(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-    slug: str = Field(pattern=r"^[a-zA-Z0-9_-]+$")
+    slug: str = Field(pattern=r"^[a-zA-Z0-9_-]+$", frozen=True)
     backend: Literal["exoscale_compute"]
     protocol: Literal["systemone"] = "systemone"
     template: str
 
     @cached_property
     def recipe(self) -> TemplateRecipe:
+        """
+        Resolve and cache the referenced recipe from local template configuration.
+
+        First access validates the reference and may raise LLMManagementError.
+        It does not contact a provider or provision compute.
+        """
         from ..templates.config import TemplateConfig
 
         return TemplateConfig.load().get(self.template)
@@ -88,17 +116,19 @@ class ExoscaleDeployments(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    deployment: list[DeploymentConfig] = Field(default_factory=list)
+    deployment: SlugMappedList[DeploymentConfig] = Field(default_factory=dict)
 
     def get(self, slug: str) -> DeploymentConfig:
-        for d in self.deployment:
-            if d.slug == slug:
-                return d
-        raise LLMManagementError(f"No deployment config found with slug '{slug}'.")
+        try:
+            return self.deployment[slug]
+        except KeyError as exc:
+            raise LLMManagementError(
+                f"No deployment config found with slug '{slug}'."
+            ) from exc
 
     def resolve(self, slug: Optional[str], all_: bool) -> list[DeploymentConfig]:
         if all_:
-            return self.deployment
+            return list(self.deployment.values())
         if slug is None:
             raise LLMManagementError("Provide a slug or use --all.")
         return [self.get(slug)]

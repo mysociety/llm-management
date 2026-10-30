@@ -10,20 +10,21 @@ from __future__ import annotations
 import pytest
 from starlette.testclient import TestClient
 
+from llm_management.bootstrap import assemble_runtime
 from llm_management.foi.examples import validation_examples
 from llm_management.foi.response_schemas import ExtractionOutput
-from llm_management.server import app
+from llm_management.http_app import create_app
 from tests.foi_validation import assert_response_matches, post_example
 
 pytestmark = pytest.mark.external
 
 
 @pytest.fixture(scope="module")
-def client():
+def client(external_test_run: str):
     """
     Own the API lifecycle and scale touched deployments down after the batch.
     """
-    with TestClient(app) as connection:
+    with TestClient(create_app(runtime=assemble_runtime())) as connection:
         yield connection
 
 

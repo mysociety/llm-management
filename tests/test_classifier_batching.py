@@ -14,7 +14,9 @@ from llm_management.inference.errors import (
     ClassifierInputTooLong,
     ClassifierUnavailable,
 )
+from llm_management.inference.policy import ClassifierExecutionPolicy
 from llm_management.sar.pipeline import SARClassifier
+from llm_management.settings import settings
 
 
 def test_eight_requests_flush_immediately_and_preserve_order():
@@ -173,9 +175,18 @@ def test_cascades_batch_positives_and_bypass_fast_and_negative(kind):
 
     encoder = SimpleNamespace(classify=classify)
     owner = (
-        SARClassifier(lambda: logistic, lambda: encoder)
+        SARClassifier(
+            lambda: logistic,
+            lambda: encoder,
+            policy=ClassifierExecutionPolicy.from_settings(settings),
+        )
         if kind == "sar"
-        else AutomaticClassifier(lambda: logistic, lambda: encoder, max_concurrency=4)
+        else AutomaticClassifier(
+            lambda: logistic,
+            lambda: encoder,
+            max_concurrency=4,
+            policy=ClassifierExecutionPolicy.from_settings(settings),
+        )
     )
     # Give logistic worker threads time to finish all eight gates deterministically.
     owner.batcher.delay_seconds = 1
@@ -226,11 +237,18 @@ def test_logistic_admission_survives_caller_cancellation(monkeypatch, kind):
     async def run():
         if kind == "automatic":
             classifier = AutomaticClassifier(
-                lambda: None, lambda: None, max_concurrency=1
+                lambda: None,
+                lambda: None,
+                max_concurrency=1,
+                policy=ClassifierExecutionPolicy.from_settings(settings),
             )
             monkeypatch.setattr(classifier, "classify_gate", gate)
         else:
-            classifier = SARClassifier(lambda: None, lambda: None)
+            classifier = SARClassifier(
+                lambda: None,
+                lambda: None,
+                policy=ClassifierExecutionPolicy.from_settings(settings),
+            )
             monkeypatch.setattr("llm_management.sar.pipeline._detect_sar", gate)
         request = asyncio.create_task(classifier.detect("test", fast=True))
         try:
@@ -243,6 +261,6 @@ def test_logistic_admission_survives_caller_cancellation(monkeypatch, kind):
         finally:
             release.set()
             await classifier.close()
-        assert len(classifier._gates) == 0
+        assert classifier.gate_tasks.pending_count == 0
 
     asyncio.run(run())

@@ -1,7 +1,7 @@
 """Public async FOI operations, usable from HTTP routes or batch callers.
 
 extract_questions: segmentation -> backend inference -> reconstruction.
-process_information_request: extraction -> bounded topic classification.
+process_information_request: extraction -> topic classification -> category matching.
 Deployment access is injected so this module never imports the HTTP server.
 """
 
@@ -13,12 +13,12 @@ from typing import NamedTuple
 
 import httpx2
 
-from ..deployments import TopicTokenizerDeployment, get_catalog
 from ..deployments.errors import LLMManagementError
+from ..deployments.local_config import TopicTokenizerDeployment
+from ..deployments.types import DeploymentInference
 from ..inference.errors import ClassifierOutputError, ClassifierUnavailable
-from ..sanitization import presidio
-from . import backends, topic_classification
-from .backends import DeploymentAccess
+from . import backends, category_classification, topic_classification
+from .category_schemas import CategoryMetadata
 from .question_slice import build_extraction_result, contextual_inputs, segment_request
 from .sanitization import sanitize_request
 from .schemas import ExtractionBackend, InformationRequestResult, QuestionSliceResult
@@ -57,9 +57,9 @@ class QuestionExtractionResult(NamedTuple):
 async def _extract_questions(
     request_text: str,
     *,
-    deployments: DeploymentAccess,
+    deployments: DeploymentInference,
+    resources: backends.FOIResources,
     backend: ExtractionBackend = "cpu",
-    resources: backends.FOIResources | None = None,
 ) -> QuestionExtractionResult:
     """
     Classify sanitized semantic units and reconstruct both views of the request.
@@ -69,15 +69,15 @@ async def _extract_questions(
     views use the same predictions and question IDs. Sanitization runs in a
     worker thread before either local or remote classifier inference.
 
-    Explicit resources supply app-owned model providers; otherwise the default
-    assembly is used. Translate input, availability and upstream failures into
-    the corresponding pipeline errors shared by HTTP and batch callers.
+    Injected resources supply app-owned model providers. Translate input,
+    availability and upstream failures into the corresponding pipeline errors
+    shared by HTTP and batch callers.
     """
     try:
         units = segment_request(request_text)
         sanitized = await asyncio.to_thread(
             sanitize_request,
-            resources.sanitizer() if resources is not None else presidio,
+            resources.sanitizer(),
             request_text,
             [unit.text for unit in units],
             contextual_inputs(units),
@@ -125,17 +125,17 @@ async def _extract_questions(
 async def extract_questions(
     request_text: str,
     *,
-    deployments: DeploymentAccess,
+    deployments: DeploymentInference,
+    resources: backends.FOIResources,
     backend: ExtractionBackend = "cpu",
-    resources: backends.FOIResources | None = None,
 ) -> QuestionSliceResult:
     """
     Extract questions and reconstruction diagnostics without classifying topics.
 
     Return original request text in the result while submitting sanitized text
-    to the selected CPU or remote backend. Use injected resources when supplied,
-    or the default assembly otherwise. Deployment access is required for the
-    remote backend; this function does not start a topic-model deployment.
+    to the selected CPU or remote backend using the injected resources.
+    Deployment access is required for the remote backend; this function does not
+    start a topic-model deployment.
 
     Raises PipelineInputError for invalid inputs, PipelineUnavailable for missing
     resources, and PipelineOutputError for failed or invalid upstream responses.
@@ -149,12 +149,12 @@ async def extract_questions(
 async def process_information_request(
     request_text: str,
     *,
-    deployments: DeploymentAccess,
+    deployments: DeploymentInference,
+    resources: backends.FOIResources,
     backend: ExtractionBackend = "cpu",
-    resources: backends.FOIResources | None = None,
 ) -> InformationRequestResult:
     """
-    Extract questions, then classify their topics and access regimes.
+    Extract questions, classify topics/regimes, then match FOI/EIR categories locally.
 
     Retain original text and extraction diagnostics in the result. Send only the
     sanitized request and questions to the topic model, after checking the
@@ -165,40 +165,54 @@ async def process_information_request(
     remote deployment. Record its activity even when classification fails.
     Input, resource and upstream failures propagate as the pipeline error types.
     """
+    # Extract once, reconstructing original and sanitized question text with the
+    # same IDs. Return original wording to callers; use sanitized text for inference.
     extracted = await _extract_questions(
         request_text, backend=backend, deployments=deployments, resources=resources
     )
     extraction = extracted.original
     result = InformationRequestResult(
-        **extraction.model_dump(),
+        questions=extraction.questions,
+        extraction_status=extraction.extraction_status,
+        additional_text=extraction.additional_text,
+        ignored_text=extraction.ignored_text,
+        unit_predictions=extraction.unit_predictions,
+        extraction_backend=extraction.extraction_backend,
+        extraction_model=extraction.extraction_model,
+        extraction_revision=extraction.extraction_revision,
+        promoted_continuation_index=extraction.promoted_continuation_index,
         request_text=request_text,
         classification=None,
         classification_model=None,
     )
     if not extraction.questions:
+        # Nothing remains to classify, so skip both topic and category models.
+        result.category_classification = CategoryMetadata(status="no_questions")
         return result
+
+    # Build the topic model's chat payload, sanitize the assembled messages and
+    # check prompt/output budgets before starting remote compute. Tokenizer loading
+    # and counting run in a worker thread so other async requests can keep running.
     try:
-        if resources is None:
-            payload = await asyncio.to_thread(
-                topic_classification.prepare_topic_request,
-                extracted.sanitized_request,
-                extracted.sanitized.questions,
-            )
-        else:
-            payload = await asyncio.to_thread(
-                topic_classification.prepare_topic_request,
-                extracted.sanitized_request,
-                extracted.sanitized.questions,
-                catalog=resources.catalog,
-                sanitizer=resources.sanitizer(),
-                tokenizer_guard=resources.tokenizer(),
-            )
+        payload = await asyncio.to_thread(
+            topic_classification.prepare_topic_request,
+            extracted.sanitized_request,
+            extracted.sanitized.questions,
+            catalog=resources.catalog,
+            # These providers resolve app-owned resources here; preparation loads
+            # and uses the tokenizer under its resource lease in the worker thread.
+            sanitizer=resources.sanitizer(),
+            tokenizer_guard=resources.tokenizer(),
+        )
     except ValueError as exc:
         raise PipelineInputError(str(exc)) from exc
     except Exception as exc:
         logger.warning("Question topic tokenizer unavailable: %s", type(exc).__name__)
         raise PipelineUnavailable("Question topic tokenizer unavailable") from exc
-    catalog = resources.catalog if resources is not None else get_catalog()
+
+    # Check that the remote model matches the checkpoint used by the local
+    # tokenizer and prompt limits, rather than sending this payload to another model.
+    catalog = resources.catalog
     foi = catalog.require_foi()
     slug = foi.topic_deployment
     tokenizer = catalog.local.get(foi.tokenizer, TopicTokenizerDeployment)
@@ -207,18 +221,22 @@ async def process_information_request(
         raise PipelineUnavailable(
             "FOI classification requires the configured fine-tuned topic checkpoint"
         )
+
+    # Start/resume the remote topic model and classify the sanitized questions.
+    # Expected question IDs let the response validator detect missing or reordered
+    # answers; the returned topics and regimes are retained alongside extraction.
     try:
-        deployment = await deployments.ensure_running(slug)
-        cfg = deployment.config
-        state = deployment.state
-        result.classification = await topic_classification.classify_topics(
-            payload=payload,
-            model=cfg.model,
-            deployment_url=state.deployment_url,
-            api_key=state.api_key,
-            question_ids=[q.question_id for q in extraction.questions],
-        )
-        result.classification_model = cfg.model
+        async with deployments.use(slug) as deployment:
+            cfg = deployment.config
+            state = deployment.state
+            result.classification = await topic_classification.classify_topics(
+                payload=payload,
+                model=cfg.model,
+                deployment_url=state.deployment_url,
+                api_key=state.api_key,
+                question_ids=[q.question_id for q in extraction.questions],
+            )
+            result.classification_model = cfg.model
     except ClassifierUnavailable as exc:
         raise PipelineUnavailable(str(exc)) from exc
     except LLMManagementError as exc:
@@ -232,6 +250,14 @@ async def process_information_request(
         raise PipelineOutputError(
             "Question topic classification failed or returned invalid output"
         ) from exc
-    finally:
-        deployments.touch(slug)
+
+    # Fill each FOI/EIR question's nullable category using its generated description.
+    # SAR questions stay uncategorized. Shared status/provenance goes into metadata;
+    # failures preserve question descriptions, and an absent provider disables matching.
+    if result.classification is not None and resources.category_matcher is not None:
+        result.category_classification = (
+            await category_classification.classify_categories(
+                result.classification, resources.category_matcher
+            )
+        )
     return result

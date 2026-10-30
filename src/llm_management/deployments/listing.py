@@ -12,14 +12,14 @@ from .config import ComputeDeploymentConfig, ExoscaleDeployments
 
 
 def print_deployments(config: ExoscaleDeployments) -> None:
-    for cfg in config.deployment:
+    for cfg in config.deployment.values():
         if isinstance(cfg, ComputeDeploymentConfig):
             status = backend_for(cfg).query_status()
             rich.print(
                 f"  {cfg.deployment_name:<20} backend=exoscale_compute exists={status.exists} ready={bool(status.replicas)}"
             )
     seen_zones: set[str] = set()
-    for cfg in config.deployment:
+    for cfg in config.deployment.values():
         if isinstance(cfg, ComputeDeploymentConfig):
             continue
         if cfg.zone in seen_zones:

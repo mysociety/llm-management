@@ -6,23 +6,85 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self, TypeVar
+from typing import Any, Self, TypeVar
 
 import tomllib
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    model_validator,
+)
 
 from ..settings import settings
 from .api_config import APIDeployments, EmailFinderConfig
+from .catalog_validation import (
+    validate_checkpoints,
+    validate_feature_bindings,
+    validate_foi_bindings,
+    validate_groups,
+    validate_namespaces,
+)
+from .collections import SlugMappedList
 from .config import (
     ComputeDeploymentConfig,
     DeploymentConfig,
-    ExoscaleDeploymentConfig,
     ExoscaleDeployments,
 )
 from .errors import LLMManagementError
+from .local_config import (
+    AutoClassifierDeployment,
+    AutoLogisticDeployment,
+    CategoryMatcherDeployment,
+    LocalDeployment,
+    LocalModelDeployment,
+    PresidioDeployment,
+    QuestionSliceHeadDeployment,
+    ResponseTokenizerDeployment,
+    SARClassifierDeployment,
+    SARLogisticDeployment,
+    SequenceClassifierDeployment,
+    TopicTokenizerDeployment,
+)
+from .resource_types import LocalDeploymentConfig
+
+# Preserve established catalog imports; internal callers use the owning modules.
+__all__ = [
+    "AutoClassifierDeployment",
+    "AutoLogisticDeployment",
+    "BinaryCascadePipeline",
+    "CatalogModel",
+    "CategoryMatcherDeployment",
+    "DeploymentCatalog",
+    "DeploymentGroupConfig",
+    "FOIPipeline",
+    "LocalDeployment",
+    "LocalDeploymentConfig",
+    "LocalDeployments",
+    "LocalModelDeployment",
+    "ModelCheckpoint",
+    "PresidioDeployment",
+    "QuestionSliceHeadDeployment",
+    "ResponseBudget",
+    "ResponseTokenizerDeployment",
+    "SARClassifierDeployment",
+    "SARLogisticDeployment",
+    "SanitizationConfig",
+    "SequenceClassifierDeployment",
+    "TopicBudget",
+    "TopicTokenizerDeployment",
+    "get_catalog",
+]
 
 
 class CatalogModel(BaseModel):
+    """
+    Reject unknown fields in catalog sections, bindings and budget settings.
+
+    This base shares validation policy; it does not identify a resource type.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
 
@@ -31,94 +93,24 @@ class ModelCheckpoint(CatalogModel):
     revision: str = Field(pattern=r"^[0-9a-f]{40}$")
 
 
-class LocalDeployment(CatalogModel):
-    slug: str = Field(min_length=1)
-
-
-class LocalModelDeployment(LocalDeployment):
-    model_ref: str = Field(min_length=1)
-
-
-class SequenceClassifierDeployment(LocalModelDeployment):
-    """Sequence-classifier settings; the current loader validates QuestionSlice labels."""
-
-    loader: Literal["modernbert_classifier"]
-    max_tokens: int = Field(gt=0)
-
-
-class QuestionSliceHeadDeployment(LocalModelDeployment):
-    loader: Literal["modernbert_head"]
-
-
-class TopicTokenizerDeployment(LocalModelDeployment):
-    loader: Literal["topic_tokenizer"]
-    max_tokens: int = Field(gt=0)
-
-
-class ResponseTokenizerDeployment(LocalModelDeployment):
-    """
-    Pinned tokenizer for the trained FOI status chat template.
-    """
-
-    loader: Literal["response_tokenizer"]
-
-
-class SARLogisticDeployment(LocalModelDeployment):
-    """Artifact configuration for the SAR-specific logistic loader."""
-
-    loader: Literal["sar_logistic"]
-    artifact: str = Field(min_length=1)
-
-
-class SARClassifierDeployment(LocalModelDeployment):
-    loader: Literal["sar_deberta"]
-    max_tokens: int = Field(gt=0)
-
-
-class AutoLogisticDeployment(LocalModelDeployment):
-    loader: Literal["auto_logistic"]
-    artifact: str = "model.json"
-    standalone_artifact: str = "standalone-model.json"
-
-
-class AutoClassifierDeployment(LocalModelDeployment):
-    loader: Literal["auto_deberta"]
-    max_tokens: Literal[512] = 512
-
-
-class PresidioDeployment(LocalDeployment):
-    loader: Literal["presidio"]
-    spacy_model: str = Field(min_length=1)
-    score_threshold: float = Field(ge=0, le=1, allow_inf_nan=False)
-
-
-LocalDeploymentConfig = Annotated[
-    SequenceClassifierDeployment
-    | QuestionSliceHeadDeployment
-    | TopicTokenizerDeployment
-    | ResponseTokenizerDeployment
-    | SARLogisticDeployment
-    | SARClassifierDeployment
-    | AutoLogisticDeployment
-    | AutoClassifierDeployment
-    | PresidioDeployment,
-    Field(discriminator="loader"),
-]
 L = TypeVar("L", bound=LocalDeployment)
 
 
 class LocalDeployments(CatalogModel):
-    deployment: list[LocalDeploymentConfig] = Field(default_factory=list)
+    deployment: SlugMappedList[LocalDeploymentConfig] = Field(default_factory=dict)
 
     def get(self, slug: str, kind: type[L]) -> L:
-        for deployment in self.deployment:
-            if deployment.slug == slug:
-                if not isinstance(deployment, kind):
-                    raise LLMManagementError(
-                        f"Local deployment {slug!r} requires {kind.__name__}"
-                    )
-                return deployment
-        raise LLMManagementError(f"No local deployment found with slug {slug!r}")
+        try:
+            deployment = self.deployment[slug]
+        except KeyError as exc:
+            raise LLMManagementError(
+                f"No local deployment found with slug {slug!r}"
+            ) from exc
+        if not isinstance(deployment, kind):
+            raise LLMManagementError(
+                f"Local deployment {slug!r} requires {kind.__name__}"
+            )
+        return deployment
 
 
 class TopicBudget(CatalogModel):
@@ -168,6 +160,7 @@ class FOIPipeline(CatalogModel):
     tokenizer: str
     extraction_deployment: str
     topic_deployment: str
+    category_matcher: str | None = None
     response_deployment: str | None = Field(
         default=None,
         description="Remote FOI response/status checkpoint paired with its local tokenizer.",
@@ -176,6 +169,17 @@ class FOIPipeline(CatalogModel):
     response: ResponseBudget = Field(default_factory=ResponseBudget)
     topic: TopicBudget
 
+    @model_validator(mode="after")
+    def validate_response_pair(self) -> Self:
+        """
+        Require the optional response deployment and tokenizer together.
+        """
+        if (self.response_deployment is None) != (self.response_tokenizer is None):
+            raise ValueError(
+                "FOI response deployment and tokenizer must be configured together"
+            )
+        return self
+
 
 class BinaryCascadePipeline(CatalogModel):
     logistic: str
@@ -183,7 +187,7 @@ class BinaryCascadePipeline(CatalogModel):
 
 
 class DeploymentGroupConfig(CatalogModel):
-    slug: str = Field(pattern=r"^group_.+$")
+    slug: str = Field(pattern=r"^group_.+$", frozen=True)
     deployments: list[str] = Field(min_length=1)
 
 
@@ -196,7 +200,9 @@ class DeploymentCatalog(CatalogModel):
     exoscale: ExoscaleDeployments = Field(default_factory=ExoscaleDeployments)
     local: LocalDeployments = Field(default_factory=LocalDeployments)
     api: APIDeployments = Field(default_factory=APIDeployments)
-    deployment_group: list[DeploymentGroupConfig] = Field(default_factory=list)
+    deployment_group: SlugMappedList[DeploymentGroupConfig] = Field(
+        default_factory=dict
+    )
     foi: FOIPipeline | None = None
     foi_email_finder: EmailFinderConfig | None = None
     sar: BinaryCascadePipeline | None = None
@@ -216,8 +222,13 @@ class DeploymentCatalog(CatalogModel):
         remote = value.get("exoscale", {})
         if isinstance(remote, dict):
             remote = dict(remote)
+            raw_deployments = remote.get("deployment", [])
+            if not isinstance(raw_deployments, (list, dict)):
+                return value  # Let the collection schema report an invalid input shape.
+            is_mapping = isinstance(raw_deployments, dict)
+            entries = raw_deployments.values() if is_mapping else raw_deployments
             deployments = []
-            for entry in remote.get("deployment", []):
+            for entry in entries:
                 if isinstance(entry, dict) and entry.get("model_ref") is not None:
                     entry = dict(entry)
                     ref = entry["model_ref"]
@@ -231,7 +242,11 @@ class DeploymentCatalog(CatalogModel):
                         )
                     entry["model"] = repo
                 deployments.append(entry)
-            remote["deployment"] = deployments
+            remote["deployment"] = (
+                dict(zip(raw_deployments, deployments, strict=True))
+                if is_mapping
+                else deployments
+            )
             value["exoscale"] = remote
         return value
 
@@ -245,106 +260,12 @@ class DeploymentCatalog(CatalogModel):
         share checkpoints where the pipeline requires it. Validation does not
         load models, provision compute, or contact external providers.
         """
-        remote_names = [d.slug for d in self.exoscale.deployment]
-        local_names = [d.slug for d in self.local.deployment]
-        if len(set(remote_names)) != len(remote_names) or len(set(local_names)) != len(
-            local_names
-        ):
-            raise ValueError("Deployment slugs must be unique")
-        if set(remote_names) & set(local_names):
-            raise ValueError(
-                "Remote deployments and local resources must have distinct names"
-            )
-        api_names = [d.slug for d in [*self.api.deployment, *self.api.search]]
-        if (set(remote_names) | set(local_names)) & set(api_names):
-            raise ValueError(
-                "API, remote and local deployments must have distinct names"
-            )
-        if any(name.startswith("group_") for name in api_names):
-            raise ValueError("The group_ prefix is reserved for deployment groups")
-        for deployment in [*self.exoscale.deployment, *self.local.deployment]:
-            ref = getattr(deployment, "model_ref", None)
-            if ref is not None:
-                if ref not in self.model:
-                    raise ValueError(f"Unknown model reference: {ref}")
-                if not isinstance(
-                    deployment, (ExoscaleDeploymentConfig, ComputeDeploymentConfig)
-                ):
-                    continue
-                if deployment.model != self.model[ref].repo:
-                    raise ValueError(
-                        f"Deployment model disagrees with model reference: {ref}"
-                    )
-        known = set(remote_names) | set(local_names)
-        if any(name.startswith("group_") for name in known):
-            raise ValueError("The group_ prefix is reserved for deployment groups")
-        groups = set()
-        for group in self.deployment_group:
-            if group.slug in groups:
-                raise ValueError(f"Duplicate deployment group: {group.slug}")
-            groups.add(group.slug)
-            if len(set(group.deployments)) != len(group.deployments):
-                raise ValueError(f"Duplicate members in deployment group: {group.slug}")
-            unknown = set(group.deployments) - known
-            if unknown:
-                raise ValueError(
-                    f"Unknown resources in group {group.slug}: {sorted(unknown)}"
-                )
+        validate_namespaces(self)
+        validate_checkpoints(self)
+        validate_groups(self)
         try:
-            if self.foi:
-                classifier = self.local.get(
-                    self.foi.classifier, SequenceClassifierDeployment
-                )
-                head = self.local.get(self.foi.head, QuestionSliceHeadDeployment)
-                tokenizer = self.local.get(self.foi.tokenizer, TopicTokenizerDeployment)
-                extraction = self.get(self.foi.extraction_deployment)
-                topic = self.get(self.foi.topic_deployment)
-                if (self.foi.response_deployment is None) != (
-                    self.foi.response_tokenizer is None
-                ):
-                    raise ValueError(
-                        "FOI response deployment and tokenizer must be configured together"
-                    )
-                if self.foi.response_deployment is not None:
-                    response = self.get(self.foi.response_deployment)
-                    if getattr(response, "protocol", "openai") != "openai":
-                        raise ValueError(
-                            "FOI response analysis requires an OpenAI deployment"
-                        )
-                    assert self.foi.response_tokenizer is not None
-                    response_tokenizer = self.local.get(
-                        self.foi.response_tokenizer, ResponseTokenizerDeployment
-                    )
-                    if (
-                        getattr(response, "model_ref", None)
-                        != response_tokenizer.model_ref
-                    ):
-                        raise ValueError(
-                            "Response deployment and tokenizer must share a checkpoint"
-                        )
-                if (
-                    classifier.model_ref != head.model_ref
-                    or getattr(extraction, "model_ref", None) != classifier.model_ref
-                ):
-                    raise ValueError(
-                        "QuestionSlice classifier, head and remote deployment must share a checkpoint"
-                    )
-                if getattr(topic, "model_ref", None) != tokenizer.model_ref:
-                    raise ValueError(
-                        "Topic deployment and tokenizer must share a checkpoint"
-                    )
-            if self.foi_email_finder:
-                self.api.get(self.foi_email_finder.deployment)
-                if self.foi_email_finder.search:
-                    self.api.get_search(self.foi_email_finder.search)
-            if self.sanitization:
-                self.local.get(self.sanitization.deployment, PresidioDeployment)
-            if self.automatic:
-                self.local.get(self.automatic.logistic, AutoLogisticDeployment)
-                self.local.get(self.automatic.classifier, AutoClassifierDeployment)
-            if self.sar:
-                self.local.get(self.sar.logistic, SARLogisticDeployment)
-                self.local.get(self.sar.classifier, SARClassifierDeployment)
+            validate_foi_bindings(self)
+            validate_feature_bindings(self)
         except LLMManagementError as exc:
             raise ValueError(str(exc)) from exc
         return self
@@ -358,19 +279,23 @@ class DeploymentCatalog(CatalogModel):
             raise LLMManagementError(
                 f"Cannot load deployment configuration {path}: {exc}"
             ) from exc
-        for deployment in config.exoscale.deployment:
+        for deployment in config.exoscale.deployment.values():
             if isinstance(deployment, ComputeDeploymentConfig):
-                deployment.recipe  # Check template references without provisioning.
+                # Resolve and cache the referenced recipe now, so missing or invalid
+                # templates fail during catalog loading. This only reads local config.
+                _ = deployment.recipe
         return config
 
     def get(self, slug: str) -> DeploymentConfig:
         return self.exoscale.get(slug)
 
     def get_group(self, slug: str) -> DeploymentGroupConfig:
-        for group in self.deployment_group:
-            if group.slug == slug:
-                return group
-        raise LLMManagementError(f"No deployment group found with slug {slug!r}")
+        try:
+            return self.deployment_group[slug]
+        except KeyError as exc:
+            raise LLMManagementError(
+                f"No deployment group found with slug {slug!r}"
+            ) from exc
 
     def require_foi(self) -> FOIPipeline:
         if self.foi is None:
@@ -386,6 +311,16 @@ class DeploymentCatalog(CatalogModel):
         if self.sar is None:
             raise LLMManagementError("SAR pipeline is not configured")
         return self.sar
+
+    def require_automatic(self) -> BinaryCascadePipeline:
+        """
+        Resolve automatic classifier bindings when that feature is first used.
+
+        Assembly can remain cold even when this optional pipeline is absent.
+        """
+        if self.automatic is None:
+            raise ValueError("Application requires an automatic-response pipeline")
+        return self.automatic
 
 
 @lru_cache(maxsize=1)

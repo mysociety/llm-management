@@ -11,23 +11,24 @@ from unittest.mock import Mock
 import pytest
 from starlette.testclient import TestClient
 
-from llm_management import server
-from llm_management.deployments.cache import DeploymentCache
 from llm_management.deployments.config import ExoscaleDeploymentConfig
 from llm_management.deployments.errors import DeploymentServiceError
 from llm_management.deployments.managed import ManagedDeployment
-from llm_management.deployments.types import DeploymentState
+from llm_management.deployments.status import DeploymentStatusCache
+from llm_management.deployments.types import DeploymentActivity, DeploymentSnapshot
 from llm_management.inference.resources import LocalResource, ResourceRegistry
+from llm_management.settings import settings
 
 
 @pytest.fixture
-def deployment(monkeypatch):
+def deployment(http_app, monkeypatch):
     cfg = ExoscaleDeploymentConfig(
         slug="test",
         model="test-model",
         gpu_type="test-gpu",
         gpu_count=1,
         replicas=2,
+        max_replicas=3,
         zone="test-zone",
     )
     cloud: dict[str, dict[str, Any] | None] = {"deployment": None}
@@ -58,20 +59,27 @@ def deployment(monkeypatch):
     client.reveal_deployment_api_key.side_effect = AssertionError(
         "Deployment credentials must not be queried"
     )
-    monkeypatch.setattr(server.settings, "exoscale_inference_api_key", "test-secret")
+    monkeypatch.setattr(settings, "exoscale_inference_api_key", "test-secret")
     monkeypatch.setattr(ManagedDeployment, "client", lambda self: client)
     monkeypatch.setattr(ManagedDeployment, "ensure_model", lambda *a, **kw: None)
-    monkeypatch.setattr(server.settings, "server_role", "")
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.app.state.service, "get_config", lambda slug: cfg)
-    monkeypatch.setattr(server.app.state.service, "resources", ResourceRegistry())
-    cache = DeploymentCache()
-    monkeypatch.setattr(server.app.state.service, "cache", cache)
-    return TestClient(server.app), cfg, cloud, client, cache
+    monkeypatch.setattr(settings, "server_role", "")
+    monkeypatch.setattr(settings, "auth_tokens", {})
+    monkeypatch.setattr(
+        http_app.state.runtime.deployments, "get_config", lambda slug: cfg
+    )
+    monkeypatch.setattr(
+        http_app.state.runtime.deployments, "resources", ResourceRegistry()
+    )
+    cache = DeploymentStatusCache()
+    monkeypatch.setattr(http_app.state.runtime.deployments, "status", cache)
+    return TestClient(http_app), cfg, cloud, client, cache
 
 
-@pytest.mark.parametrize("initial", [None, 0, 1, 3])
-def test_custom_replicas_create_resume_and_resize(deployment, initial):
+@pytest.mark.parametrize(
+    "initial,expected_action",
+    [(None, "created"), (0, "resumed"), (1, "scaled"), (3, "already_running")],
+)
+def test_custom_replicas_create_resume_and_resize(deployment, initial, expected_action):
     http, cfg, cloud, client, cache = deployment
     if initial is not None:
         cloud["deployment"] = {"id": "test-id", "name": "test", "replicas": initial}
@@ -80,13 +88,7 @@ def test_custom_replicas_create_resume_and_resize(deployment, initial):
     assert response.json() == {
         "slug": "test",
         "replicas": 3,
-        "action": "created"
-        if initial is None
-        else "resumed"
-        if initial == 0
-        else "scaled"
-        if initial != 3
-        else "already_running",
+        "action": expected_action,
     }
     assert cfg.replicas == 2
     assert cache.get("test").replicas == 3
@@ -115,12 +117,62 @@ def test_invalid_replicas_rejected_before_startup(deployment, replicas):
     client.create_deployment.assert_not_called()
 
 
-def test_compute_rejects_multiple_replicas(monkeypatch):
+@pytest.mark.parametrize("initial", [None, 0, 1])
+def test_replica_cap_rejects_creation_resume_and_resize(deployment, initial):
+    http, _, cloud, client, _ = deployment
+    if initial is not None:
+        cloud["deployment"] = {"id": "test-id", "name": "test", "replicas": initial}
+    response = http.post("/deployments/test/warm-up?replicas=4")
+    assert response.status_code == 422
+    assert "max_replicas=3" in response.json()["detail"]
+    client.create_deployment.assert_not_called()
+    client.scale_deployment.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "operation", ["create_deployment", "resume_from_zero", "create_or_resume"]
+)
+@pytest.mark.parametrize("replicas", [0, 4, None])
+def test_direct_backend_enforces_cap_before_cloud_calls(
+    deployment, monkeypatch, operation, replicas
+):
+    from llm_management.deployments.errors import LLMManagementError
+
+    _, cfg, _, client, _ = deployment
+    if replicas is None:
+        # Also protect against a configured count mutated after validation.
+        cfg.replicas = 4
+    backend = ManagedDeployment(cfg)
+    ensure = Mock()
+    monkeypatch.setattr(backend, "ensure_model", ensure)
+    with pytest.raises(LLMManagementError, match="max_replicas=3"):
+        getattr(backend, operation)(replicas=replicas)
+    ensure.assert_not_called()
+    assert not client.mock_calls
+
+
+def test_replica_config_defaults_to_one_and_requires_explicit_higher_cap(deployment):
+    from pydantic import ValidationError
+
+    _, cfg, _, _, _ = deployment
+    data = cfg.model_dump(exclude={"max_replicas"})
+    with pytest.raises(ValidationError, match="max_replicas=1"):
+        ExoscaleDeploymentConfig.model_validate(data)
+    data["replicas"] = 1
+    assert ExoscaleDeploymentConfig.model_validate(data).max_replicas == 1
+    data["max_replicas"] = 0
+    with pytest.raises(ValidationError):
+        ExoscaleDeploymentConfig.model_validate(data)
+
+
+def test_compute_rejects_multiple_replicas(http_app, monkeypatch):
     cfg = SimpleNamespace(backend="exoscale_compute", create_or_resume=Mock())
-    monkeypatch.setattr(server.app.state.service, "get_config", lambda slug: cfg)
+    monkeypatch.setattr(
+        http_app.state.runtime.deployments, "get_config", lambda slug: cfg
+    )
     with pytest.raises(DeploymentServiceError) as error:
         asyncio.run(
-            server.app.state.service.ensure_running(
+            http_app.state.runtime.deployments.prepare(
                 "compute", allow_start=True, replicas=2
             )
         )
@@ -128,76 +180,97 @@ def test_compute_rejects_multiple_replicas(monkeypatch):
     cfg.create_or_resume.assert_not_called()
 
 
-def test_local_resource_rejects_replicas(deployment, monkeypatch):
+def test_local_resource_rejects_replicas(http_app, deployment, monkeypatch):
     http, _, _, _, _ = deployment
     registry = ResourceRegistry()
     warm = Mock()
     registry.register(LocalResource("local", warm, Mock()))
-    monkeypatch.setattr(server.app.state.service, "resources", registry)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "resources", registry)
     assert http.post("/deployments/local/warm-up?replicas=2").status_code == 422
     warm.assert_not_called()
 
 
 @pytest.mark.parametrize("remaining", [900, 30, -10, None])
 def test_cooldown_shortens_timer_and_traffic_resets_it(
-    deployment, monkeypatch, remaining
+    http_app, deployment, monkeypatch, remaining
 ):
     http, _, _, client, cache = deployment
     monkeypatch.setattr(time, "time", lambda: 10_000.0)
-    state = DeploymentState(
+    state = DeploymentSnapshot(
         slug="test",
         exists=True,
         replicas=2,
         last_refreshed=10_000,
-        last_request_time=0 if remaining is None else 10_000 - 900 + remaining,
     )
     cache.set(state)
+    http_app.state.runtime.deployments.activity.set(
+        "test",
+        DeploymentActivity(
+            last_request_time=0 if remaining is None else 10_000 - 900 + remaining,
+        ),
+    )
     response = http.post("/deployments/test/cool-down")
     assert response.status_code == 200
     expected = 60 if remaining is None else max(0, min(60, remaining))
     assert response.json()["seconds_until_scale_to_zero"] == expected
-    assert 900 - (10_000 - state.last_request_time) <= 60
+    assert (
+        900
+        - (
+            10_000
+            - http_app.state.runtime.deployments.activity.get("test").last_request_time
+        )
+        <= 60
+    )
     client.scale_deployment.assert_not_called()
-    cache.touch("test")
-    assert state.last_request_time == 10_000
+    http_app.state.runtime.deployments.activity.touch("test")
+    assert (
+        http_app.state.runtime.deployments.activity.get("test").last_request_time
+        == 10_000
+    )
 
 
 @pytest.mark.parametrize("exists", [False, True])
 def test_cooldown_stopped_deployment_does_not_start_it(deployment, exists):
     http, _, _, client, cache = deployment
-    cache.set(DeploymentState(slug="test", exists=exists, last_refreshed=time.time()))
+    cache.set(
+        DeploymentSnapshot(slug="test", exists=exists, last_refreshed=time.time())
+    )
     response = http.post("/deployments/test/cool-down")
     assert response.json()["action"] == "already_stopped"
     assert response.json()["seconds_until_scale_to_zero"] is None
     client.create_deployment.assert_not_called()
 
 
-def test_cooldown_rejects_active_requests(deployment):
+def test_cooldown_rejects_active_requests(http_app, deployment):
     http, _, _, _, cache = deployment
     cache.set(
-        DeploymentState(
+        DeploymentSnapshot(
             slug="test",
             exists=True,
             replicas=1,
-            requests_in_flight=1,
             last_refreshed=time.time(),
-            last_request_time=time.time(),
         )
     )
-    before = cache.get("test").last_request_time
+    http_app.state.runtime.deployments.activity.begin_request("test")
+    before = http_app.state.runtime.deployments.activity.get("test").last_request_time
     assert http.post("/deployments/test/cool-down").status_code == 409
-    assert cache.get("test").last_request_time == before
+    assert (
+        http_app.state.runtime.deployments.activity.get("test").last_request_time
+        == before
+    )
 
 
 @pytest.mark.parametrize("elapsed,stopped", [(59, False), (61, True)])
-def test_idle_scaler_observes_cooldown(deployment, monkeypatch, elapsed, stopped):
+def test_idle_scaler_observes_cooldown(
+    http_app, deployment, monkeypatch, elapsed, stopped
+):
     http, _, cloud, client, cache = deployment
     now = [10_000.0]
     monkeypatch.setattr(time, "time", lambda: now[0])
     cloud["deployment"] = {"id": "test-id", "name": "test", "replicas": 2}
     assert http.post("/deployments/test/cool-down").status_code == 200
     # Refreshes must preserve the shortened idle timer.
-    cache.refresh(server.app.state.service.get_backend("test"))
+    cache.refresh(http_app.state.runtime.deployments.get_backend("test"))
     now[0] += elapsed
     sleeps = 0
 
@@ -209,10 +282,12 @@ def test_idle_scaler_observes_cooldown(deployment, monkeypatch, elapsed, stopped
 
     monkeypatch.setattr(asyncio, "sleep", sleep_once)
     monkeypatch.setattr(
-        server.app.state.service, "resources", SimpleNamespace(expire=Mock())
+        http_app.state.runtime.deployments,
+        "resources",
+        SimpleNamespace(expire=Mock()),
     )
     with pytest.raises(asyncio.CancelledError):
-        asyncio.run(server.app.state.service.idle_scaler())
+        asyncio.run(http_app.state.runtime.deployments.idle_scaler())
     assert client.scale_deployment.call_count == int(stopped)
     assert cache.get("test").replicas == (0 if stopped else 2)
 
@@ -247,7 +322,7 @@ def test_missing_inference_key_keeps_status_readable(deployment, monkeypatch):
 
     _, cfg, cloud, client, _ = deployment
     cloud["deployment"] = {"id": "test-id", "name": cfg.deployment_name, "replicas": 1}
-    monkeypatch.setattr(server.settings, "exoscale_inference_api_key", "")
+    monkeypatch.setattr(settings, "exoscale_inference_api_key", "")
     backend = ManagedDeployment(cfg)
 
     status = backend.query_status()

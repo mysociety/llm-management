@@ -7,7 +7,7 @@ from llm_management.deployments import DeploymentCatalog
 from llm_management.foi import topic_classification
 
 
-def test_catalog_drives_topic_budget_and_checkpoint(monkeypatch):
+def test_catalog_drives_topic_budget_and_checkpoint():
     data = DeploymentCatalog.load().model_dump()
     data["model"]["foi_topic"]["repo"] = "example/question-topics"
     for deployment in data["exoscale"]["deployment"]:
@@ -17,10 +17,12 @@ def test_catalog_drives_topic_budget_and_checkpoint(monkeypatch):
     configured = DeploymentCatalog.model_validate(data)
     assert configured.get("foi_topic").model == "example/question-topics"
     assert configured.require_foi().topic.max_questions == 5
-    monkeypatch.setattr(topic_classification, "get_catalog", lambda: configured)
-    assert topic_classification.completion_budget(5) == 1024
+    assert (
+        topic_classification.completion_budget(5, topic=configured.require_foi().topic)
+        == 1024
+    )
     with pytest.raises(ValueError, match="1–5"):
-        topic_classification.completion_budget(6)
+        topic_classification.completion_budget(6, topic=configured.require_foi().topic)
 
 
 @pytest.mark.parametrize(
@@ -48,11 +50,11 @@ def test_response_deployment_reference_must_resolve():
         DeploymentCatalog.model_validate(data)
 
 
-def test_response_deployment_requires_openai_protocol():
+def test_response_deployment_requires_managed_openai_resource():
     data = DeploymentCatalog.load().model_dump()
     data["foi"]["response_deployment"] = "clef"
 
-    with pytest.raises(ValidationError, match="requires an OpenAI deployment"):
+    with pytest.raises(ValidationError, match="requires a managed OpenAI deployment"):
         DeploymentCatalog.model_validate(data)
 
 
@@ -81,3 +83,17 @@ def test_status_configuration_rejects_incompatible_resources(change):
         ]
     with pytest.raises(ValidationError):
         DeploymentCatalog.model_validate(data)
+
+
+@pytest.mark.parametrize("missing", ["response_deployment", "response_tokenizer"])
+def test_response_pair_is_validated_without_a_catalog(missing):
+    from llm_management.deployments.catalog import FOIPipeline
+
+    data = DeploymentCatalog.load().require_foi().model_dump()
+    data[missing] = None
+    with pytest.raises(ValidationError, match="must be configured together"):
+        FOIPipeline.model_validate(data)
+
+
+def test_catalog_without_foi_needs_no_foi_bindings():
+    assert DeploymentCatalog().foi is None

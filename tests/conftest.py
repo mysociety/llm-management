@@ -3,13 +3,64 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Generator
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
+pytest_plugins = ["pytester"]
+
 if TYPE_CHECKING:
+    from fastapi import FastAPI
+
+    from llm_management.bootstrap import ApplicationRuntime
     from llm_management.deployments.catalog import DeploymentCatalog
+    from llm_management.foi.backends import FOIResources
+    from llm_management.sanitization import PresidioSanitizer
+
+
+@pytest.fixture(autouse=True)
+def local_http_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Explicitly opt in to unauthenticated in-process HTTP tests.
+
+    Authentication tests override these values to exercise production defaults.
+    """
+    from llm_management.settings import settings
+
+    monkeypatch.setattr(settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "allow_unauthenticated", True)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def external_test_run(request: pytest.FixtureRequest):
+    """
+    Isolate opted-in live tests before any application fixtures are assembled.
+    """
+    if not request.config.getoption("run_external") or not any(
+        item.get_closest_marker("external") for item in request.session.items
+    ):
+        yield None
+        return
+
+    from tests.external_safety import isolated_external_run
+
+    with isolated_external_run() as role:
+        yield role
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """
+    A marker selection alone must never authorize paid or destructive tests.
+    """
+    if not config.getoption("run_external"):
+        skip = pytest.mark.skip(reason="Live tests require --run-external")
+        for item in items:
+            if item.get_closest_marker("external"):
+                item.add_marker(skip)
 
 
 class FakeAnalyzer:
@@ -29,26 +80,65 @@ class FakeAnalyzer:
         return results
 
 
-@pytest.fixture(autouse=True)
-def local_presidio_for_unit_tests(monkeypatch, request):
-    if request.node.get_closest_marker("external"):
-        return
-    from llm_management.bootstrap import default_application
+@pytest.fixture
+def sanitizer() -> Generator[PresidioSanitizer, None, None]:
+    """
+    Provide an isolated sanitizer with deterministic recognizers and no model loads.
+    """
+    from llm_management.deployments import get_catalog
+    from llm_management.inference.resources import ResourceRegistry
+    from llm_management.sanitization import PresidioSanitizer
 
-    monkeypatch.setattr(default_application().sanitizer(), "_analyzer", FakeAnalyzer())
+    owner = PresidioSanitizer(
+        config=get_catalog().require_sanitizer(), registry=ResourceRegistry()
+    )
+    owner._analyzer = FakeAnalyzer()
+    yield owner
+    owner.resource.release()
 
 
-@pytest.fixture(autouse=True)
-def isolated_application(monkeypatch, request):
-    if request.node.get_closest_marker("external") or not hasattr(
-        request.module, "server"
-    ):
-        return
-    from llm_management import server
+@pytest.fixture
+def runtime() -> Generator[ApplicationRuntime, None, None]:
+    """
+    Assemble an isolated runtime and close its resources after the test.
+    """
+    import asyncio
 
-    monkeypatch.setattr(server, "app", server.create_app())
-    sanitizer = server.app.state.application.sanitizer()
-    monkeypatch.setattr(sanitizer, "_analyzer", FakeAnalyzer())
+    from llm_management.bootstrap import assemble_runtime
+
+    runtime = assemble_runtime()
+    runtime.sanitizer()._analyzer = FakeAnalyzer()
+    yield runtime
+    asyncio.run(runtime.close())
+
+
+@pytest.fixture
+def http_app(
+    runtime: ApplicationRuntime, monkeypatch: pytest.MonkeyPatch
+) -> Generator[FastAPI, None, None]:
+    """
+    Own an HTTP app and close its runtime before test patches are restored.
+
+    Tests request this fixture explicitly. TestClient may run the lifespan itself;
+    runtime.close() is idempotent, so teardown also covers clients without lifespan.
+    """
+    import asyncio
+
+    from llm_management.http_app import create_app
+
+    app = create_app(runtime=runtime)
+    try:
+        yield app
+    finally:
+        asyncio.run(runtime.close())
+
+
+@pytest.fixture
+def foi_resources(runtime: ApplicationRuntime) -> FOIResources:
+    """
+    Explicit FOI providers with the unit-test sanitizer and categories disabled.
+    """
+    return runtime.foi.model_copy(update={"category_matcher": None})
 
 
 @pytest.fixture
@@ -85,6 +175,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     """
     Select paid model comparisons independently of frozen research fixtures.
     """
+    parser.addoption(
+        "--run-external",
+        action="store_true",
+        default=False,
+        help="Allow paid live tests in a fresh, isolated test deployment namespace.",
+    )
     group = parser.getgroup("FOI email model evaluations")
     group.addoption(
         "--foi-model",

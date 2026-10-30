@@ -1,7 +1,8 @@
 # How the information-request pipeline works
 
 `POST /endpoint/foi/extract_questions` takes an FOI request and returns a structured
-set of questions with FOI/EIR/SAR status and a short description. Relevant deployment
+set of questions with FOI/EIR/SAR status, short descriptions and predefined category
+matches. Relevant deployment
 group: `group_foi_pipeline_cpu` for the default `backend=cpu`, or
 `group_foi_pipeline` for `backend=exoscale`.
 
@@ -22,7 +23,9 @@ flowchart TD
     D --> E{Any questions found?}
     E -->|No| F[Return extraction details without classification]
     E -->|Yes| G[FOI topic model classifies sanitized questions and final chat payload]
-    G --> H[Check the output and return the combined result]
+    G --> H[Validate generated topics and regimes]
+    H --> I[Match FOI/EIR descriptions to predefined categories locally]
+    I --> J[Return extraction, topics and category matches]
 ```
 
 ## Which fine-tuned models are used?
@@ -94,13 +97,98 @@ For each question, FOI topic model returns:
 - An access regime: `FOI` (Freedom of Information), `EIR` (Environmental Information Regulations), or `SAR` (subject access to personal data).
 - A short topic describing the subject of the question.
 
-It also returns a list of topics for the request as a whole. For example, “Please provide the latest air pollution monitoring report” might receive `EIR` and a topic such as “Air pollution monitoring”. These are model predictions.
+For example, “Please provide the latest air pollution monitoring report” might
+receive `EIR` and a topic such as “Air pollution monitoring”. These are model
+predictions.
 
-FOI topic model is constrained to return the expected JSON structure. We then check that question IDs match the extracted questions in order, regimes are allowed, topics are nonblank, and request-level topics are unique. Incomplete or invalid output is an error. Classification does not erase an `uncertain` extraction status.
+The topic model is constrained to its trained JSON structure. We check question
+IDs, regimes and nonblank topics before converting its output to the application's
+`TopicOutput`. The trained output still includes a legacy `request_topics` list;
+we validate it for compatibility with the checkpoint, then discard it. It is not
+returned or used for category matching. Only the model-facing
+`GeneratedTopicQuestion`/`GeneratedTopicOutput` schemas go to the generative model;
+they have no category field and reject attempts to generate one.
 
-The classification stage returns a `TopicOutput`. Its `questions` field contains `TopicQuestion` objects with a `question_id`, `regime` and `topic`; its `request_topics` field is a list of topic strings for the whole request. `TopicQuestion` does not repeat the source text: use its ID to find the corresponding `ReconstructedQuestion`.
+`TopicQuestion` adds `category`, defaulting to null, to each generated description.
+The internal pipeline retains these questions in `InformationRequestResult.classification`.
+The HTTP `ExtractQuestionsResponse` joins them with original question text by ID,
+so each public question contains `question_id`, `text`, `regime`, `topic` and
+`category`. Extraction uncertainty is preserved.
 
-The internal pipeline returns an `InformationRequestResult`. Over HTTP, the full endpoint returns `ExtractQuestionsResponse`: each question combines `question_id`, `text`, `regime` and `topic`. Whole-request topics are in `request_topics`, and technical details are grouped under `meta`. These models are defined in [schemas.py](../src/llm_management/foi/schemas.py).
+## 5. Assign each question a predefined category
+
+After topic generation, [category_classification.py](../src/llm_management/foi/category_classification.py)
+embeds only the FOI/EIR question descriptions on CPU and matches them to a frozen
+181-category taxonomy. It fills the category on the same question object:
+
+```json
+{
+  "question_id": "q1",
+  "text": "Please provide quarterly drinking water sampling reports.",
+  "regime": "EIR",
+  "topic": "Quarterly drinking water sampling reports",
+  "category": {"category_type": "foi_v1", "category_slug": "drinking_water"}
+}
+```
+
+A no-match, SAR question or disabled/unavailable matcher leaves `category: null`.
+The category object contains only the taxonomy type and category slug. Group
+memberships can be looked up from the taxonomy; scores are internal similarities,
+not confidence probabilities. There is no request-level category list or summary.
+Repeated descriptions are embedded once and their matches attached to every
+corresponding question.
+
+Shared operational details live in `meta.category_classification`: `status`
+(`completed`, `unavailable`, `not_configured`, `not_applicable`, or `no_questions`)
+and `provenance` (index repository, revision and checksum, encoder repository and
+revision). A successful no-match has status `completed`; operational failures have
+status `unavailable` and preserve extraction and question descriptions. SAR-only
+requests return `not_applicable` without loading the matcher. Requests without
+extracted questions return `no_questions`. Categories are applied only after a
+complete successful prediction batch.
+
+The inference implementation is owned by this repository. It downloads only
+`index.json` and `manifest.json` from the pinned
+`mySociety/foi-summary-to-topic-2026-10-29-1` repository, and explicitly allowed
+tokenizer/config files and safetensors weights from the pinned
+`sentence-transformers/all-MiniLM-L6-v2` encoder. It never downloads or imports
+the upstream `predict.py`; Transformers uses `trust_remote_code=False`,
+`local_files_only=True` when loading the downloaded snapshot, and
+`use_safetensors=True` for weights. The index checksum is verified against both
+the manifest and trusted deployment configuration. Encoder identity, category
+order, unique category slugs and normalized vector dimensions are also checked.
+Pydantic models validate only the fields used for inference, ignoring unused
+research metadata such as groups, example descriptions and evaluation reports.
+The complete index bytes remain protected by the trusted checksum. The inference
+contract is defined in
+[category_index.py](../src/llm_management/foi/category_index.py); the loader returns
+a validated `CategoryIndex`, and runtime matrices and loaded model state use
+typed named structures.
+
+Encoding uses attention-mask mean pooling, L2 normalization and truncation at
+256 wordpieces. If the maximum similarity to **any centroid** is strictly below
+`0.50`, the match is rejected. Otherwise the winning category maximizes the
+equal-weight blend of centroid and category-description cosine similarities.
+Ties use category label order. The rejection gate is independent of the blended
+winner. This reproduces the published inference rule without changing the
+existing Transformers or huggingface-hub versions.
+
+The app caches the encoder, tokenizer, index and matrices under the
+`foi_categories_cpu` local resource. Warm-up and idle unloading use the same
+resource lease as inference. Both FOI extraction pipeline groups warm it. Hub
+downloads use `HF_TOKEN` when configured and the application's
+`CLASSIFIER_CACHE_DIR`; prefetch with warm-up, then set `HF_HUB_OFFLINE=1` for
+offline serving with a populated cache. Removing `[foi].category_matcher`
+disables enrichment; also remove the resource from groups if it should not warm.
+The extraction-only endpoint never runs category matching. Mocks retain their
+gold question topics, leave categories null with `not_configured` metadata, and
+perform no category inference.
+
+The published development result was 215 correct and 21 incorrect assignments,
+with 13 valid descriptions rejected, on a mostly synthetic set with only two
+true no-matches. The threshold is a cautious policy choice, not independently
+validated real-request performance. Evaluate actual pipeline descriptions
+against reviewed categories before relying on assignments operationally.
 
 ## Limits and waiting
 
@@ -110,11 +198,11 @@ Local model work runs outside the async event loop, and remote calls are awaited
 
 ## Prepare both deployments before a batch
 
-For batches using Exoscale extraction, call `POST /deployments/group_foi_pipeline/warm-up` before submitting requests. The `group_foi_pipeline` group in [deployments.toml](../conf/deployments.toml) contains `question_slice` and `foi_topic`, plus local `presidio`, `question_slice_head_cpu`, and `question_extractor_tokenizer` resources. The endpoint warms local resources and starts or resumes remote deployments concurrently, so their startup waits overlap. It does not run inference or change the order of extraction and classification within a request.
+For batches using Exoscale extraction, call `POST /deployments/group_foi_pipeline/warm-up` before submitting requests. The `group_foi_pipeline` group in [deployments.toml](../conf/deployments.toml) contains `question_slice` and `foi_topic`, plus local `presidio`, `question_slice_head_cpu`, `question_extractor_tokenizer`, and `foi_categories_cpu` resources. The endpoint warms local resources and starts or resumes remote deployments concurrently, so their startup waits overlap. It does not run inference or change the order of extraction and classification within a request.
 
 A known group returns HTTP 200 with an overall `success` flag and a `deployments` list containing each member's `slug`, `success`, `replicas` and `error`. Check the flags before starting the batch: one member can fail while another succeeds. Failed members have null `replicas`; successful members have null `error`. Unknown groups return 404. The usual API authentication applies.
 
-Successful deployments are left running if another member fails, and you can retry the group call. Warm-up resets each member's idle timer but does not reserve it indefinitely; normal idle scaling still applies. For CPU extraction, use `POST /deployments/group_foi_pipeline_cpu/warm-up` to warm Presidio, the CPU QuestionSlice classifier, the Granite tokenizer, and the remote topic deployment. Ordinary requests still start deployments on demand if you do not warm them first.
+Successful deployments are left running if another member fails, and you can retry the group call. Warm-up resets each member's idle timer but does not reserve it indefinitely; normal idle scaling still applies. For CPU extraction, use `POST /deployments/group_foi_pipeline_cpu/warm-up` to warm Presidio, the CPU QuestionSlice classifier, the Granite tokenizer, the local category matcher, and the remote topic deployment. Ordinary requests still start deployments on demand if you do not warm them first.
 
 ## Where to start reading or calling the code
 
@@ -123,25 +211,26 @@ Successful deployments are left running if another member fails, and you can ret
 - `extract_questions()` runs extraction only.
 - `process_information_request()` runs extraction followed by classification.
 
-Both are async functions that can also be called from batch code. They receive access to the application's deployment lookup, startup and activity tracking. The HTTP wrappers in [api/foi.py](../src/llm_management/api/foi.py) expose them as:
+Both are async functions that can also be called from batch code. Callers must pass the runtime's `FOIResources` explicitly as `resources=runtime.foi`, alongside its deployment lookup, startup and activity tracking. See the [direct Python example](architecture.md#direct-python-use). The HTTP wrappers in [api/foi.py](../src/llm_management/api/foi.py) expose them as:
 
 - `POST /endpoint/foi/extract_questions/extract?backend=cpu`
 - `POST /endpoint/foi/extract_questions?backend=cpu`
 
 Both accept `{"body": "Your correspondence here"}`. Use `backend=exoscale` for remote extraction.
 
-The full response contains `request_text`, `questions`, `extraction_status`, `additional_text`, `request_topics` and `meta`. For example, a question is:
+The full response contains `request_text`, `questions`, `extraction_status`, `additional_text` and `meta`. For example, a question is:
 
 ```json
 {
   "question_id": "q1",
   "text": "Please provide monthly nitrogen dioxide readings near primary schools during 2024.",
   "regime": "EIR",
-  "topic": "nitrogen dioxide readings near schools"
+  "topic": "nitrogen dioxide readings near schools",
+  "category": {"category_type": "foi_v1", "category_slug": "air_quality"}
 }
 ```
 
-`meta` contains `extraction_backend`, `extraction_model`, `extraction_revision`, `classification_model`, `ignored_text` and `promoted_continuation_index`. The full response omits `unit_predictions`; use `/extract_questions/extract` for those diagnostics. When no questions are found, `questions` and `request_topics` are empty and `meta.classification_model` is null. The mock uses the same response shape. Pass the complete result, its `questions` list, or an object containing that list as `request` to `/response_status`.
+`meta` contains `extraction_backend`, `extraction_model`, `extraction_revision`, `classification_model`, `ignored_text`, `promoted_continuation_index` and `category_classification`. The full response omits `unit_predictions`; use `/extract_questions/extract` for those diagnostics. When no questions are found, `questions` is empty and `meta.classification_model` is null. The mock uses the same response shape. Pass the complete result, its `questions` list, or an object containing that list as `request` to `/response_status`.
 
 ## Response status analysis
 
@@ -301,6 +390,14 @@ vLLM's native `/classify`, so this backend serves the **fine-tuned encoder** thr
 **original fine-tuned classification head** locally. This is the same trained model
 split across devices, not an unadapted embedding model or a replacement classifier.
 Prefix caching must be disabled for this encoder on the tested vLLM 0.29.0 runtime.
+
+After resume, the managed gateway can briefly return HTTP 404 with a structured
+`deployment not found` error even though the provider reports a running replica.
+Embedding requests retry only that specific response, with delays of 1, 2, 4, 8
+and 15 seconds. The inference lease stays held during retries; cancellation and
+other HTTP errors propagate normally. Exhausted retries retain the existing
+pipeline error response, and diagnostic logs record the upstream HTTP status
+without recording correspondence or credentials.
 
 GPU probabilities may differ slightly due to float16 execution. Keep the imported
 encoder and local head from the same checkpoint release. The local head uses the shared checkpoint’s pinned `revision`;
@@ -535,7 +632,7 @@ reference validation and lifecycle activity. Live semantic examples are in
 `tests/test_foi_status_external.py`; run them explicitly:
 
 ```sh
-poetry run pytest -m external tests/test_foi_status_external.py -q
+poetry run pytest --run-external -m external tests/test_foi_status_external.py -q
 ```
 
 These tests may provision the configured Exoscale GPU deployment. They check
@@ -573,7 +670,7 @@ examples drive the mocks and live tests. For paid validation using stable test
 names, run:
 
 ```sh
-SERVER_ROLE=test poetry run pytest -m external -v \
+SERVER_ROLE=test poetry run pytest --run-external -m external -v \
   tests/test_question_slice_external.py \
   tests/test_foi_pipeline_external.py \
   tests/test_foi_status_external.py \
@@ -586,8 +683,9 @@ Each alternative includes a review reason and observation provenance; the origin
 dataset fields remain unchanged. Response-analysis items must match completely.
 Outcome/event order does not matter, but missing, extra or duplicate items fail.
 Pipeline tests check extraction before topic classification, require exact question
-IDs/order and regimes, and accept topic wording only when the complete output
-matches gold or a reviewed alternative. Unrecognised wording still fails for review.
+IDs/order and regimes, and accept question-topic wording only when the complete question classification
+matches gold or a reviewed alternative. Legacy request summaries and locally assigned
+categories are excluded from this comparison. Unrecognised wording still fails for review.
 JUnit properties record exact gold matches and reviewed matches for extraction and
 topics, plus case, endpoint/backend, status, latency and complete actual output (including model
 provenance where the API returns it). Test failures distinguish transport errors,
@@ -724,8 +822,8 @@ slots and cooldowns, including readers used by other features. Separate workers
 or replicas do not share this state; deployment-wide limits need shared
 coordination or a single crawler process. Direct batch callers should share a
 `CrawlPolicy` between their `llm_management.web.pages.PageReader` instances.
-Callers retaining an application from `assemble_application()` can pass its
-`application.crawl_policy` to those readers.
+Callers retaining a runtime from `assemble_runtime()` can pass its
+`runtime.crawl_policy` to those readers.
 
 Each `PageReader` can supply its own `user_agent`. That same identity is used
 for robots discovery, rule matching, `Crawl-delay` and all page requests,

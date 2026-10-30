@@ -10,7 +10,8 @@ from collections.abc import Iterator
 import pytest
 from starlette.testclient import TestClient
 
-from llm_management.server import app
+from llm_management.bootstrap import assemble_runtime
+from llm_management.http_app import create_app
 
 DEPLOYMENTS = (
     "toast_llama",
@@ -26,9 +27,10 @@ pytestmark = [
 @pytest.fixture(scope="session", params=DEPLOYMENTS, ids=DEPLOYMENTS)
 def deployment_client(
     request: pytest.FixtureRequest,
+    external_test_run: str,
 ) -> Iterator[tuple[TestClient, str]]:
     deployment = request.param
-    with TestClient(app) as c:
+    with TestClient(create_app(runtime=assemble_runtime())) as c:
         resp = c.post(f"/deployments/{deployment}/warm-up")
         resp.raise_for_status()
         yield c, deployment

@@ -7,10 +7,11 @@ from __future__ import annotations
 import pytest
 from starlette.testclient import TestClient
 
+from llm_management.bootstrap import assemble_runtime
 from llm_management.deployments import get_catalog
 from llm_management.foi.examples import ExtractionExpectation, validation_examples
 from llm_management.foi.schemas import ExtractQuestionsResponse, TopicOutput
-from llm_management.server import app
+from llm_management.http_app import create_app
 from tests.foi_validation import (
     assert_extraction_matches,
     assert_topics_match,
@@ -21,11 +22,11 @@ pytestmark = pytest.mark.external
 
 
 @pytest.fixture(scope="module")
-def client():
+def client(external_test_run: str):
     """
     Release model resources and scale touched deployments down after the batch.
     """
-    with TestClient(app) as connection:
+    with TestClient(create_app(runtime=assemble_runtime())) as connection:
         yield connection
 
 
@@ -60,7 +61,6 @@ def test_full_pipeline_validation(client, backend, example, record_property):
         TopicOutput.model_validate(
             {
                 "questions": [q.model_dump(exclude={"text"}) for q in result.questions],
-                "request_topics": result.request_topics,
             }
         ),
         example.classification,
@@ -85,5 +85,4 @@ def test_no_questions_skips_classification(client, backend):
     result = ExtractQuestionsResponse.model_validate(response.json())
     assert result.extraction_status == "no_questions_found"
     assert result.questions == []
-    assert result.request_topics == []
     assert result.meta.classification_model is None

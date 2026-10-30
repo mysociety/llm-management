@@ -16,14 +16,19 @@ named VM templates. Its serving image is published from
 [mysociety/systemone-container](https://github.com/mysociety/systemone-container/).
 See [the template guide](../EXOSCALE_TEMPLATES.md) for creation, testing and cleanup.
 
-Temporary VMs, snapshots, SSH keys and groups are deleted; the reusable template is retained.
-Live checks on 8 October 2026 verified offline model loading, HTTP and native
-Pydantic AI requests, tunnel recovery and cleanup. A fresh template VM completed
-its challenges in 5m 33s. The [template guide](../EXOSCALE_TEMPLATES.md#live-lifecycle-verification)
-records the template ID and lifecycle results.
+Temporary VMs, snapshots, SSH keys and groups are deleted; the reusable template
+is retained.
 
 To request a replica count, call `POST /deployments/{slug}/warm-up?replicas=3`.
-The count must be a positive integer. Omitting it uses the configured count for
+The count must be a positive integer no greater than the managed deployment's
+`max_replicas` in `conf/deployments.toml`. The cap defaults to **1**; explicitly set
+`max_replicas = 3` in that deployment's block to allow the example above. Configured
+`replicas` must also fit within the cap. HTTP overrides above the cap return 422;
+direct CLI/backend creation and resizing enforce the same ceiling before writes
+to the cloud provider. Lowering the cap does not automatically shrink an already
+running deployment; explicitly resize it if needed.
+
+Omitting the count uses the configured count for
 creation/resume and leaves running deployments at their current count. The
 configuration is not changed. Resizing a running deployment returns action
 `scaled`. Compute deployments support only `replicas=1`; local CPU resources
@@ -49,8 +54,8 @@ the shortened countdown expires.
 Groups use the same lifecycle URLs as individual deployments. Every group slug
 must start with `group_` followed by a nonempty name; individual local and remote
 deployments cannot use that prefix. Catalog validation enforces this at load time.
-For example, use `group_foi_response_pipeline` as `{slug}` below. The separate
-`/deployment-group/...` routes are removed. Group warm-up rejects `replicas`
+For example, use `group_foi_response_pipeline` as `{slug}` below.
+Group warm-up rejects `replicas`
 overrides with HTTP 422 before starting any members.
 
 Groups support these authenticated actions for both local and remote members:
@@ -102,15 +107,20 @@ total context and reserved output budget.
 
 ### Paid integration tests
 
-Run `SERVER_ROLE=test poetry run pytest -m external -v` to exercise live deployments.
-This uses stable names such as `clef_test`, `foi_status_test`, and `olmo3_7b_test`.
+Run `SERVER_ROLE=test poetry run pytest --run-external -m external -v -s` to exercise
+live deployments. Without `--run-external`, pytest skips these tests even when
+selected by marker. `script/test --all` supplies the flag.
+Only configured roles `test` and `test_<name>` are accepted. Every live session
+assigns a fresh `test_<random ID>` role to all deployment names and saves recovery
+state under `COMPUTE_STATE_DIR/pytest/<role>`. Setup prints the role and directory.
 Toast tests are temporarily disabled with a module-level skip in `tests/test_toast.py`, even
 when selected explicitly. Remove that skip only when Toast testing is needed again.
-The Clef Compute test accepts `SERVER_ROLE=test` and deletes the test VM and access
-resources. Keep `COMPUTE_STATE_DIR` persistent so interrupted runs can recover their
-resource state. Sequential runs can reuse these names and the same state directory.
-For concurrent isolated runs, use `SERVER_ROLE=test_<run>` and a separate
-`COMPUTE_STATE_DIR` per run across all backends.
+The Clef Compute test refuses existing VMs, SSH keys, security groups and manifests.
+Its cleanup checks the VM ID recorded during this run before deleting the VM and
+access resources, including on startup failure and application shutdown. A VM
+whose ID was not saved is retained for manual recovery. Keep `COMPUTE_STATE_DIR`
+persistent and use the printed role and directory to inspect and clean up an
+interrupted run; a new test session creates a new namespace instead of adopting it.
 
 ### Managed inference authentication
 
@@ -122,12 +132,18 @@ The application uses that configured key for managed inference and never queries
 Exoscale for deployment-specific credentials. Deployment status remains readable
 without a key, but inference requires it.
 
-Managed deployments can set `inference_engine_version` to select a provider runtime
-explicitly. Omitting it keeps the provider default. OLMo selects `0.29.0`:
-the provider default `0.31.0` crashes in Anthropic endpoint initialization when it
-probes OLMo's template without defining `tools`. The 0.29.0 code path avoids that
-probe when no explicit template override is supplied. See the upstream
-[0.29.0 initialization](https://github.com/vllm-project/vllm/blob/v0.29.0/vllm/entrypoints/anthropic/serving.py)
-and [0.31.0 probe](https://github.com/vllm-project/vllm/blob/v0.31.0/vllm/entrypoints/anthropic/serving.py).
-Changing this pin requires a fresh deployment
-and live inference checks.
+### Managed inference runtime settings
+
+Managed deployments can set `inference_engine_version` to pin a provider runtime.
+Omitting it uses the provider default.
+
+- `foi_topic` and `foi_status` pin `0.32.0` with
+  `disable_any_whitespace=false`. Allowing whitespace avoids forcing compact JSON
+  during generation, which can change model output and cause status omissions.
+  Both retain schema-constrained output and application validation.
+- `olmo3_7b` pins `0.29.0` with `disable_any_whitespace=true` because newer tested
+  runtimes fail during startup when probing its chat template.
+
+Editing the catalog does not migrate existing deployments. Runtime upgrades
+require a fresh deployment and live checks of startup, inference and semantic
+outputs; valid JSON alone does not establish compatibility.

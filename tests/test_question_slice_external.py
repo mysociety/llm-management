@@ -3,18 +3,19 @@
 import pytest
 from starlette.testclient import TestClient
 
+from llm_management.bootstrap import assemble_runtime
 from llm_management.foi.examples import ExtractionExpectation, validation_examples
 from llm_management.foi.schemas import QuestionSliceResult
-from llm_management.server import app
+from llm_management.http_app import create_app
 from tests.foi_validation import assert_extraction_matches, post_example
 
 pytestmark = pytest.mark.external
 
 
 @pytest.fixture(scope="module")
-def client():
+def client(external_test_run: str):
     # App shutdown scales deployments touched by this client back to zero.
-    with TestClient(app) as test_client:
+    with TestClient(create_app(runtime=assemble_runtime())) as test_client:
         yield test_client
 
 

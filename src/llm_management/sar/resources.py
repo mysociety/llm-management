@@ -4,8 +4,8 @@ Lazy local SAR model resources and release policy checks.
 
 from __future__ import annotations
 
-from ..deployments import SARLogisticDeployment, get_catalog
-from ..deployments.catalog import DeploymentCatalog, SARClassifierDeployment
+from ..deployments.catalog import DeploymentCatalog
+from ..deployments.local_config import SARClassifierDeployment, SARLogisticDeployment
 from ..inference.classifiers import (
     AuthenticatedSequenceClassifier as SARSequenceClassifier,
 )
@@ -33,23 +33,20 @@ class LogisticDetector:
 
     def __init__(
         self,
-        config: SARLogisticDeployment | None = None,
+        config: SARLogisticDeployment,
         *,
-        catalog: DeploymentCatalog | None = None,
-        registry: ResourceRegistry | None = None,
+        catalog: DeploymentCatalog,
+        registry: ResourceRegistry,
     ) -> None:
         """
         Resolve checkpoint metadata and establish ownership without loading weights.
         """
-        catalog = catalog if catalog is not None else get_catalog()
-        self.config = config or catalog.local.get(
-            catalog.require_sar().logistic, SARLogisticDeployment
-        )
+        self.config = config
         self.checkpoint = catalog.model[self.config.model_ref]
         self._model = None
-        self.resource = (
-            registry if registry is not None else ResourceRegistry()
-        ).register(LocalResource(self.config.slug, self.load, self.unload))
+        self.resource = registry.register(
+            LocalResource(self.config.slug, self.load, self.unload)
+        )
 
     def load(self) -> BinaryTextLogisticModelV1:
         """
@@ -100,34 +97,6 @@ class LogisticDetector:
             return predict_binary(raw_text, self.load())
 
 
-def logistic_detector(
-    config: SARLogisticDeployment | None = None,
-    *,
-    catalog: DeploymentCatalog | None = None,
-    registry: ResourceRegistry | None = None,
-) -> LogisticDetector:
-    """
-    Resolve the default application's retained owner or construct an explicit one.
-
-    An explicit registry requires both configuration and catalog. Without a registry,
-    use the default assembly's provider and reject explicit resource configuration.
-    Construction registers a cold guard; loading remains a warm-up or inference operation.
-    """
-    if registry is not None:
-        if config is None or catalog is None:
-            raise ValueError(
-                "Explicit resource construction requires config and catalog"
-            )
-        return LogisticDetector(config, catalog=catalog, registry=registry)
-    from ..bootstrap import default_application
-
-    if config is not None:
-        raise ValueError(
-            "Explicit resource configuration requires catalog and registry"
-        )
-    return default_application().sar.logistic_provider()
-
-
 def create_deberta_detector(
     config: SARClassifierDeployment,
     *,
@@ -155,31 +124,3 @@ def create_deberta_detector(
         resource_name=config.slug,
         registry=registry,
     )
-
-
-def deberta_detector(
-    config: SARClassifierDeployment | None = None,
-    *,
-    catalog: DeploymentCatalog | None = None,
-    registry: ResourceRegistry | None = None,
-) -> SARSequenceClassifier:
-    """
-    Resolve the default application's retained owner or construct an explicit one.
-
-    An explicit registry requires both configuration and catalog. Without a registry,
-    use the default assembly's provider and reject explicit resource configuration.
-    Construction registers a cold guard; loading remains a warm-up or inference operation.
-    """
-    if registry is not None:
-        if config is None or catalog is None:
-            raise ValueError(
-                "Explicit resource construction requires config and catalog"
-            )
-        return create_deberta_detector(config, catalog=catalog, registry=registry)
-    from ..bootstrap import default_application
-
-    if config is not None:
-        raise ValueError(
-            "Explicit resource configuration requires catalog and registry"
-        )
-    return default_application().sar.encoder_provider()

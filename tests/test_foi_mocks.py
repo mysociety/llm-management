@@ -10,37 +10,44 @@ import httpx2
 import pytest
 from starlette.testclient import TestClient
 
-from llm_management import server
 from llm_management.api import mocks
 from llm_management.foi.email_finder.schemas import FOIResult, PublicAuthority
 from llm_management.foi.email_finder.service import FOIFinder
 from llm_management.foi.examples import ExtractionExpectation, validation_examples
 from llm_management.foi.response_schemas import ExtractionOutput
 from llm_management.foi.schemas import ExtractQuestionsResponse, QuestionSliceResult
+from llm_management.settings import settings
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(http_app, monkeypatch):
     """
     Fail if any mock route starts deployments or loads a local model.
     """
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
-    service = server.app.state.service
-    monkeypatch.setattr(service.cache, "all_active", lambda: [])
+    monkeypatch.setattr(settings, "auth_tokens", {})
+    service = http_app.state.runtime.deployments
+    monkeypatch.setattr(service, "active_deployments", lambda: [])
     monkeypatch.setattr(
         service,
-        "ensure_running",
+        "_prepare_locked",
         AsyncMock(side_effect=AssertionError("Mock started a deployment")),
     )
-    resources = server.app.state.application.foi
-    for name in ("classifier", "head", "sanitizer", "tokenizer", "response_tokenizer"):
+    resources = http_app.state.runtime.foi
+    for name in (
+        "classifier",
+        "head",
+        "sanitizer",
+        "tokenizer",
+        "response_tokenizer",
+        "category_matcher",
+    ):
         if hasattr(resources, name):
             monkeypatch.setattr(
                 resources,
                 name,
                 Mock(side_effect=AssertionError("Mock loaded a local resource")),
             )
-    with TestClient(server.app) as connection:
+    with TestClient(http_app) as connection:
         yield connection
 
 
@@ -81,12 +88,13 @@ def test_mock_full_result_preserves_gold(client, monkeypatch, example):
     assert response.status_code == 200, response.text
     result = ExtractQuestionsResponse.model_validate(response.json())
     assert ExtractionExpectation.from_result(result) == example.expected
-    assert [q.model_dump(exclude={"text"}) for q in result.questions] == [
+    assert [q.model_dump(exclude={"text", "category"}) for q in result.questions] == [
         q.model_dump() for q in example.classification.questions
     ]
-    assert result.request_topics == example.classification.request_topics
+    assert all(q.category is None for q in result.questions)
     assert result.request_text == example.input.body
     assert result.meta.classification_model == "mock:validation-examples"
+    assert result.meta.category_classification.status == "not_configured"
 
 
 @pytest.mark.parametrize(
@@ -137,9 +145,7 @@ def test_mock_uses_normal_authentication(client, monkeypatch):
     """
     Require configured bearer authentication for the FOI mock routes.
     """
-    monkeypatch.setattr(
-        server.settings, "auth_tokens", {"integration": "mock-test-token"}
-    )
+    monkeypatch.setattr(settings, "auth_tokens", {"integration": "mock-test-token"})
     bodies = {
         "extract_questions/extract": {"body": "Hello"},
         "extract_questions": {"body": "Hello"},
@@ -183,6 +189,7 @@ def test_mock_response_status_accepts_minimal_questions(client, monkeypatch, for
     [(None, None), ("FOI@COUNCIL.EXAMPLE", True), ("old@example.org", False)],
 )
 def test_mock_email_finder_returns_fictional_result_without_external_calls(
+    http_app,
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
     previous_email: str | None,
@@ -195,7 +202,7 @@ def test_mock_email_finder_returns_fictional_result_without_external_calls(
     monkeypatch.setattr(FOIFinder, "find", finder_call)
     monkeypatch.setattr(httpx2.AsyncClient, "send", network_call)
     monkeypatch.setattr(
-        server.app.state.application.foi_finder.catalog, "foi_email_finder", None
+        http_app.state.runtime.foi_finder.catalog, "foi_email_finder", None
     )
     authority = PublicAuthority(
         name="Example Council",

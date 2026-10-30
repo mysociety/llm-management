@@ -1,4 +1,5 @@
-"""QuestionSlice runtime setup and CPU/Exoscale backend selection.
+"""
+QuestionSlice runtime setup and CPU/Exoscale backend selection.
 
 CPU runs the complete classifier. Exoscale serves mean-pooled encoder embeddings;
 the original small classification head runs locally because the gateway does not
@@ -15,19 +16,21 @@ from typing import Any, NamedTuple
 
 from pydantic import BaseModel, ConfigDict
 
-from ..deployments import (
+from ..deployments import resource_types
+from ..deployments.catalog import DeploymentCatalog
+from ..deployments.local_config import (
     QuestionSliceHeadDeployment,
     SequenceClassifierDeployment,
-    get_catalog,
 )
-from ..deployments.catalog import DeploymentCatalog
-from ..deployments.types import DeploymentAccess
+from ..deployments.types import DeploymentInference
 from ..inference.classifiers import LocalSequenceClassifier
 from ..inference.errors import ClassifierOutputError, ClassifierUnavailable
+from ..inference.providers import ResourceProviders
 from ..inference.remote import classify_remote
 from ..inference.resources import LocalResource, ResourceRegistry
 from ..sanitization import PresidioSanitizer, Sanitized, require_sanitized
 from ..settings import settings
+from .category_classification import CategoryMatcher
 from .schemas import UNIT_LABELS, ExtractionBackend
 
 
@@ -232,64 +235,6 @@ def create_question_classifier(
     )
 
 
-def question_classification_head(
-    config: QuestionSliceHeadDeployment | None = None,
-    *,
-    catalog: DeploymentCatalog | None = None,
-    registry: ResourceRegistry | None = None,
-) -> ModernBertClassificationHead:
-    """
-    Resolve the default application's retained owner or construct an explicit one.
-
-    An explicit registry requires both configuration and catalog. Without a registry,
-    use the default assembly's provider and reject explicit resource configuration.
-    Construction registers a cold guard; loading remains a warm-up or inference operation.
-    """
-    if registry is not None:
-        if config is None or catalog is None:
-            raise ValueError(
-                "Explicit resource construction requires config and catalog"
-            )
-        return create_question_classification_head(
-            config, catalog=catalog, registry=registry
-        )
-    from ..bootstrap import default_application
-
-    if config is not None:
-        raise ValueError(
-            "Explicit resource configuration requires catalog and registry"
-        )
-    return default_application().foi.head()
-
-
-def question_classifier(
-    config: SequenceClassifierDeployment | None = None,
-    *,
-    catalog: DeploymentCatalog | None = None,
-    registry: ResourceRegistry | None = None,
-) -> LocalSequenceClassifier:
-    """
-    Resolve the default application's retained owner or construct an explicit one.
-
-    An explicit registry requires both configuration and catalog. Without a registry,
-    use the default assembly's provider and reject explicit resource configuration.
-    Construction registers a cold guard; loading remains a warm-up or inference operation.
-    """
-    if registry is not None:
-        if config is None or catalog is None:
-            raise ValueError(
-                "Explicit resource construction requires config and catalog"
-            )
-        return create_question_classifier(config, catalog=catalog, registry=registry)
-    from ..bootstrap import default_application
-
-    if config is not None:
-        raise ValueError(
-            "Explicit resource configuration requires catalog and registry"
-        )
-    return default_application().foi.classifier()
-
-
 class FOIResources(BaseModel):
     """
     Cold model providers supplied by the application assembly.
@@ -303,6 +248,48 @@ class FOIResources(BaseModel):
     head: Callable[[], ModernBertClassificationHead]
     tokenizer: Callable[[], LocalResource[Any]]
     response_tokenizer: Callable[[], LocalResource[Any]] | None = None
+    category_matcher: Callable[[], CategoryMatcher] | None = None
+
+    @classmethod
+    def from_config(
+        cls,
+        catalog: DeploymentCatalog,
+        providers: ResourceProviders,
+        sanitizer: Callable[[], PresidioSanitizer],
+    ) -> FOIResources:
+        """
+        Bind FOI roles explicitly; resolving owners remains deferred.
+
+        Keep injectable provider fields for direct callers and tests. Optional
+        categories are disabled when unbound; the response tokenizer reports a
+        missing binding only if response analysis requests it.
+        """
+        return cls(
+            catalog=catalog,
+            sanitizer=sanitizer,
+            classifier=providers.provider(
+                resource_types.QUESTION_CLASSIFIER,
+                lambda: catalog.require_foi().classifier,
+            ),
+            head=providers.provider(
+                resource_types.QUESTION_HEAD, lambda: catalog.require_foi().head
+            ),
+            tokenizer=providers.provider(
+                resource_types.TOPIC_TOKENIZER, lambda: catalog.require_foi().tokenizer
+            ),
+            response_tokenizer=providers.provider(
+                resource_types.RESPONSE_TOKENIZER,
+                lambda: catalog.require_foi().response_tokenizer,
+            ),
+            category_matcher=(
+                providers.provider(
+                    resource_types.CATEGORY_MATCHER,
+                    lambda: catalog.require_foi().category_matcher,
+                )
+                if catalog.foi is not None and catalog.foi.category_matcher is not None
+                else None
+            ),
+        )
 
 
 class ClassificationRows(NamedTuple):
@@ -322,8 +309,8 @@ async def classify_question_units(
     texts: Sanitized[list[str]],
     *,
     backend: ExtractionBackend,
-    deployments: DeploymentAccess,
-    resources: FOIResources | None = None,
+    deployments: DeploymentInference,
+    resources: FOIResources,
 ) -> ClassificationRows:
     """
     Classify attested contextual text using CPU weights or remote encoder embeddings.
@@ -334,9 +321,7 @@ async def classify_question_units(
     revision because repository-name serving does not establish its weight SHA.
     """
     clean_texts = require_sanitized(texts)
-    classifier = (
-        resources.classifier() if resources is not None else question_classifier()
-    )
+    classifier = resources.classifier()
     if backend == "cpu":
         rows = await asyncio.to_thread(classifier.classify, clean_texts)
         return ClassificationRows(rows, classifier.model_name, classifier.revision)
@@ -347,19 +332,18 @@ async def classify_question_units(
     await asyncio.to_thread(classifier.validate_inputs, clean_texts)
     # The managed gateway exposes embeddings, so the trained head runs locally.
     # A custom Compute template could serve the encoder and head together.
-    head = resources.head() if resources is not None else question_classification_head()
+    head = resources.head()
     await asyncio.to_thread(head.load)
-    catalog = resources.catalog if resources is not None else get_catalog()
+    catalog = resources.catalog
     slug = catalog.require_foi().extraction_deployment
     cfg = deployments.get_config(slug)
     if cfg.model != classifier.model_name:
         raise ClassifierUnavailable(
             "Extraction deployment must use the configured QuestionSlice model"
         )
-    deployment = await deployments.ensure_running(slug)
-    cfg = deployment.config
-    state = deployment.state
-    try:
+    async with deployments.use(slug) as deployment:
+        cfg = deployment.config
+        state = deployment.state
         rows = await classify_remote(
             texts=texts,
             model=cfg.model,
@@ -369,7 +353,5 @@ async def classify_question_units(
             # A remote classification endpoint would return these probabilities directly.
             embedding_head=head.classify,
         )
-    finally:
-        deployments.touch(slug)
     # Exoscale imports by repository name; the remote weight SHA is unverified.
     return ClassificationRows(rows, classifier.model_name, None)

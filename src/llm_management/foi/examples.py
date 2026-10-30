@@ -14,6 +14,7 @@ from .response_schemas import ExtractionOutput, ResponseAnalysisInput
 from .schemas import (
     ExtractionBackend,
     ExtractQuestionsResponse,
+    GeneratedTopicOutput,
     InformationRequestResult,
     QuestionSliceRequest,
     QuestionSliceResult,
@@ -69,7 +70,7 @@ class AcceptedClassification(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    output: TopicOutput
+    output: GeneratedTopicOutput
     reason: str = Field(min_length=1)
     provenance: str = Field(min_length=1)
 
@@ -86,7 +87,7 @@ class RequestExample(BaseModel):
     provenance: str
     input: QuestionSliceRequest
     expected: ExtractionExpectation
-    classification: TopicOutput
+    classification: GeneratedTopicOutput
     accepted_extractions: list[AcceptedExtraction] = Field(default_factory=list)
     accepted_classifications: list[AcceptedClassification] = Field(default_factory=list)
 
@@ -153,7 +154,7 @@ class RequestExample(BaseModel):
             extraction_revision=extraction.extraction_revision,
             promoted_continuation_index=extraction.promoted_continuation_index,
             request_text=self.input.body,
-            classification=self.classification.model_copy(deep=True),
+            classification=TopicOutput.from_generated(self.classification),
             classification_model="mock:validation-examples",
         )
 

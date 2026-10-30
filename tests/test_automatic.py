@@ -9,7 +9,6 @@ from unittest.mock import Mock
 import pytest
 from starlette.testclient import TestClient
 
-from llm_management import server
 from llm_management.automatic import pipeline as inference
 from llm_management.automatic import resources as automatic_resources
 from llm_management.deployments import get_catalog
@@ -24,6 +23,7 @@ from llm_management.inference.logistic_v1 import (
     predict_binary,
 )
 from llm_management.inference.resources import ResourceRegistry
+from llm_management.settings import settings
 
 
 def policy(cutoff=automatic_resources.GATE_CUTOFF, name="gate"):
@@ -174,8 +174,8 @@ def test_logistic_failure(chain):
 
 
 @pytest.mark.parametrize("count,accepted", [(512, True), (513, False)])
-def test_encoder_never_truncates(monkeypatch, count, accepted):
-    encoder = server.app.state.application.automatic.encoder_provider()
+def test_encoder_never_truncates(http_app, monkeypatch, count, accepted):
+    encoder = http_app.state.runtime.automatic.encoder_provider()
     tokenizer = Mock(return_value={"input_ids": [[1] * count]})
     monkeypatch.setattr(encoder, "_tokenizer", tokenizer)
     if accepted:
@@ -197,7 +197,9 @@ def test_loading_once_and_shared_weights(monkeypatch):
     config = get_catalog().local.get(
         get_catalog().automatic.logistic, automatic_resources.AutoLogisticDeployment
     )
-    detector = automatic_resources.LogisticDetector(config)
+    detector = automatic_resources.LogisticDetector(
+        config=config, catalog=get_catalog(), registry=ResourceRegistry()
+    )
     detector.resource.warmup()
     detector.resource.warmup()
     assert loader.call_count == 2
@@ -216,21 +218,23 @@ def test_loading_once_and_shared_weights(monkeypatch):
     )
 
 
-def test_endpoint_contract_and_auth(chain, monkeypatch):
+def test_endpoint_contract_and_auth(http_app, chain, monkeypatch):
     detector, _, encoder = chain
     owner = Mock()
     owner.predict.side_effect = lambda body, fast=False: logistic_v1.predict_binary(
         body, policy()
     )
     monkeypatch.setattr(
-        server.app.state.application.automatic, "logistic_provider", lambda: owner
+        http_app.state.runtime.automatic, "logistic_provider", lambda: owner
     )
     monkeypatch.setattr(
-        server.app.state.application.automatic, "encoder_provider", lambda: encoder
+        http_app.state.runtime.automatic, "encoder_provider", lambda: encoder
     )
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
-    with TestClient(server.app) as client:
+    monkeypatch.setattr(settings, "auth_tokens", {})
+    monkeypatch.setattr(
+        http_app.state.runtime.deployments, "active_deployments", lambda: []
+    )
+    with TestClient(http_app) as client:
         response = client.post(
             "/endpoint/foi/automatic_response_detection",
             json={"body": "receipt", "fast": True},
@@ -251,7 +255,7 @@ def test_endpoint_contract_and_auth(chain, monkeypatch):
             ).status_code
             == 422
         )
-        monkeypatch.setattr(server.settings, "auth_tokens", {"test": "secret"})
+        monkeypatch.setattr(settings, "auth_tokens", {"test": "secret"})
         assert (
             client.post(
                 "/endpoint/foi/automatic_response_detection", json={"body": "receipt"}
@@ -260,7 +264,7 @@ def test_endpoint_contract_and_auth(chain, monkeypatch):
         )
 
 
-def test_bounded_admission_survives_cancellation(monkeypatch):
+def test_bounded_admission_survives_cancellation(http_app, monkeypatch):
     entered, release, finished = threading.Event(), threading.Event(), threading.Event()
 
     def classify(body, fast):
@@ -270,22 +274,18 @@ def test_bounded_admission_survives_cancellation(monkeypatch):
         return inference.AutomaticResult(is_automatic=False, stage="logistic")
 
     capacity = asyncio.Semaphore(1)
-    monkeypatch.setattr(server.app.state.application.automatic, "capacity", capacity)
-    monkeypatch.setattr(
-        server.app.state.application.automatic, "classify_gate", classify
-    )
+    monkeypatch.setattr(http_app.state.runtime.automatic, "capacity", capacity)
+    monkeypatch.setattr(http_app.state.runtime.automatic, "classify_gate", classify)
 
     async def scenario():
-        task = asyncio.create_task(
-            server.app.state.application.automatic.detect("receipt")
-        )
+        task = asyncio.create_task(http_app.state.runtime.automatic.detect("receipt"))
         try:
             assert await asyncio.to_thread(entered.wait, 5)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
             waiting = asyncio.create_task(
-                server.app.state.application.automatic.detect("another")
+                http_app.state.runtime.automatic.detect("another")
             )
             await asyncio.sleep(0.01)
             assert not waiting.done()
@@ -295,9 +295,7 @@ def test_bounded_admission_survives_cancellation(monkeypatch):
         assert not (await waiting).unresolved
         # Yield to let the worker release its lease before the next admission.
         await asyncio.sleep(0.01)
-        assert not (
-            await server.app.state.application.automatic.detect("last")
-        ).unresolved
+        assert not (await http_app.state.runtime.automatic.detect("last")).unresolved
 
     asyncio.run(scenario())
 
@@ -322,7 +320,9 @@ def test_unexpected_gate_policy_fails_loading(monkeypatch, update):
     config = get_catalog().local.get(
         get_catalog().automatic.logistic, automatic_resources.AutoLogisticDeployment
     )
-    detector = automatic_resources.LogisticDetector(config)
+    detector = automatic_resources.LogisticDetector(
+        config=config, catalog=get_catalog(), registry=ResourceRegistry()
+    )
     with pytest.raises(ClassifierUnavailable):
         detector.load()
     assert detector.cascade is None and detector.standalone is None
@@ -337,22 +337,20 @@ def test_generic_loader_rejects_checksum_mismatch(tmp_path):
         load_model_v1(artifact, expected_sha256="0" * 64)
 
 
-def test_api_startup_does_not_load_automatic_models(monkeypatch):
+def test_api_startup_does_not_load_automatic_models(http_app, monkeypatch):
     logistic, encoder = Mock(), Mock()
+    monkeypatch.setattr(http_app.state.runtime.automatic, "logistic_provider", logistic)
+    monkeypatch.setattr(http_app.state.runtime.automatic, "encoder_provider", encoder)
     monkeypatch.setattr(
-        server.app.state.application.automatic, "logistic_provider", logistic
+        http_app.state.runtime.deployments, "active_deployments", lambda: []
     )
-    monkeypatch.setattr(
-        server.app.state.application.automatic, "encoder_provider", encoder
-    )
-    monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         assert client.get("/health").status_code == 200
     logistic.assert_not_called()
     encoder.assert_not_called()
 
 
-def test_lazy_modes_share_policy_and_reload_after_idle_expiry(monkeypatch):
+def test_lazy_modes_share_policy_and_reload_after_idle_expiry(http_app, monkeypatch):
     import huggingface_hub
 
     registry = ResourceRegistry()
@@ -365,17 +363,19 @@ def test_lazy_modes_share_policy_and_reload_after_idle_expiry(monkeypatch):
     config = get_catalog().local.get(
         get_catalog().automatic.logistic, automatic_resources.AutoLogisticDeployment
     )
-    logistic = automatic_resources.LogisticDetector(config, registry=registry)
+    logistic = automatic_resources.LogisticDetector(
+        config=config, catalog=get_catalog(), registry=registry
+    )
     monkeypatch.setattr(
-        server.app.state.application.automatic, "logistic_provider", lambda: logistic
+        http_app.state.runtime.automatic, "logistic_provider", lambda: logistic
     )
     encoder = Mock()
     encoder.classify.return_value = [[0.1, 0.9]]
     monkeypatch.setattr(
-        server.app.state.application.automatic, "encoder_provider", lambda: encoder
+        http_app.state.runtime.automatic, "encoder_provider", lambda: encoder
     )
-    fast = server.app.state.application.automatic.detector(True)
-    cascade = server.app.state.application.automatic.detector(False)
+    fast = http_app.state.runtime.automatic.detector(True)
+    cascade = http_app.state.runtime.automatic.detector(False)
     loader.assert_not_called()
     assert not fast.classify("receipt").is_automatic
     assert cascade.classify("receipt").is_automatic
@@ -391,47 +391,41 @@ def test_lazy_modes_share_policy_and_reload_after_idle_expiry(monkeypatch):
     assert loader.call_count == 4
 
 
-def test_fast_and_logistic_negative_do_not_load_encoder(monkeypatch):
+def test_fast_and_logistic_negative_do_not_load_encoder(http_app, monkeypatch):
     logistic = Mock()
     logistic.predict.return_value = SimpleNamespace(result=False, positive_score=0.2)
     encoder = Mock()
     monkeypatch.setattr(
-        server.app.state.application.automatic, "logistic_provider", lambda: logistic
+        http_app.state.runtime.automatic, "logistic_provider", lambda: logistic
     )
     factory = Mock(return_value=encoder)
-    monkeypatch.setattr(
-        server.app.state.application.automatic, "encoder_provider", factory
-    )
-    assert not server.app.state.application.automatic.classify(
-        "authored", True
-    ).is_automatic
+    monkeypatch.setattr(http_app.state.runtime.automatic, "encoder_provider", factory)
+    assert not http_app.state.runtime.automatic.classify("authored", True).is_automatic
     factory.assert_not_called()
-    assert not server.app.state.application.automatic.classify(
-        "authored", False
-    ).is_automatic
+    assert not http_app.state.runtime.automatic.classify("authored", False).is_automatic
     encoder.classify.assert_not_called()
     encoder.resource.warmup.assert_not_called()
     assert logistic.predict.call_count == 2
 
 
-def test_lazy_logistic_loading_failure_is_unresolved(monkeypatch):
+def test_lazy_logistic_loading_failure_is_unresolved(http_app, monkeypatch):
     logistic = Mock()
     logistic.predict.side_effect = ClassifierUnavailable()
     monkeypatch.setattr(
-        server.app.state.application.automatic, "logistic_provider", lambda: logistic
+        http_app.state.runtime.automatic, "logistic_provider", lambda: logistic
     )
-    result = asyncio.run(
-        server.app.state.application.automatic.detect("receipt", fast=True)
-    )
+    result = asyncio.run(http_app.state.runtime.automatic.detect("receipt", fast=True))
     assert not result.is_automatic and result.unresolved
     assert result.stage == "logistic" and result.reason == "logistic_failure"
 
 
-def test_app_warmup_inference_and_expiry_share_one_logistic_owner(monkeypatch):
+def test_app_warmup_inference_and_expiry_share_one_logistic_owner(
+    http_app, monkeypatch
+):
     import huggingface_hub
 
-    application = server.app.state.application
-    service = application.deployments
+    runtime = http_app.state.runtime
+    service = runtime.deployments
     config = service.catalog.automatic
     download = Mock(return_value="/unused/policy.json")
     loader = Mock(side_effect=[policy(), policy(), policy(), policy()])
@@ -440,13 +434,13 @@ def test_app_warmup_inference_and_expiry_share_one_logistic_owner(monkeypatch):
     encoder = Mock(
         side_effect=AssertionError("Fast mode must not construct an encoder")
     )
-    monkeypatch.setattr(application.automatic, "encoder_provider", encoder)
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(runtime.automatic, "encoder_provider", encoder)
+    monkeypatch.setattr(settings, "auth_tokens", {})
 
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         assert client.post(f"/deployments/{config.logistic}/warm-up").status_code == 200
         assert loader.call_count == 2
-        owner = application.automatic.logistic_provider()
+        owner = runtime.automatic.logistic_provider()
         assert owner.resource is service.resources.get(config.logistic)
         result = client.post(
             "/endpoint/foi/automatic_response_detection",
@@ -462,12 +456,12 @@ def test_app_warmup_inference_and_expiry_share_one_logistic_owner(monkeypatch):
         )
         assert result.json()["is_automatic"]
         assert loader.call_count == 4
-        assert application.automatic.logistic_provider() is owner
+        assert runtime.automatic.logistic_provider() is owner
         encoder.assert_not_called()
 
 
 @pytest.mark.parametrize("fail_encoder", [False, True])
-def test_warmup_group_reports_required_models(monkeypatch, fail_encoder):
+def test_warmup_group_reports_required_models(http_app, monkeypatch, fail_encoder):
     from llm_management.inference.resources import LocalResource
 
     registry = ResourceRegistry()
@@ -477,9 +471,9 @@ def test_warmup_group_reports_required_models(monkeypatch, fail_encoder):
         encoder_load.side_effect = ClassifierUnavailable("Missing model")
     registry.register(LocalResource(pipeline.logistic, logistic_load, Mock()))
     registry.register(LocalResource(pipeline.classifier, encoder_load, Mock()))
-    monkeypatch.setattr(server.app.state.service, "resources", registry)
+    monkeypatch.setattr(http_app.state.runtime.deployments, "resources", registry)
     result = asyncio.run(
-        server.app.state.service.ensure_group("group_automatic_pipeline_cpu")
+        http_app.state.runtime.management.warm_up_group("group_automatic_pipeline_cpu")
     )
     assert result.success is (not fail_encoder)
     assert [r.slug for r in result.deployments] == [

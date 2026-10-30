@@ -15,7 +15,8 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from starlette.testclient import TestClient
 
-from llm_management.server import app
+from llm_management.bootstrap import assemble_runtime
+from llm_management.http_app import create_app
 
 DEPLOYMENT = "olmo3_7b"
 BASE_URL = "http://test"
@@ -24,8 +25,8 @@ pytestmark = pytest.mark.external
 
 
 @pytest.fixture(scope="session")
-def client() -> Iterator[TestClient]:
-    with TestClient(app) as c:
+def client(external_test_run: str) -> Iterator[TestClient]:
+    with TestClient(create_app(runtime=assemble_runtime())) as c:
         resp = c.post(f"/deployments/{DEPLOYMENT}/warm-up")
         resp.raise_for_status()
         yield c
@@ -53,7 +54,7 @@ def test_proxy_with_pydantic_ai(client: TestClient):
         country: str
         city: str
 
-    transport = httpx2.ASGITransport(app=app)
+    transport = httpx2.ASGITransport(app=client.app)
     async_client = httpx2.AsyncClient(transport=transport, base_url=BASE_URL)
 
     model = OpenAIChatModel(

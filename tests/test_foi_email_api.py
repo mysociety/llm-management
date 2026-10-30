@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock
 import pytest
 from starlette.testclient import TestClient
 
-from llm_management import server
 from llm_management.foi.email_finder.service import (
     FinderInputError,
     FOIFinder,
@@ -19,6 +18,7 @@ from llm_management.inference.external import (
     ExternalFailure,
     ExternalUnavailable,
 )
+from llm_management.settings import settings
 
 
 @pytest.mark.parametrize(
@@ -32,11 +32,11 @@ from llm_management.inference.external import (
     ],
 )
 def test_route_errors(
-    monkeypatch: pytest.MonkeyPatch, error: Exception, status: int
+    http_app, monkeypatch: pytest.MonkeyPatch, error: Exception, status: int
 ) -> None:
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(FOIFinder, "find", AsyncMock(side_effect=error))
-    client = TestClient(server.app)
+    client = TestClient(http_app)
     response = client.post("/endpoint/foi/find_email", json={"name": "Council"})
     assert response.status_code == status
 
@@ -44,11 +44,13 @@ def test_route_errors(
 @pytest.mark.parametrize(
     "path", ["/endpoint/foi/find_email", "/mock/endpoint/foi/find_email"]
 )
-def test_route_input_and_auth(monkeypatch: pytest.MonkeyPatch, path: str) -> None:
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+def test_route_input_and_auth(
+    http_app, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    monkeypatch.setattr(settings, "auth_tokens", {})
     method = AsyncMock()
     monkeypatch.setattr(FOIFinder, "find", method)
-    client = TestClient(server.app)
+    client = TestClient(http_app)
     for body in [
         {"name": " "},
         {"name": "x" * 301},
@@ -57,5 +59,5 @@ def test_route_input_and_auth(monkeypatch: pytest.MonkeyPatch, path: str) -> Non
     ]:
         assert client.post(path, json=body).status_code == 422
     method.assert_not_called()
-    monkeypatch.setattr(server.settings, "auth_tokens", {"test": "secret"})
+    monkeypatch.setattr(settings, "auth_tokens", {"test": "secret"})
     assert client.post(path, json={"name": "Council"}).status_code == 401

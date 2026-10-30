@@ -6,7 +6,6 @@ from unittest.mock import Mock
 import pytest
 from starlette.testclient import TestClient
 
-from llm_management import server
 from llm_management.deployments import get_catalog
 from llm_management.inference.errors import ClassifierBusy, ClassifierUnavailable
 from llm_management.inference.logistic_v1 import (
@@ -14,30 +13,30 @@ from llm_management.inference.logistic_v1 import (
 )
 from llm_management.sar import pipeline as sar
 from llm_management.sar import resources as sar_resources
-from llm_management.settings import Settings
+from llm_management.settings import Settings, settings
 
 
 @pytest.fixture
-def chain(monkeypatch):
+def chain(http_app, monkeypatch):
     logistic = Mock()
     logistic.predict.return_value = SimpleNamespace(result=True, positive_score=0.01)
     deberta = Mock()
     deberta.classify.return_value = [[0.5, 0.5]]
-    monkeypatch.setattr(sar, "logistic_detector", lambda: logistic)
-    monkeypatch.setattr(sar, "deberta_detector", lambda: deberta)
     monkeypatch.setattr(
-        server.app.state.application.sar, "logistic_provider", lambda: logistic
+        http_app.state.runtime.sar, "logistic_provider", lambda: logistic
     )
-    monkeypatch.setattr(
-        server.app.state.application.sar, "encoder_provider", lambda: deberta
-    )
+    monkeypatch.setattr(http_app.state.runtime.sar, "encoder_provider", lambda: deberta)
     return logistic, deberta
 
 
 def test_logistic_negative_skips_deberta(chain):
     logistic, deberta = chain
     logistic.predict.return_value = SimpleNamespace(result=False, positive_score=0.001)
-    result = sar._detect_sar("Original correspondence")
+    result = sar._detect_sar(
+        "Original correspondence",
+        logistic_provider=lambda: chain[0],
+        encoder_provider=lambda: chain[1],
+    )
     assert not result.is_sar and result.status == "complete"
     logistic.predict.assert_called_once_with("Original correspondence")
     deberta.classify.assert_not_called()
@@ -50,7 +49,9 @@ def test_positive_routes_normalized_whole_text(chain, positive, expected):
     logistic, deberta = chain
     raw = "<NAME>  ＭＹ\nStraße Records"
     deberta.classify.return_value = [[1 - positive, positive]]
-    result = sar._detect_sar(raw)
+    result = sar._detect_sar(
+        raw, logistic_provider=lambda: chain[0], encoder_provider=lambda: chain[1]
+    )
     assert result.is_sar is expected and result.status == "complete"
     logistic.predict.assert_called_once_with(raw)
     deberta.classify.assert_called_once_with(["my strasse records"])
@@ -67,7 +68,11 @@ def test_positive_routes_normalized_whole_text(chain, positive, expected):
 )
 def test_deberta_failure_keeps_flag(chain, error, reason):
     chain[1].classify.side_effect = error
-    result = sar._detect_sar("personal records")
+    result = sar._detect_sar(
+        "personal records",
+        logistic_provider=lambda: chain[0],
+        encoder_provider=lambda: chain[1],
+    )
     assert result.is_sar and result.status == "unclear" and result.reason == reason
     assert result.logistic_score == 0.01 and result.deberta_score is None
 
@@ -85,13 +90,17 @@ def test_deberta_failure_keeps_flag(chain, error, reason):
 )
 def test_invalid_deberta_scores_keep_flag(chain, rows):
     chain[1].classify.return_value = rows
-    result = sar._detect_sar("records")
+    result = sar._detect_sar(
+        "records", logistic_provider=lambda: chain[0], encoder_provider=lambda: chain[1]
+    )
     assert result.is_sar and result.reason == "invalid_score"
 
 
 def test_logistic_failure_keeps_flag(chain):
     chain[0].predict.side_effect = RuntimeError()
-    result = sar._detect_sar("records")
+    result = sar._detect_sar(
+        "records", logistic_provider=lambda: chain[0], encoder_provider=lambda: chain[1]
+    )
     assert result.is_sar and result.status == "unclear"
     chain[1].classify.assert_not_called()
 
@@ -104,25 +113,29 @@ def test_token_aliases(monkeypatch):
     assert Settings(_env_file=None).huggingface_token == "old"
 
 
-def test_resource_registration_and_warmup_group():
+def test_resource_registration_and_warmup_group(
+    http_app,
+):
     from llm_management.deployments import DeploymentCatalog
 
     config = DeploymentCatalog.load()
     assert {
         get_catalog().require_sar().logistic,
         get_catalog().require_sar().classifier,
-    } <= server.app.state.service.resources.names()
+    } <= http_app.state.runtime.deployments.resources.names()
     assert config.get_group("group_sar_pipeline_cpu").deployments == [
         get_catalog().require_sar().logistic,
         get_catalog().require_sar().classifier,
     ]
 
 
-def test_endpoint_conservative_response(chain, monkeypatch):
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
+def test_endpoint_conservative_response(http_app, chain, monkeypatch):
+    monkeypatch.setattr(settings, "auth_tokens", {})
+    monkeypatch.setattr(
+        http_app.state.runtime.deployments, "active_deployments", lambda: []
+    )
     chain[1].classify.side_effect = ClassifierBusy()
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         response = client.post(
             "/endpoint/foi/sar_detection", json={"body": "my records"}
         )
@@ -132,8 +145,10 @@ def test_endpoint_conservative_response(chain, monkeypatch):
 
 
 @pytest.mark.parametrize("token_count,accepted", [(512, True), (513, False)])
-def test_deberta_token_budget_without_truncation(monkeypatch, token_count, accepted):
-    model = sar.deberta_detector()
+def test_deberta_token_budget_without_truncation(
+    http_app, monkeypatch, token_count, accepted
+):
+    model = http_app.state.runtime.sar.encoder_provider()
     tokenizer = Mock(return_value={"input_ids": [[1] * token_count]})
     monkeypatch.setattr(model, "_tokenizer", tokenizer)
     if accepted:
@@ -161,7 +176,13 @@ def test_logistic_load_once_and_idle_reload(monkeypatch):
     monkeypatch.setattr(sar_resources, "load_model_v1", loader)
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", download)
     # Use an isolated controller without replacing the application's registry entry.
-    detector = sar_resources.LogisticDetector()
+    detector = sar_resources.LogisticDetector(
+        config=get_catalog().local.get(
+            get_catalog().require_sar().logistic, sar_resources.SARLogisticDeployment
+        ),
+        catalog=get_catalog(),
+        registry=sar_resources.ResourceRegistry(),
+    )
     detector.resource.warmup()
     detector.resource.warmup()
     loader.assert_called_once()
@@ -189,17 +210,25 @@ def test_unexpected_logistic_cutoff_is_rejected(monkeypatch):
     )
     monkeypatch.setattr(sar_resources, "load_model_v1", lambda path: artifact)
     monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda *a, **kw: "/unused")
-    detector = sar_resources.LogisticDetector()
+    detector = sar_resources.LogisticDetector(
+        config=get_catalog().local.get(
+            get_catalog().require_sar().logistic, sar_resources.SARLogisticDeployment
+        ),
+        catalog=get_catalog(),
+        registry=sar_resources.ResourceRegistry(),
+    )
     with pytest.raises(ClassifierUnavailable, match="artifact policy"):
         detector.resource.warmup()
     assert detector._model is None
     assert not detector.resource.status().ready
 
 
-def test_endpoint_requires_authentication(monkeypatch):
-    monkeypatch.setattr(server.settings, "auth_tokens", {"test": "secret"})
-    monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
-    with TestClient(server.app) as client:
+def test_endpoint_requires_authentication(http_app, monkeypatch):
+    monkeypatch.setattr(settings, "auth_tokens", {"test": "secret"})
+    monkeypatch.setattr(
+        http_app.state.runtime.deployments, "active_deployments", lambda: []
+    )
+    with TestClient(http_app) as client:
         assert (
             client.post(
                 "/endpoint/foi/sar_detection", json={"body": "records"}
@@ -263,7 +292,12 @@ def test_fast_returns_logistic_decision_without_deberta(chain, positive, score):
     logistic.predict.return_value = SimpleNamespace(
         result=positive, positive_score=score
     )
-    result = sar._detect_sar("Original correspondence", fast=True)
+    result = sar._detect_sar(
+        "Original correspondence",
+        fast=True,
+        logistic_provider=lambda: chain[0],
+        encoder_provider=lambda: chain[1],
+    )
     assert result.is_sar is positive and result.status == "complete"
     assert result.stage == "logistic" and result.logistic_score == score
     assert result.deberta_score is None and result.reason is None
@@ -274,7 +308,12 @@ def test_fast_returns_logistic_decision_without_deberta(chain, positive, score):
 @pytest.mark.parametrize("score", [float("nan"), float("inf"), -1, 2])
 def test_fast_invalid_logistic_score_keeps_unclear_flag(chain, score):
     chain[0].predict.return_value = SimpleNamespace(result=False, positive_score=score)
-    result = sar._detect_sar("records", fast=True)
+    result = sar._detect_sar(
+        "records",
+        fast=True,
+        logistic_provider=lambda: chain[0],
+        encoder_provider=lambda: chain[1],
+    )
     assert result.is_sar and result.status == "unclear"
     assert result.stage == "logistic" and result.reason == "invalid_score"
     assert result.logistic_score is None and result.deberta_score is None
@@ -283,22 +322,29 @@ def test_fast_invalid_logistic_score_keeps_unclear_flag(chain, score):
 
 def test_fast_logistic_loading_failure_keeps_unclear_flag(chain):
     chain[0].predict.side_effect = ClassifierUnavailable()
-    result = sar._detect_sar("records", fast=True)
+    result = sar._detect_sar(
+        "records",
+        fast=True,
+        logistic_provider=lambda: chain[0],
+        encoder_provider=lambda: chain[1],
+    )
     assert result.is_sar and result.status == "unclear"
     assert result.stage == "logistic" and result.reason == "logistic_unavailable"
     chain[1].classify.assert_not_called()
 
 
 @pytest.mark.parametrize("fast", [None, False, True])
-def test_endpoint_fast_parameter_and_stage(chain, monkeypatch, fast):
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
-    monkeypatch.setattr(server.app.state.service.cache, "all_active", lambda: [])
+def test_endpoint_fast_parameter_and_stage(http_app, chain, monkeypatch, fast):
+    monkeypatch.setattr(settings, "auth_tokens", {})
+    monkeypatch.setattr(
+        http_app.state.runtime.deployments, "active_deployments", lambda: []
+    )
     payload = {"body": "my records"}
     if fast is not None:
         payload["fast"] = fast
     # Disagreement demonstrates that only fast mode skips confirmation.
     chain[1].classify.return_value = [[0.9, 0.1]]
-    with TestClient(server.app) as client:
+    with TestClient(http_app) as client:
         response = client.post("/endpoint/foi/sar_detection", json=payload)
     assert response.status_code == 200
     assert response.json()["is_sar"] is bool(fast)

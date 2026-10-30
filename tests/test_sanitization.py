@@ -13,7 +13,7 @@ from llm_management.foi import (
     response_analysis,
     topic_classification,
 )
-from llm_management.foi.backends import ClassificationRows, DeploymentAccess
+from llm_management.foi.backends import ClassificationRows
 from llm_management.foi.response_schemas import (
     ExtractionInput,
     ExtractionOutput,
@@ -26,7 +26,6 @@ from llm_management.inference.resources import ResourceRegistry
 from llm_management.sanitization import (
     PresidioSanitizer,
     Sanitized,
-    presidio,
     require_sanitized,
 )
 
@@ -53,9 +52,9 @@ def observed():
     )
 
 
-def test_response_fields_share_mapping_preserve_metadata_and_snapshot():
+def test_response_fields_share_mapping_preserve_metadata_and_snapshot(sanitizer):
     original = observed()
-    sanitized = sanitize_extraction(presidio, original)
+    sanitized = sanitize_extraction(sanitizer, original)
     clean = require_sanitized(sanitized)
     assert clean.request_text == "<PERSON_1>: <EMAIL_ADDRESS_1>"
     assert clean.request.questions[0].text == "Records about <PERSON_1>"
@@ -72,8 +71,8 @@ def test_response_fields_share_mapping_preserve_metadata_and_snapshot():
         Sanitized(original)
 
 
-def test_existing_placeholders_and_request_scoped_mapping():
-    clean = presidio.sanitize_texts(
+def test_existing_placeholders_and_request_scoped_mapping(sanitizer):
+    clean = sanitizer.sanitize_texts(
         [
             "<PERSON_1> Alice Smith",
             "Alice Smith",
@@ -87,18 +86,22 @@ def test_existing_placeholders_and_request_scoped_mapping():
         "<EMAIL_ADDRESS_1>",
         "<EMAIL_ADDRESS_1>",
     ]
-    assert presidio.sanitize_texts(clean.value).value == clean.value
-    assert presidio.sanitize_text("Alice Smith").value == "<PERSON_1>"
+    assert sanitizer.sanitize_texts(clean.value).value == clean.value
+    assert sanitizer.sanitize_text("Alice Smith").value == "<PERSON_1>"
 
 
-def test_request_model_inputs_clean_results_original(monkeypatch):
+def test_request_model_inputs_clean_results_original(monkeypatch, foi_resources):
     classifier = AsyncMock(
         return_value=ClassificationRows([[0, 0, 1, 0]], "test", "pin")
     )
     monkeypatch.setattr(backends, "classify_question_units", classifier)
-    deployments = DeploymentAccess(Mock(), AsyncMock(), Mock())
+    deployments = Mock()
     original = "Please provide records about Alice Smith at alice@example.org."
-    result = asyncio.run(pipeline.extract_questions(original, deployments=deployments))
+    result = asyncio.run(
+        pipeline.extract_questions(
+            original, deployments=deployments, resources=foi_resources
+        )
+    )
     submitted = require_sanitized(classifier.call_args.args[0])
     assert all(
         "Alice Smith" not in text and "alice@example.org" not in text
@@ -107,7 +110,9 @@ def test_request_model_inputs_clean_results_original(monkeypatch):
     assert result.questions[0].text == original
 
 
-def test_topic_payload_is_sanitized_before_provisioning(monkeypatch):
+def test_topic_payload_is_sanitized_before_provisioning(
+    sanitizer, monkeypatch, foi_resources
+):
     monkeypatch.setattr(
         backends,
         "classify_question_units",
@@ -115,9 +120,9 @@ def test_topic_payload_is_sanitized_before_provisioning(monkeypatch):
     )
     seen = []
 
-    def prepare(text, questions):
+    def prepare(text, questions, **kwargs):
         seen.extend([text, questions[0].text])
-        return presidio.sanitize_payload(
+        return sanitizer.sanitize_payload(
             {"messages": [{"role": "user", "content": text}]}
         )
 
@@ -127,19 +132,18 @@ def test_topic_payload_is_sanitized_before_provisioning(monkeypatch):
     cfg = SimpleNamespace(
         model=get_catalog().get(get_catalog().require_foi().topic_deployment).model
     )
-    deployments = DeploymentAccess(
-        lambda _: cfg,
-        AsyncMock(
-            return_value=RunningDeployment(
-                config=cfg,
-                state=SimpleNamespace(deployment_url="unused", api_key="unused"),
-            )
-        ),
-        Mock(),
+    deployments = Mock()
+    deployments.get_config.return_value = cfg
+    lease = AsyncMock()
+    lease.__aenter__.return_value = RunningDeployment(
+        config=cfg, state=SimpleNamespace(deployment_url="unused", api_key="unused")
     )
+    deployments.use.return_value = lease
     result = asyncio.run(
         pipeline.process_information_request(
-            "Please provide Alice Smith's records.", deployments=deployments
+            "Please provide Alice Smith's records.",
+            deployments=deployments,
+            resources=foi_resources,
         )
     )
     assert all("Alice Smith" not in value for value in seen)
@@ -149,29 +153,32 @@ def test_topic_payload_is_sanitized_before_provisioning(monkeypatch):
     assert "Alice Smith" in result.request_text
 
 
-def test_sanitizer_failure_prevents_request_and_response_inference(monkeypatch):
-    monkeypatch.setattr(
-        presidio,
-        "sanitize_strings",
-        Mock(side_effect=ClassifierUnavailable("unavailable")),
-    )
+def test_sanitizer_failure_prevents_request_and_response_inference(
+    runtime, monkeypatch, foi_resources
+):
+    failure = Mock(side_effect=ClassifierUnavailable("unavailable"))
+    monkeypatch.setattr(foi_resources.sanitizer(), "sanitize_strings", failure)
     classify = AsyncMock()
     monkeypatch.setattr(backends, "classify_question_units", classify)
-    deployments = DeploymentAccess(Mock(), AsyncMock(), Mock())
+    deployments = Mock()
     with pytest.raises(pipeline.PipelineUnavailable):
         asyncio.run(
             pipeline.extract_questions(
-                "Please provide records.", deployments=deployments
+                "Please provide records.",
+                deployments=deployments,
+                resources=foi_resources,
             )
         )
     classify.assert_not_called()
-    deployments.ensure_running.assert_not_called()
+    deployments.use.assert_not_called()
     predict = AsyncMock()
     monkeypatch.setattr(response_analysis, "predict", predict)
     with pytest.raises(pipeline.PipelineUnavailable):
         asyncio.run(
             response_analysis.analyze_response(
-                ResponseAnalysisInput.model_validate(observed().model_dump())
+                ResponseAnalysisInput.model_validate(observed().model_dump()),
+                resources=foi_resources,
+                deployments=runtime.deployments,
             )
         )
     predict.assert_not_called()
@@ -204,15 +211,26 @@ def test_external_adapters_reject_raw_input_before_http(monkeypatch):
             )
         )
     with pytest.raises(TypeError, match="sanitization policy"):
-        asyncio.run(response_analysis.predict(observed(), model="test"))
+        asyncio.run(
+            response_analysis.predict(
+                observed(), model="test", deployments=Mock(), resources=Mock()
+            )
+        )
 
 
-def test_response_predict_receives_sanitized_input(monkeypatch):
+def test_response_predict_receives_sanitized_input(runtime, monkeypatch):
     output = ExtractionOutput(outcomes=[], events=[], process_references=[])
     predict = AsyncMock(return_value=output)
     monkeypatch.setattr(response_analysis, "predict", predict)
     body = ResponseAnalysisInput.model_validate(observed().model_dump())
-    assert asyncio.run(response_analysis.analyze_response(body)) == output
+    assert (
+        asyncio.run(
+            response_analysis.analyze_response(
+                body, resources=runtime.foi, deployments=runtime.deployments
+            )
+        )
+        == output
+    )
     assert isinstance(predict.call_args.args[0], Sanitized)
     assert "Alice Smith" not in predict.call_args.args[0].value.sources[0].text
 
@@ -223,7 +241,9 @@ def test_real_presidio_cpu_recognizers(monkeypatch):
         "socket.socket.connect",
         Mock(side_effect=AssertionError("Presidio must stay local")),
     )
-    sanitizer = PresidioSanitizer(registry=ResourceRegistry())
+    sanitizer = PresidioSanitizer(
+        config=get_catalog().require_sanitizer(), registry=ResourceRegistry()
+    )
     try:
         clean = sanitizer.sanitize_text(
             "Email alice@example.org or call 07700 900123. National Insurance number AB 12 34 56 C. Address: 12 High Street, SW1A 1AA. London council records for 2024."

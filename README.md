@@ -18,7 +18,8 @@ Set the following via environment variables or a `.env` file in the working dire
 - `EXOSCALE_API_KEY` — Your Exoscale API key
 - `EXOSCALE_API_SECRET` — Your Exoscale API secret
 - `EXOSCALE_SERVER_ROLE` — Role suffix appended to deployment names on Exoscale (e.g. `test`, `production`). Defaults to `test`
-- `AUTH_TOKENS` — Optional JSON mapping of client names to bearer tokens. Defaults to an empty mapping (no auth)
+- `AUTH_TOKENS` — JSON mapping of client names to bearer tokens. Required to start the HTTP server unless local testing is explicitly enabled.
+- `ALLOW_UNAUTHENTICATED` — Defaults to `false`. Set to `true` only for local testing with an empty `AUTH_TOKENS` mapping.
 - `COMPUTE_STATE_DIR` — Persistent directory for Compute manifests and private SSH keys; defaults to `.state/compute`
 
 ### Deployment config
@@ -46,7 +47,8 @@ inference_engine_params = [
 | `model` | Model identifier (uploaded to the zone if not already present) |
 | `gpu_type` | GPU type (e.g. `gpua5000`) |
 | `gpu_count` | Number of GPUs |
-| `replicas` | Number of replicas |
+| `replicas` | Startup replica count, from 1 to `max_replicas` |
+| `max_replicas` | Maximum managed replica count for creation and resizing; defaults to 1 |
 | `zone` | Exoscale zone (e.g. `at-vie-2`) |
 | `inference_engine_params` | Optional vLLM engine parameters |
 
@@ -129,15 +131,29 @@ The server provides interactive API docs at the root URL (`/`).
 
 ### Server authentication
 
-If `AUTH_TOKENS` is an empty JSON object, the FastAPI server does not require authentication.
+The HTTP server refuses to start with an empty `AUTH_TOKENS` mapping unless
+`ALLOW_UNAUTHENTICATED=true` is explicitly set. CLI cloud-management commands
+do not require HTTP authentication settings.
 
-If the mapping contains any items, API requests must include a token from the mapping:
+For testing without tokens, explicitly set these values in `.env`:
+
+```dotenv
+AUTH_TOKENS={}
+ALLOW_UNAUTHENTICATED=true
+```
+
+`ALLOW_UNAUTHENTICATED` defaults to `false`. This setting controls authentication
+only; the existing bind addresses and Docker port mappings are unchanged.
+
+If the mapping contains any items, API requests must include a token from the mapping,
+even when the testing flag is enabled:
 
 ```bash
 AUTH_TOKENS='{"analysis-service":"token-one","admin-tool":"token-two"}'
 ```
 
 Give each client its own clearly named token so it can be revoked independently.
+All tokens intentionally have the same inference and management permissions.
 Generate with `openssl rand -hex 32`
 
 ```http
@@ -169,7 +185,7 @@ and `/cool-down`; the former `/ensure` and `/cooldown` routes are removed.
 
 | Endpoint | Method | Description | Relevant deployment group |
 |---|---|---|---|
-| `/endpoint/foi/extract_questions` | POST | Given an FOI request, returns a structured set of questions with FOI/EIR/SAR status and a short description | `group_foi_pipeline_cpu` (default CPU extraction), or `group_foi_pipeline` (`backend=exoscale`) |
+| `/endpoint/foi/extract_questions` | POST | Given an FOI request, returns questions with FOI/EIR/SAR status, short descriptions and local predefined category matches | `group_foi_pipeline_cpu` (default CPU extraction), or `group_foi_pipeline` (`backend=exoscale`) |
 | `/endpoint/foi/extract_questions/extract` | POST | Just the question structure, primarily for internal debugging; omits status and topic classification | Same groups as above; these warm the full pipeline |
 | `/endpoint/foi/response_status` | POST | Given a structured set of questions and a structured response document, identifies whether questions were answered or withheld | `group_foi_response_pipeline` |
 | `/endpoint/foi/sar_detection` | POST | Given an FOI request text, indicates whether it is likely to be a SAR, IMM, or other personal information request; `fast=true` uses only logistic inference rather than cascading to the larger model | `group_sar_pipeline_cpu` |
@@ -246,8 +262,12 @@ The compose setup loads environment variables from `.env`:
 EXOSCALE_API_KEY=your_key
 EXOSCALE_API_SECRET=your_secret
 SERVER_ROLE=test
-AUTH_TOKENS={}
+AUTH_TOKENS={"production-client":"replace-with-a-generated-token"}
+ALLOW_UNAUTHENTICATED=false
 ```
+
+For testing without tokens, use `AUTH_TOKENS={}` and explicitly set
+`ALLOW_UNAUTHENTICATED=true` in `.env`. Compose publishes `8080:8080` as before.
 
 ### 2. Build and start
 
@@ -294,6 +314,16 @@ script/test --all
 
 Additional pytest arguments are passed through, e.g. `script/test -v` or `script/test --all -k toast`.
 
+Plain `pytest` skips live tests, including when `-m external` is selected. Direct
+pytest invocations must add `--run-external`; `script/test --all` supplies this
+flag. Live runs require the configured `SERVER_ROLE` to be `test` or `test_<name>`;
+production and empty roles are rejected before application fixtures start.
+Each live session replaces that role with a fresh `test_<random ID>` and uses
+`COMPUTE_STATE_DIR/pytest/<role>` for recovery state. The role and directory are
+printed during setup (use `-s` to show them for successful tests). Existing
+deployments are not reused across test sessions. Keep the recovery directory if
+a run is interrupted, and use its role and path for manual cleanup.
+
 External tests provision the deployments selected by each test module. The full
 FOI pipeline can keep both the ModernBERT encoder and Granite running together
 when testing GPU extraction. Test-client shutdown scales touched deployments to
@@ -329,6 +359,7 @@ these extraction tests. These smoke tests do not establish production accuracy.
 | Guide | Contents |
 | --- | --- |
 | [Architecture](docs/architecture.md) | Ownership, dependency direction, reading paths and adding features |
+| [Resource registration](docs/resource-registration.md) | Resource families, type versus instance, and how to add a model approach |
 | [Deployment management](docs/deployments.md) | Lifecycle, replica overrides, cooldown and group warm-up |
 | [FOI processing](docs/foi.md) | Extraction, topics, pending response analysis, provenance and batch examples |
 | [Sanitization and resources](docs/sanitization.md) | PII policy, attestations, leases and idle unloading |
@@ -337,8 +368,8 @@ these extraction tests. These smoke tests do not establish production accuracy.
 | [VM template preparation](EXOSCALE_TEMPLATES.md) | Preparing and verifying reusable model-server templates |
 | [Shared GPU serving proposal](docs/proposals/shared-gpu-serving.md) | Proposed Compute extraction and LoRA serving; not implemented |
 
-Start reading application code at `bootstrap.py` and `server.py`. HTTP contracts
-live under `api/`; deployment lifecycle and cloud operations live under
+Start with `bootstrap.py` for runtime assembly and `http_app.py` for HTTP construction.
+`server.py` is the ASGI entry point that binds them together. HTTP contracts live under `api/`; deployment lifecycle and cloud operations live under
 `deployments/`; reusable execution and resource guards live under `inference/`.
 FOI, SAR and automatic classification each keep their own decisions and schemas.
 
@@ -355,13 +386,20 @@ can be adjusted through environment variables:
 | `PROXY_MAX_RESPONSE_BYTES` | 8,388,608 | Oversized upstream proxy responses return 502. |
 | `LOGISTIC_MAX_PENDING` | 64 | Bounds retained logistic jobs per classifier, including queued or caller-cancelled jobs; overload returns 429. |
 
+Public health and documentation routes bypass API admission and body buffering.
+FastAPI handles allowed methods and returns 405 for unsupported ones. These
+handlers ignore request bodies, so incomplete uploads cannot occupy API slots.
+Public reads remain available when the API's concurrent-request limit is reached.
+`/health` reports process liveness, not available inference capacity.
+
 Automatic-response text is limited to 100,000 characters. Response-status input
 allows up to 64 sources, 256 questions and 256 additional-text items; individual
 source text is limited to 100,000 characters, and combined model-input text to
 200,000 characters. Model token budgets still apply.
 
 Configured authentication token values must be nonblank ASCII strings. An empty
-`AUTH_TOKENS` mapping retains the existing unauthenticated mode.
+`AUTH_TOKENS` mapping requires the explicit `ALLOW_UNAUTHENTICATED=true` local
+testing opt-in; otherwise HTTP startup fails.
 
 The proxy rejects dot segments, backslashes and residual percent encoding in its
 path before starting a deployment. Query parameters remain supported.

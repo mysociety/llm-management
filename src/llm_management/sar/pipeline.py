@@ -18,9 +18,9 @@ from ..inference.errors import (
     ClassifierUnavailable,
 )
 from ..inference.logistic_v1 import normalize_text_v1
+from ..inference.policy import ClassifierExecutionPolicy
+from ..inference.tasks import ClassifierTasks
 from ..inference.validation import binary_positive_probability, validate_probability
-from ..settings import settings
-from .resources import deberta_detector, logistic_detector
 from .schemas import SARResult
 
 if TYPE_CHECKING:
@@ -35,15 +35,15 @@ def _detect_sar(
     raw_text: str,
     fast: bool = False,
     *,
-    logistic_provider: Callable[[], LogisticDetector] | None = None,
-    encoder_provider: Callable[[], AuthenticatedSequenceClassifier] | None = None,
+    logistic_provider: Callable[[], LogisticDetector],
+    encoder_provider: Callable[[], AuthenticatedSequenceClassifier],
 ) -> SARResult:
     """
     Apply the logistic gate and optionally confirm positives with the encoder.
 
     Negative logistic decisions and fast mode return immediately. Otherwise normalize
     the text, run DeBERTa and compare its validated positive probability with 0.5.
-    Resolve injected providers or default owners only when that stage is required.
+    Resolve injected providers only when that stage is required.
 
     Only successful negative classification clears the SAR flag. Busy, unsupported,
     unavailable or invalid inference returns is_sar=True with status='unclear' and a
@@ -53,9 +53,7 @@ def _detect_sar(
     score = None
     stage = "logistic"
     try:
-        prediction = (
-            logistic_provider if logistic_provider is not None else logistic_detector
-        )().predict(raw_text)
+        prediction = logistic_provider().predict(raw_text)
         score = prediction.positive_score
         try:
             validate_probability(score)
@@ -70,9 +68,7 @@ def _detect_sar(
                 logistic_score=score,
             )
         stage = "deberta"
-        rows = (
-            encoder_provider if encoder_provider is not None else deberta_detector
-        )().classify([normalize_text_v1(raw_text)])
+        rows = encoder_provider().classify([normalize_text_v1(raw_text)])
         positive = binary_positive_probability(rows)
         return SARResult(
             is_sar=positive >= 0.5,
@@ -104,15 +100,6 @@ def _detect_sar(
     )
 
 
-async def detect_sar(raw_text: str, fast: bool = False) -> SARResult:
-    """
-    Classify through the process-local default assembly for direct callers.
-    """
-    from ..bootstrap import default_application
-
-    return await default_application().sar.detect(raw_text, fast)
-
-
 class SARClassifier:
     """
     Application-owned providers for the SAR moderation pipeline.
@@ -122,43 +109,54 @@ class SARClassifier:
         self,
         logistic_provider: Callable[[], LogisticDetector],
         encoder_provider: Callable[[], AuthenticatedSequenceClassifier],
+        *,
+        policy: ClassifierExecutionPolicy,
     ) -> None:
         """
         Bind cold stage providers without constructing or loading their models.
         """
+        self.policy = policy
         self.logistic_provider = logistic_provider
         self.encoder_provider = encoder_provider
         self.batcher = AsyncClassifierBatcher(
             lambda texts: self.encoder_provider().classify(texts),
-            batch_size=settings.deberta_batch_size,
-            delay_seconds=settings.deberta_batch_delay_ms / 1000,
-            max_pending=settings.deberta_queue_size,
-            timeout_seconds=settings.deberta_queue_timeout_seconds,
+            batch_size=policy.batch_size,
+            delay_seconds=policy.batch_delay_seconds,
+            max_pending=policy.batch_max_pending,
+            timeout_seconds=policy.batch_timeout_seconds,
         )
 
-        self._gates: set[asyncio.Task[SARResult]] = set()
+        self.gate_tasks = ClassifierTasks[SARResult]("Logistic")
 
     async def close(self) -> None:
-        await self.batcher.close()
-        if self._gates:
-            await asyncio.gather(*self._gates, return_exceptions=True)
+        """
+        Stop new gates, close encoder admission, then drain accepted logistic work.
+
+        Closing the encoder first preserves the existing shutdown policy: queued
+        encoder requests fail, and late positive gates receive the feature's normal
+        encoder-unavailable result. Always drain gates, even if encoder cleanup fails.
+        """
+        self.gate_tasks.stop_accepting()
+        try:
+            await self.batcher.close()
+        finally:
+            await self.gate_tasks.close()
 
     async def detect(self, raw_text: str, fast: bool = False) -> SARResult:
-        """Run logistic gating in a thread, then await batched encoder confirmation."""
-        if len(self._gates) >= settings.logistic_max_pending:
-            raise ClassifierBusy("Logistic queue is full")
-        task = asyncio.create_task(
-            asyncio.to_thread(
+        """
+        Run logistic gating in a thread, then await batched encoder confirmation.
+        """
+        pending = self.gate_tasks.submit(
+            lambda: asyncio.to_thread(
                 _detect_sar,
                 raw_text,
                 True,
                 logistic_provider=self.logistic_provider,
                 encoder_provider=self.encoder_provider,
-            )
+            ),
+            max_pending=self.policy.logistic_max_pending,
         )
-        self._gates.add(task)
-        task.add_done_callback(self._gates.discard)
-        result = await asyncio.shield(task)
+        result = await pending
         if fast or result.status != "complete" or not result.is_sar:
             return result
         try:
