@@ -18,6 +18,7 @@ from ..inference.errors import (
     ClassifierUnavailable,
 )
 from ..inference.logistic_v1 import BinaryPredictionV1, normalize_text_v1
+from ..inference.tasks import ClassifierTasks
 from ..inference.validation import binary_positive_probability, validate_probability
 from ..settings import settings
 from .schemas import AutomaticResult, unresolved
@@ -142,7 +143,7 @@ class AutomaticClassifier:
             max_pending=settings.deberta_queue_size,
             timeout_seconds=settings.deberta_queue_timeout_seconds,
         )
-        self._gates: set[asyncio.Task[AutomaticResult]] = set()
+        self.gate_tasks = ClassifierTasks[AutomaticResult]("Logistic")
 
     def detector(self, fast: bool) -> AutoDetector:
         """
@@ -167,7 +168,9 @@ class AutomaticClassifier:
             return unresolved("none", "inference_failed")
 
     def classify_gate(self, body: str, fast: bool) -> AutomaticResult:
-        """Apply the selected logistic policy without resolving the encoder."""
+        """
+        Apply the selected logistic policy without resolving the encoder.
+        """
         return AutoDetector(
             lambda text: self.logistic_provider().predict(text, fast=fast),
             mode="logistic",
@@ -178,19 +181,28 @@ class AutomaticClassifier:
             return await asyncio.to_thread(self.classify_gate, body, fast)
 
     async def close(self) -> None:
-        await self.batcher.close()
-        if self._gates:
-            await asyncio.gather(*self._gates, return_exceptions=True)
+        """
+        Stop new gates, close encoder admission, then drain accepted logistic work.
+
+        Closing the encoder first preserves the existing shutdown policy: queued
+        encoder requests fail, and late positive gates receive the feature's normal
+        encoder-unavailable result. Always drain gates, even if encoder cleanup fails.
+        """
+        self.gate_tasks.stop_accepting()
+        try:
+            await self.batcher.close()
+        finally:
+            await self.gate_tasks.close()
 
     async def detect(self, body: str, fast: bool = False) -> AutomaticResult:
-        """Await logistic capacity, then batch only positive cascade decisions."""
-        if len(self._gates) >= settings.logistic_max_pending:
-            raise ClassifierBusy("Logistic queue is full")
-        task = asyncio.create_task(self._gate(body, fast))
-        self._gates.add(task)
-        task.add_done_callback(self._gates.discard)
+        """
+        Await logistic capacity, then batch only positive cascade decisions.
+        """
+        pending = self.gate_tasks.submit(
+            lambda: self._gate(body, fast), max_pending=settings.logistic_max_pending
+        )
         try:
-            result = await asyncio.shield(task)
+            result = await pending
         except Exception:
             return unresolved("none", "inference_failed")
         if fast or result.unresolved or not result.is_automatic:
