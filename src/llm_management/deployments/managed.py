@@ -46,6 +46,15 @@ class ManagedDeployment:
         """
         return get_client(self.config.zone)
 
+    def replica_target(self, replicas: int | None = None) -> int:
+        """
+        Apply the replica ceiling to direct CLI and backend callers as well as HTTP.
+        """
+        try:
+            return self.config.replica_target(replicas)
+        except ValueError as exc:
+            raise LLMManagementError(str(exc)) from exc
+
     def find_deployment(self, client: Client) -> dict[str, Any] | None:
         """
         Return the deployment dict matching this deployment_name, or None.
@@ -126,6 +135,7 @@ class ManagedDeployment:
         and raise a management error. This operation does not deduplicate existing
         identity; callers wanting that behavior use create_or_resume().
         """
+        target = self.replica_target(replicas)
         self.ensure_model(refresh=refresh_model)
         client = self.client()
         _t0 = time.monotonic()
@@ -136,7 +146,7 @@ class ManagedDeployment:
                 "model": {"name": self.config.model},
                 "gpu_type": self.config.gpu_type,
                 "gpu_count": self.config.gpu_count,
-                "replicas": self.config.replicas if replicas is None else replicas,
+                "replicas": target,
                 "inference_engine_parameters": self.config.inference_engine_params,
             }
             if self.config.inference_engine_version is not None:
@@ -211,11 +221,11 @@ class ManagedDeployment:
         This also resizes running deployments. Wait for the provider operation; an absent
         deployment raises DeploymentNotFoundError rather than being created here.
         """
+        target = self.replica_target(replicas)
         client = self.client()
         deployment = self.find_deployment(client)
         if deployment is None:
             raise DeploymentNotFoundError(self.config.slug)
-        target = self.config.replicas if replicas is None else replicas
         _t0 = time.monotonic()
         rich.print(f"Resuming {self.config.deployment_name} to {target} replica(s)...")
         op = client.scale_deployment(id=deployment["id"], replicas=target)
@@ -284,6 +294,7 @@ class ManagedDeployment:
         If it exists and is scaled to zero, resume it.
         An explicit replica count also resizes an already running deployment.
         """
+        self.replica_target(replicas)
         client = self.client()
         deployment = self.find_deployment(client)
         if deployment is None:

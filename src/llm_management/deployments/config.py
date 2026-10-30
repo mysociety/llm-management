@@ -5,9 +5,9 @@ Validated remote deployment configuration without cloud operations.
 from __future__ import annotations
 
 from functools import cached_property
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..settings import settings
 from .collections import SlugMappedList
@@ -26,12 +26,33 @@ class ExoscaleDeploymentConfig(BaseModel):
     model_ref: str | None = None
     gpu_type: str
     gpu_count: int
-    replicas: int
+    replicas: int = Field(ge=1)
+    max_replicas: int = Field(default=1, ge=1)
     zone: str
     inference_engine_params: list[str] = []
     inference_engine_version: str | None = Field(
         default=None, pattern=r"^\d+\.\d+\.\d+$"
     )
+
+    @model_validator(mode="after")
+    def validate_replicas(self) -> Self:
+        """
+        Reject configured startup counts above the deployment's spending limit.
+        """
+        self.replica_target()
+        return self
+
+    def replica_target(self, replicas: int | None = None) -> int:
+        """
+        Bound explicit overrides and configured defaults before cloud operations.
+        """
+        target = self.replicas if replicas is None else replicas
+        if not 1 <= target <= self.max_replicas:
+            raise ValueError(
+                f"Replicas for '{self.slug}' must be between 1 and "
+                f"max_replicas={self.max_replicas}."
+            )
+        return target
 
     @property
     def deployment_name(self) -> str:

@@ -142,6 +142,11 @@ class DeploymentService:
         prepare() returns directly for management. Activity stays in its tracker.
         """
         cfg = self.get_config(slug)
+        if cfg.backend == "exoscale_managed":
+            try:
+                cfg.replica_target(replicas)
+            except ValueError as exc:
+                raise DeploymentServiceError(status_code=422, detail=str(exc)) from exc
         if replicas is not None:
             if replicas < 1:
                 raise DeploymentServiceError(

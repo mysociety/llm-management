@@ -28,6 +28,7 @@ def deployment(http_app, monkeypatch):
         gpu_type="test-gpu",
         gpu_count=1,
         replicas=2,
+        max_replicas=3,
         zone="test-zone",
     )
     cloud: dict[str, dict[str, Any] | None] = {"deployment": None}
@@ -114,6 +115,54 @@ def test_invalid_replicas_rejected_before_startup(deployment, replicas):
         http.post(f"/deployments/test/warm-up?replicas={replicas}").status_code == 422
     )
     client.create_deployment.assert_not_called()
+
+
+@pytest.mark.parametrize("initial", [None, 0, 1])
+def test_replica_cap_rejects_creation_resume_and_resize(deployment, initial):
+    http, _, cloud, client, _ = deployment
+    if initial is not None:
+        cloud["deployment"] = {"id": "test-id", "name": "test", "replicas": initial}
+    response = http.post("/deployments/test/warm-up?replicas=4")
+    assert response.status_code == 422
+    assert "max_replicas=3" in response.json()["detail"]
+    client.create_deployment.assert_not_called()
+    client.scale_deployment.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "operation", ["create_deployment", "resume_from_zero", "create_or_resume"]
+)
+@pytest.mark.parametrize("replicas", [0, 4, None])
+def test_direct_backend_enforces_cap_before_cloud_calls(
+    deployment, monkeypatch, operation, replicas
+):
+    from llm_management.deployments.errors import LLMManagementError
+
+    _, cfg, _, client, _ = deployment
+    if replicas is None:
+        # Also protect against a configured count mutated after validation.
+        cfg.replicas = 4
+    backend = ManagedDeployment(cfg)
+    ensure = Mock()
+    monkeypatch.setattr(backend, "ensure_model", ensure)
+    with pytest.raises(LLMManagementError, match="max_replicas=3"):
+        getattr(backend, operation)(replicas=replicas)
+    ensure.assert_not_called()
+    assert not client.mock_calls
+
+
+def test_replica_config_defaults_to_one_and_requires_explicit_higher_cap(deployment):
+    from pydantic import ValidationError
+
+    _, cfg, _, _, _ = deployment
+    data = cfg.model_dump(exclude={"max_replicas"})
+    with pytest.raises(ValidationError, match="max_replicas=1"):
+        ExoscaleDeploymentConfig.model_validate(data)
+    data["replicas"] = 1
+    assert ExoscaleDeploymentConfig.model_validate(data).max_replicas == 1
+    data["max_replicas"] = 0
+    with pytest.raises(ValidationError):
+        ExoscaleDeploymentConfig.model_validate(data)
 
 
 def test_compute_rejects_multiple_replicas(http_app, monkeypatch):

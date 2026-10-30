@@ -110,7 +110,11 @@ def test_explicit_warmup_uses_shared_lock_when_auto_start_disabled(
     cache = DeploymentStatusCache()
     state = DeploymentSnapshot(slug="foi_topic")
     calls = []
-    cfg = SimpleNamespace(create_or_resume=lambda: calls.append("start"))
+    cfg = SimpleNamespace(
+        create_or_resume=lambda: calls.append("start"),
+        backend="exoscale_managed",
+        replica_target=lambda replicas=None: 1,
+    )
     monkeypatch.setattr(http_app.state.runtime.deployments, "status", cache)
     monkeypatch.setattr(http_app.state.runtime.deployments, "auto_ensure", False)
     monkeypatch.setattr(
