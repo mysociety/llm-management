@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from enum import StrEnum
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 from pydantic import BaseModel
@@ -14,9 +15,21 @@ if TYPE_CHECKING:
     from .config import DeploymentConfig
 
 
+class WarmUpAction(StrEnum):
+    """
+    Outcome of warming a local resource or remote deployment.
+    """
+
+    WARMED = "warmed"
+    SCALED = "scaled"
+    ALREADY_RUNNING = "already_running"
+    RESUMED = "resumed"
+    CREATED = "created"
+
+
 class WarmUpResponse(BaseModel):
     slug: str
-    action: str
+    action: WarmUpAction
     replicas: int | None
 
 
