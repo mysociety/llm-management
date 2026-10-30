@@ -241,7 +241,9 @@ def test_real_presidio_cpu_recognizers(monkeypatch):
         "socket.socket.connect",
         Mock(side_effect=AssertionError("Presidio must stay local")),
     )
-    sanitizer = PresidioSanitizer(registry=ResourceRegistry())
+    sanitizer = PresidioSanitizer(
+        config=get_catalog().require_sanitizer(), registry=ResourceRegistry()
+    )
     try:
         clean = sanitizer.sanitize_text(
             "Email alice@example.org or call 07700 900123. National Insurance number AB 12 34 56 C. Address: 12 High Street, SW1A 1AA. London council records for 2024."

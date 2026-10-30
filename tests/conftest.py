@@ -38,9 +38,13 @@ def sanitizer() -> Generator[PresidioSanitizer, None, None]:
     """
     Provide an isolated sanitizer with deterministic recognizers and no model loads.
     """
+    from llm_management.deployments import get_catalog
+    from llm_management.inference.resources import ResourceRegistry
     from llm_management.sanitization import PresidioSanitizer
 
-    owner = PresidioSanitizer()
+    owner = PresidioSanitizer(
+        config=get_catalog().require_sanitizer(), registry=ResourceRegistry()
+    )
     owner._analyzer = FakeAnalyzer()
     yield owner
     owner.resource.release()
