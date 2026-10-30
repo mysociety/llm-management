@@ -18,7 +18,6 @@ from llm_management.foi.question_slice import build_extraction_result, segment_r
 from llm_management.inference.classifiers import (
     ClassifierBusy,
 )
-from llm_management.sanitization import presidio
 
 
 @pytest.fixture(autouse=True)
@@ -197,7 +196,7 @@ def topic_data():
 
 
 @pytest.fixture
-def pipeline(monkeypatch):
+def pipeline(sanitizer, monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
     monkeypatch.setattr(server.app.state.service, "active_deployments", lambda: [])
     extractor = AsyncMock(return_value=extraction())
@@ -212,7 +211,7 @@ def pipeline(monkeypatch):
     monkeypatch.setattr(
         foi_topic,
         "prepare_topic_request",
-        lambda *args, **kwargs: presidio.sanitize_payload(
+        lambda *args, **kwargs: sanitizer.sanitize_payload(
             {"messages": [], "max_tokens": 256}
         ),
     )

@@ -21,7 +21,6 @@ from ..inference.logistic_v1 import normalize_text_v1
 from ..inference.tasks import ClassifierTasks
 from ..inference.validation import binary_positive_probability, validate_probability
 from ..settings import settings
-from .resources import deberta_detector, logistic_detector
 from .schemas import SARResult
 
 if TYPE_CHECKING:
@@ -36,15 +35,15 @@ def _detect_sar(
     raw_text: str,
     fast: bool = False,
     *,
-    logistic_provider: Callable[[], LogisticDetector] | None = None,
-    encoder_provider: Callable[[], AuthenticatedSequenceClassifier] | None = None,
+    logistic_provider: Callable[[], LogisticDetector],
+    encoder_provider: Callable[[], AuthenticatedSequenceClassifier],
 ) -> SARResult:
     """
     Apply the logistic gate and optionally confirm positives with the encoder.
 
     Negative logistic decisions and fast mode return immediately. Otherwise normalize
     the text, run DeBERTa and compare its validated positive probability with 0.5.
-    Resolve injected providers or default owners only when that stage is required.
+    Resolve injected providers only when that stage is required.
 
     Only successful negative classification clears the SAR flag. Busy, unsupported,
     unavailable or invalid inference returns is_sar=True with status='unclear' and a
@@ -54,9 +53,7 @@ def _detect_sar(
     score = None
     stage = "logistic"
     try:
-        prediction = (
-            logistic_provider if logistic_provider is not None else logistic_detector
-        )().predict(raw_text)
+        prediction = logistic_provider().predict(raw_text)
         score = prediction.positive_score
         try:
             validate_probability(score)
@@ -71,9 +68,7 @@ def _detect_sar(
                 logistic_score=score,
             )
         stage = "deberta"
-        rows = (
-            encoder_provider if encoder_provider is not None else deberta_detector
-        )().classify([normalize_text_v1(raw_text)])
+        rows = encoder_provider().classify([normalize_text_v1(raw_text)])
         positive = binary_positive_probability(rows)
         return SARResult(
             is_sar=positive >= 0.5,
@@ -103,15 +98,6 @@ def _detect_sar(
     return SARResult(
         is_sar=True, stage=stage, status="unclear", reason=reason, logistic_score=score
     )
-
-
-async def detect_sar(raw_text: str, fast: bool = False) -> SARResult:
-    """
-    Classify through the process-local default assembly for direct callers.
-    """
-    from ..bootstrap import default_application
-
-    return await default_application().sar.detect(raw_text, fast)
 
 
 class SARClassifier:

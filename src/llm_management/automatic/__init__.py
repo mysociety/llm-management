@@ -4,7 +4,7 @@ Local automatic-response classification.
 
 from __future__ import annotations
 
-from .pipeline import detect_automatic
+from .pipeline import AutomaticClassifier
 from .schemas import AutomaticResult
 
-__all__ = ["detect_automatic", "AutomaticResult"]
+__all__ = ["AutomaticClassifier", "AutomaticResult"]

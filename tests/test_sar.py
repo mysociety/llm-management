@@ -23,8 +23,6 @@ def chain(monkeypatch):
     logistic.predict.return_value = SimpleNamespace(result=True, positive_score=0.01)
     deberta = Mock()
     deberta.classify.return_value = [[0.5, 0.5]]
-    monkeypatch.setattr(sar, "logistic_detector", lambda: logistic)
-    monkeypatch.setattr(sar, "deberta_detector", lambda: deberta)
     monkeypatch.setattr(
         server.app.state.application.sar, "logistic_provider", lambda: logistic
     )
@@ -37,7 +35,11 @@ def chain(monkeypatch):
 def test_logistic_negative_skips_deberta(chain):
     logistic, deberta = chain
     logistic.predict.return_value = SimpleNamespace(result=False, positive_score=0.001)
-    result = sar._detect_sar("Original correspondence")
+    result = sar._detect_sar(
+        "Original correspondence",
+        logistic_provider=lambda: chain[0],
+        encoder_provider=lambda: chain[1],
+    )
     assert not result.is_sar and result.status == "complete"
     logistic.predict.assert_called_once_with("Original correspondence")
     deberta.classify.assert_not_called()
@@ -50,7 +52,9 @@ def test_positive_routes_normalized_whole_text(chain, positive, expected):
     logistic, deberta = chain
     raw = "<NAME>  ＭＹ\nStraße Records"
     deberta.classify.return_value = [[1 - positive, positive]]
-    result = sar._detect_sar(raw)
+    result = sar._detect_sar(
+        raw, logistic_provider=lambda: chain[0], encoder_provider=lambda: chain[1]
+    )
     assert result.is_sar is expected and result.status == "complete"
     logistic.predict.assert_called_once_with(raw)
     deberta.classify.assert_called_once_with(["my strasse records"])
@@ -67,7 +71,11 @@ def test_positive_routes_normalized_whole_text(chain, positive, expected):
 )
 def test_deberta_failure_keeps_flag(chain, error, reason):
     chain[1].classify.side_effect = error
-    result = sar._detect_sar("personal records")
+    result = sar._detect_sar(
+        "personal records",
+        logistic_provider=lambda: chain[0],
+        encoder_provider=lambda: chain[1],
+    )
     assert result.is_sar and result.status == "unclear" and result.reason == reason
     assert result.logistic_score == 0.01 and result.deberta_score is None
 
@@ -85,13 +93,17 @@ def test_deberta_failure_keeps_flag(chain, error, reason):
 )
 def test_invalid_deberta_scores_keep_flag(chain, rows):
     chain[1].classify.return_value = rows
-    result = sar._detect_sar("records")
+    result = sar._detect_sar(
+        "records", logistic_provider=lambda: chain[0], encoder_provider=lambda: chain[1]
+    )
     assert result.is_sar and result.reason == "invalid_score"
 
 
 def test_logistic_failure_keeps_flag(chain):
     chain[0].predict.side_effect = RuntimeError()
-    result = sar._detect_sar("records")
+    result = sar._detect_sar(
+        "records", logistic_provider=lambda: chain[0], encoder_provider=lambda: chain[1]
+    )
     assert result.is_sar and result.status == "unclear"
     chain[1].classify.assert_not_called()
 
@@ -133,7 +145,7 @@ def test_endpoint_conservative_response(chain, monkeypatch):
 
 @pytest.mark.parametrize("token_count,accepted", [(512, True), (513, False)])
 def test_deberta_token_budget_without_truncation(monkeypatch, token_count, accepted):
-    model = sar.deberta_detector()
+    model = server.app.state.application.sar.encoder_provider()
     tokenizer = Mock(return_value={"input_ids": [[1] * token_count]})
     monkeypatch.setattr(model, "_tokenizer", tokenizer)
     if accepted:
@@ -275,7 +287,12 @@ def test_fast_returns_logistic_decision_without_deberta(chain, positive, score):
     logistic.predict.return_value = SimpleNamespace(
         result=positive, positive_score=score
     )
-    result = sar._detect_sar("Original correspondence", fast=True)
+    result = sar._detect_sar(
+        "Original correspondence",
+        fast=True,
+        logistic_provider=lambda: chain[0],
+        encoder_provider=lambda: chain[1],
+    )
     assert result.is_sar is positive and result.status == "complete"
     assert result.stage == "logistic" and result.logistic_score == score
     assert result.deberta_score is None and result.reason is None
@@ -286,7 +303,12 @@ def test_fast_returns_logistic_decision_without_deberta(chain, positive, score):
 @pytest.mark.parametrize("score", [float("nan"), float("inf"), -1, 2])
 def test_fast_invalid_logistic_score_keeps_unclear_flag(chain, score):
     chain[0].predict.return_value = SimpleNamespace(result=False, positive_score=score)
-    result = sar._detect_sar("records", fast=True)
+    result = sar._detect_sar(
+        "records",
+        fast=True,
+        logistic_provider=lambda: chain[0],
+        encoder_provider=lambda: chain[1],
+    )
     assert result.is_sar and result.status == "unclear"
     assert result.stage == "logistic" and result.reason == "invalid_score"
     assert result.logistic_score is None and result.deberta_score is None
@@ -295,7 +317,12 @@ def test_fast_invalid_logistic_score_keeps_unclear_flag(chain, score):
 
 def test_fast_logistic_loading_failure_keeps_unclear_flag(chain):
     chain[0].predict.side_effect = ClassifierUnavailable()
-    result = sar._detect_sar("records", fast=True)
+    result = sar._detect_sar(
+        "records",
+        fast=True,
+        logistic_provider=lambda: chain[0],
+        encoder_provider=lambda: chain[1],
+    )
     assert result.is_sar and result.status == "unclear"
     assert result.stage == "logistic" and result.reason == "logistic_unavailable"
     chain[1].classify.assert_not_called()

@@ -7,7 +7,7 @@ from llm_management.deployments import DeploymentCatalog
 from llm_management.foi import topic_classification
 
 
-def test_catalog_drives_topic_budget_and_checkpoint(monkeypatch):
+def test_catalog_drives_topic_budget_and_checkpoint():
     data = DeploymentCatalog.load().model_dump()
     data["model"]["foi_topic"]["repo"] = "example/question-topics"
     for deployment in data["exoscale"]["deployment"]:
@@ -17,10 +17,12 @@ def test_catalog_drives_topic_budget_and_checkpoint(monkeypatch):
     configured = DeploymentCatalog.model_validate(data)
     assert configured.get("foi_topic").model == "example/question-topics"
     assert configured.require_foi().topic.max_questions == 5
-    monkeypatch.setattr(topic_classification, "get_catalog", lambda: configured)
-    assert topic_classification.completion_budget(5) == 1024
+    assert (
+        topic_classification.completion_budget(5, topic=configured.require_foi().topic)
+        == 1024
+    )
     with pytest.raises(ValueError, match="1–5"):
-        topic_classification.completion_budget(6)
+        topic_classification.completion_budget(6, topic=configured.require_foi().topic)
 
 
 @pytest.mark.parametrize(

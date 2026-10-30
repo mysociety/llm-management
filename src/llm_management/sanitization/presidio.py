@@ -307,81 +307,13 @@ class PresidioSanitizer:
 def configured_presidio(
     config: PresidioDeployment,
     *,
-    catalog: DeploymentCatalog | None = None,
-    registry: ResourceRegistry | None = None,
+    catalog: DeploymentCatalog,
+    registry: ResourceRegistry,
 ) -> PresidioSanitizer:
     """
-    Construct a cold registry-owned sanitizer or resolve the default owner.
+    Construct a cold sanitizer owned by the supplied registry.
 
-    An explicit registry binds the supplied configuration. Without one, use the
-    default application's sanitizer; the catalog argument is accepted for the common
-    factory interface rather than used to create a separate analyzer.
+    Accept the catalog for the common resource factory interface; sanitizer
+    configuration is already complete and needs no checkpoint lookup.
     """
-    if registry is not None:
-        return PresidioSanitizer(config=config, registry=registry)
-    from ..bootstrap import default_application
-
-    return default_application().sanitizer()
-
-
-class DefaultSanitizer:
-    """Public convenience adapter for the default application's sanitizer.
-
-    The adapter retains no analyzer or model weights. Explicit applications pass
-    their own PresidioSanitizer to feature pipelines instead.
-    """
-
-    def _owner(self) -> PresidioSanitizer:
-        """
-        Resolve the process-local application's retained sanitizer controller.
-        """
-        from ..bootstrap import default_application
-
-        return default_application().sanitizer()
-
-    @property
-    def resource(self) -> LocalResource[Any]:
-        """
-        Expose the default owner's lifecycle guard without loading its analyzer.
-        """
-        return self._owner().resource
-
-    @property
-    def config(self) -> PresidioDeployment:
-        """
-        Expose the default owner's resolved detection configuration.
-        """
-        return self._owner().config
-
-    def sanitize_strings(self, texts: list[str]) -> list[str]:
-        """
-        Delegate related fields to the default owner's single-call mapping.
-        """
-        return self._owner().sanitize_strings(texts)
-
-    def sanitize_text(self, text: str) -> Sanitized[str]:
-        """
-        Return an attested string from the default owner's policy execution.
-        """
-        return self._owner().sanitize_text(text)
-
-    def sanitize_texts(self, texts: list[str]) -> Sanitized[list[str]]:
-        """
-        Return an attested list using the default owner's shared mapping.
-        """
-        return self._owner().sanitize_texts(texts)
-
-    def sanitize_payload(self, payload: dict[str, Any]) -> Sanitized[dict[str, Any]]:
-        """
-        Sanitize a copied chat envelope through the default owner.
-        """
-        return self._owner().sanitize_payload(payload)
-
-    async def sanitize(self, value: str) -> Sanitized[str]:
-        """
-        Run the default owner's asynchronous worker-thread sanitizer.
-        """
-        return await self._owner().sanitize(value)
-
-
-presidio = DefaultSanitizer()
+    return PresidioSanitizer(config=config, registry=registry)

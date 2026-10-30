@@ -109,13 +109,12 @@ manages readiness and leases but does not cache the load callback's return value
 
 Model-specific labels, artifact integrity, safe deserialization and output shape
 checks belong with the loader/owner. The factory must return the concrete owner
-class declared in the registration. Existing convenience functions may return a
-broader protocol; register a concrete construction factory directly. A class with
-the required constructor signature can itself be the factory, as with both logistic
-detectors. Construction requires explicit configuration, catalog and registry;
-it never chooses the default application. The SAR, Automatic and QuestionSlice
-convenience accessors take no arguments and only retrieve a default application's
-retained owner. Use the constructor or `create_*` factory for isolated resources.
+class declared in the registration. A class with the required constructor signature
+can itself be the factory, as with both logistic detectors. Registered factories
+receive explicit configuration, catalog and registry. Obtain retained owners from
+the application's providers; use a constructor or `create_*` factory when an entry
+point deliberately creates an isolated resource. Feature code never resolves a
+process-wide application or owns a second implicit registry.
 
 ### 3. Declare the registration beside its lazy binding
 

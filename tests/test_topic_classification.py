@@ -32,16 +32,21 @@ def topic_data():
 
 @pytest.mark.parametrize("count,budget", [(1, 256), (3, 640), (10, 1984)])
 def test_budget(count, budget):
-    assert foi_topic.completion_budget(count) == budget
+    assert (
+        foi_topic.completion_budget(count, topic=get_catalog().require_foi().topic)
+        == budget
+    )
 
 
 @pytest.mark.parametrize("count", [0, 11])
 def test_excess_budget_rejected(count):
     with pytest.raises(ValueError):
-        foi_topic.completion_budget(count)
+        foi_topic.completion_budget(count, topic=get_catalog().require_foi().topic)
 
 
-def test_prompt_uses_training_payload_and_exact_chat_tokenization(monkeypatch):
+def test_prompt_uses_training_payload_and_exact_chat_tokenization(
+    foi_resources, monkeypatch
+):
     calls = []
 
     def tokenize(messages, **kwargs):
@@ -54,7 +59,11 @@ def test_prompt_uses_training_payload_and_exact_chat_tokenization(monkeypatch):
         lambda *args, **kwargs: SimpleNamespace(apply_chat_template=tokenize),
     )
     payload = foi_topic.prepare_topic_request(
-        "Original request", extraction().questions
+        "Original request",
+        extraction().questions,
+        catalog=foi_resources.catalog,
+        sanitizer=foi_resources.sanitizer(),
+        tokenizer_guard=foi_resources.tokenizer(),
     )
     payload = payload.value
     user = json.loads(payload["messages"][1]["content"])
@@ -75,7 +84,13 @@ def test_prompt_uses_training_payload_and_exact_chat_tokenization(monkeypatch):
         ),
     )
     with pytest.raises(ValueError, match="not truncated"):
-        foi_topic.prepare_topic_request("Original request", extraction().questions)
+        foi_topic.prepare_topic_request(
+            "Original request",
+            extraction().questions,
+            catalog=foi_resources.catalog,
+            sanitizer=foi_resources.sanitizer(),
+            tokenizer_guard=foi_resources.tokenizer(),
+        )
 
 
 @pytest.mark.parametrize(
@@ -97,7 +112,7 @@ def test_prompt_uses_training_payload_and_exact_chat_tokenization(monkeypatch):
         "explicit_refusal",
     ],
 )
-def test_remote_output_validation(monkeypatch, case):
+def test_remote_output_validation(foi_resources, monkeypatch, case):
     data = topic_data()
     reason = "stop"
     if case == "length":
@@ -143,7 +158,11 @@ def test_remote_output_validation(monkeypatch, case):
         ),
     )
     payload = foi_topic.prepare_topic_request(
-        "Email alice@example.org", extraction().questions
+        "Email alice@example.org",
+        extraction().questions,
+        catalog=foi_resources.catalog,
+        sanitizer=foi_resources.sanitizer(),
+        tokenizer_guard=foi_resources.tokenizer(),
     )
     real_client = httpx2.AsyncClient
     calls = []
@@ -201,7 +220,7 @@ def test_remote_output_validation(monkeypatch, case):
     assert "alice@example.org" not in request.content.decode()
 
 
-def test_token_budget_checks_final_sanitized_messages(monkeypatch):
+def test_token_budget_checks_final_sanitized_messages(foi_resources, monkeypatch):
     seen = []
 
     def tokenize(messages, **kwargs):
@@ -214,7 +233,11 @@ def test_token_budget_checks_final_sanitized_messages(monkeypatch):
         lambda *args, **kwargs: SimpleNamespace(apply_chat_template=tokenize),
     )
     payload = foi_topic.prepare_topic_request(
-        "Email alice@example.org", extraction().questions
+        "Email alice@example.org",
+        extraction().questions,
+        catalog=foi_resources.catalog,
+        sanitizer=foi_resources.sanitizer(),
+        tokenizer_guard=foi_resources.tokenizer(),
     )
     assert "alice@example.org" not in seen[1]["content"]
     assert "<EMAIL_ADDRESS_1>" in seen[1]["content"]

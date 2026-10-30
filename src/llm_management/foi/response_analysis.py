@@ -82,8 +82,8 @@ async def analyze_response(
     body: ResponseAnalysisInput,
     *,
     sanitizer: TextSanitizer | None = None,
-    deployments: DeploymentInference | None = None,
-    resources: FOIResources | None = None,
+    deployments: DeploymentInference,
+    resources: FOIResources,
 ) -> ExtractionOutput:
     """
     Project upstream diagnostics out, sanitize response text and validate model references.
@@ -92,18 +92,9 @@ async def analyze_response(
     output follows the public v4 schema; process_states remains unassessed. Validate
     against original input as well so injected predictors obey the same contract.
 
-    Supply resources and deployments together, or omit both to use the default
-    application. Resolve that choice once for sanitization, configuration and inference.
-    An explicit sanitizer can override the application's sanitizer in either case.
+    Use the supplied resources and deployment client throughout the operation.
+    An explicit sanitizer can override the resource container's sanitizer.
     """
-    if resources is None and deployments is None:
-        from ..bootstrap import default_application
-
-        application = default_application()
-        resources = application.foi
-        deployments = application.deployments
-    elif resources is None or deployments is None:
-        raise ValueError("Supply resources and deployments together")
     observed = body.model_input()
     try:
         sanitized = await asyncio.to_thread(

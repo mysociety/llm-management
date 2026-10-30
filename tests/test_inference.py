@@ -7,7 +7,6 @@ import pytest
 from llm_management.inference import remote as inference
 from llm_management.inference.classifiers import LocalSequenceClassifier
 from llm_management.inference.errors import ClassifierBusy, ClassifierOutputError
-from llm_management.sanitization import presidio
 
 
 def test_cpu_work_is_bounded_and_lock_released_on_error(monkeypatch):
@@ -45,7 +44,7 @@ def test_cpu_work_is_bounded_and_lock_released_on_error(monkeypatch):
         model.classify(["third"])
 
 
-def test_remote_reorders_results_and_rejects_duplicate_indices(monkeypatch):
+def test_remote_reorders_results_and_rejects_duplicate_indices(sanitizer, monkeypatch):
     calls = []
 
     def handler(request):
@@ -66,7 +65,7 @@ def test_remote_reorders_results_and_rejects_duplicate_indices(monkeypatch):
     )
     kwargs = dict(
         embedding_head=lambda vectors: vectors,
-        texts=presidio.sanitize_texts(["a", "b"]),
+        texts=sanitizer.sanitize_texts(["a", "b"]),
         model="test",
         deployment_url="https://example.test/v1/",
         api_key="secret",
@@ -78,7 +77,7 @@ def test_remote_reorders_results_and_rejects_duplicate_indices(monkeypatch):
         asyncio.run(inference.classify_remote(**kwargs))
 
 
-def test_remote_embeddings_preserve_raw_vectors_for_head(monkeypatch):
+def test_remote_embeddings_preserve_raw_vectors_for_head(sanitizer, monkeypatch):
     import json
 
     calls = []
@@ -102,7 +101,7 @@ def test_remote_embeddings_preserve_raw_vectors_for_head(monkeypatch):
 
     output = asyncio.run(
         inference.classify_remote(
-            texts=presidio.sanitize_texts(["request"]),
+            texts=sanitizer.sanitize_texts(["request"]),
             model="test",
             deployment_url="https://example.test/v1",
             api_key="secret",
