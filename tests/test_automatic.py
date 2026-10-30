@@ -479,7 +479,7 @@ def test_warmup_group_reports_required_models(monkeypatch, fail_encoder):
     registry.register(LocalResource(pipeline.classifier, encoder_load, Mock()))
     monkeypatch.setattr(server.app.state.runtime.deployments, "resources", registry)
     result = asyncio.run(
-        server.app.state.runtime.deployments.management.warm_up_group(
+        server.app.state.runtime.management.warm_up_group(
             "group_automatic_pipeline_cpu"
         )
     )

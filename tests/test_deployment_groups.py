@@ -76,7 +76,7 @@ def test_group_runs_concurrently_and_reports_each_result(monkeypatch, fail):
             "ensure",
             lambda backend: DeploymentSnapshot(slug=backend.config.slug),
         )
-        return await server.app.state.runtime.deployments.management.warm_up_group(
+        return await server.app.state.runtime.management.warm_up_group(
             "group_foi_pipeline"
         )
 
@@ -99,11 +99,7 @@ def test_unknown_group_starts_nothing(monkeypatch):
         lambda backend: DeploymentSnapshot(slug=backend.config.slug),
     )
     with pytest.raises(DeploymentServiceError) as exc:
-        asyncio.run(
-            server.app.state.runtime.deployments.management.warm_up_group(
-                "group_missing"
-            )
-        )
+        asyncio.run(server.app.state.runtime.management.warm_up_group("group_missing"))
     assert exc.value.status_code == 404
     ensure.assert_not_called()
 
@@ -215,7 +211,7 @@ def test_mixed_group_resolves_arbitrary_registered_local_resource(
         lambda backend: DeploymentSnapshot(slug=backend.config.slug),
     )
     result = asyncio.run(
-        server.app.state.runtime.deployments.management.warm_up_group("group_mixed")
+        server.app.state.runtime.management.warm_up_group("group_mixed")
     )
     assert [member.slug for member in result.deployments] == [
         "custom_cpu",
@@ -243,7 +239,7 @@ def test_single_ensure_resolves_registry_without_remote_calls(monkeypatch):
         lambda backend: DeploymentSnapshot(slug=backend.config.slug),
     )
     result = asyncio.run(
-        server.app.state.runtime.deployments.management.warm_up_resource("custom_cpu")
+        server.app.state.runtime.management.warm_up_resource("custom_cpu")
     )
     assert result.model_dump() == {
         "slug": "custom_cpu",
@@ -368,7 +364,9 @@ def test_group_lifecycle_handles_local_and_remote_members(monkeypatch, action):
     monkeypatch.setattr(service.status, "ensure", lambda backend: state)
     monkeypatch.setattr(service.status, "refresh", Mock())
     service.status.set(state)
-    result = asyncio.run(service.management.change_group("group_mixed", action))
+    result = asyncio.run(
+        server.app.state.runtime.management.change_group("group_mixed", action)
+    )
     assert result.success
     assert [member.slug for member in result.deployments] == ["presidio", "foi_topic"]
     if action == "scale-to-zero":
@@ -400,7 +398,9 @@ def test_group_busy_local_member_does_not_block_remote(monkeypatch, action):
     monkeypatch.setattr(service.status, "ensure", lambda backend: state)
     monkeypatch.setattr(service.status, "refresh", Mock())
     with resource.use():
-        result = asyncio.run(service.management.change_group("group_mixed", action))
+        result = asyncio.run(
+            server.app.state.runtime.management.change_group("group_mixed", action)
+        )
     assert not result.success
     assert not result.deployments[0].success
     assert "in use" in result.deployments[0].error
@@ -425,9 +425,7 @@ def test_individual_deployments_cannot_use_group_prefix(kind):
 def test_group_warmup_replica_override_rejected_before_work(monkeypatch):
     monkeypatch.setattr(server.settings, "auth_tokens", {})
     ensure = AsyncMock()
-    monkeypatch.setattr(
-        server.app.state.runtime.deployments.management, "warm_up_group", ensure
-    )
+    monkeypatch.setattr(server.app.state.runtime.management, "warm_up_group", ensure)
     response = TestClient(server.app).post(
         "/deployments/group_foi_pipeline/warm-up?replicas=2"
     )

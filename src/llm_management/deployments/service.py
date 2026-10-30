@@ -22,7 +22,6 @@ from .backends import DeploymentBackend, backend_for
 from .catalog import DeploymentCatalog
 from .config import DeploymentConfig
 from .errors import DeploymentServiceError, LLMManagementError
-from .management import DeploymentManagement
 from .status import DeploymentStatusCache
 from .types import (
     DeploymentSnapshot,
@@ -62,7 +61,6 @@ class DeploymentService:
         creates no cloud backends and starts no cleanup task. Assembly supplies status
         and activity independently.
         """
-        self.management = DeploymentManagement(self)
         self.catalog = catalog
         self.backends: dict[str, DeploymentBackend] = {}
         self._backend_lock = threading.Lock()

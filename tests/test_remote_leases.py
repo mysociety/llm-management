@@ -12,7 +12,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from llm_management.bootstrap import assemble_service
+from llm_management.bootstrap import assemble_deployments
 from llm_management.deployments.errors import DeploymentServiceError
 from llm_management.deployments.service import DeploymentService
 from llm_management.deployments.status import DeploymentStatusCache
@@ -40,7 +40,7 @@ def cached_state(cache: DeploymentStatusCache, slug: str) -> DeploymentSnapshot:
 
 @pytest.fixture
 def remote() -> RemoteFixture:
-    service = assemble_service()
+    service = assemble_deployments().service
     slug = service.catalog.require_foi().topic_deployment
     backend = Mock()
     backend.config = service.get_config(slug)
@@ -247,7 +247,7 @@ def test_startup_failure_does_not_leak_lease(remote):
 
 def test_activity_is_independent_of_cache_ttl_and_other_runtimes(remote):
     service, backend, slug = remote
-    other = assemble_service()
+    other = assemble_deployments().service
     other.backends[slug] = backend
     other.status.refresh(backend)
     service.activity.begin_request(slug)

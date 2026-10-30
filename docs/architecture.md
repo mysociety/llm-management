@@ -158,17 +158,18 @@ async def process_one(text: str):
 Reuse one assembly for an entire batch rather than constructing it per item.
 `runtime.sar.detect(text, fast=True)` and
 `runtime.automatic.detect(body, fast=True)` use the same local owners as
-`runtime.deployments.management.warm_up(slug)`. Exiting the runtime context stops idle cleanup,
+`runtime.management.warm_up(slug)`. Exiting the runtime context stops idle cleanup,
 drains classifier work, then unloads inactive local resources and scales down remote
 deployments used by that runtime. HTTP lifespan uses this same context manager.
 For manually managed lifetimes, call `await runtime.close()`; repeated calls
 share one shutdown operation, and cleanup finishes before cancellation propagates.
 A runtime lifetime is single-use; assemble another runtime after shutdown.
 
-`assemble_deployments()` creates just the service and typed local providers.
-`assemble_service()` returns its service without constructing feature pipelines.
+`assemble_deployments()` creates the service, its management interface and typed local providers.
+Use `assembly.service` for execution and `assembly.management` for commands;
+this assembly does not construct feature pipelines.
 Management-only callers own the service's idle task and shutdown explicitly.
-`service.management` exposes `warm_up`, `stop`, `cool_down`, `status`, `overview`
+`runtime.management` (or `assembly.management`) exposes `warm_up`, `stop`, `cool_down`, `status`, `overview`
 and `local_status` for both HTTP and direct callers. This layer interprets group
 addresses and returns the HTTP-compatible result models; the service executes
 operations under the existing resource leases and deployment locks. Group actions

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from llm_management.bootstrap import assemble_service
+from llm_management.bootstrap import assemble_deployments
 from llm_management.deployments.contracts import (
     GroupActionMemberOutcome,
     GroupActionOutcome,
@@ -20,7 +20,7 @@ from llm_management.deployments.errors import DeploymentServiceError
 
 
 def test_direct_group_warmup_preserves_order_and_partial_failure(monkeypatch):
-    service = assemble_service()
+    assembly = assemble_deployments()
     outcome = GroupWarmUpResponse(
         slug="group_example",
         success=False,
@@ -32,20 +32,20 @@ def test_direct_group_warmup_preserves_order_and_partial_failure(monkeypatch):
         ],
     )
     ensure = AsyncMock(return_value=outcome)
-    monkeypatch.setattr(service.management, "warm_up_group", ensure)
-    result = asyncio.run(service.management.warm_up("group_example"))
+    monkeypatch.setattr(assembly.management, "warm_up_group", ensure)
+    result = asyncio.run(assembly.management.warm_up("group_example"))
     assert isinstance(result, GroupWarmUpResponse)
     assert result.model_dump() == outcome.model_dump()
     ensure.assert_awaited_once_with("group_example")
-    assert service.resources.all() == []
+    assert assembly.service.resources.all() == []
 
 
 def test_direct_group_replica_override_is_rejected_before_execution(monkeypatch):
-    service = assemble_service()
+    assembly = assemble_deployments()
     ensure = AsyncMock()
-    monkeypatch.setattr(service.management, "warm_up_group", ensure)
+    monkeypatch.setattr(assembly.management, "warm_up_group", ensure)
     with pytest.raises(DeploymentServiceError) as caught:
-        asyncio.run(service.management.warm_up("group_example", 2))
+        asyncio.run(assembly.management.warm_up("group_example", 2))
     assert caught.value.status_code == 422
     ensure.assert_not_awaited()
 
@@ -56,7 +56,7 @@ def test_direct_group_replica_override_is_rejected_before_execution(monkeypatch)
 def test_direct_group_actions_use_shared_service_execution(
     monkeypatch, command, action
 ):
-    service = assemble_service()
+    assembly = assemble_deployments()
     outcome = GroupActionOutcome(
         slug="group_example",
         success=False,
@@ -67,15 +67,15 @@ def test_direct_group_actions_use_shared_service_execution(
         ],
     )
     change = AsyncMock(return_value=outcome)
-    monkeypatch.setattr(service.management, "change_group", change)
-    result = asyncio.run(getattr(service.management, command)("group_example"))
+    monkeypatch.setattr(assembly.management, "change_group", change)
+    result = asyncio.run(getattr(assembly.management, command)("group_example"))
     assert result == outcome
     change.assert_awaited_once_with("group_example", action)
 
 
 def test_local_status_does_not_construct_configured_owners():
-    service = assemble_service()
-    assert service.resources.names()
-    assert service.management.local_status() == []
-    assert service.resources.all() == []
-    assert service.backends == {}
+    assembly = assemble_deployments()
+    assert assembly.service.resources.names()
+    assert assembly.management.local_status() == []
+    assert assembly.service.resources.all() == []
+    assert assembly.service.backends == {}
