@@ -9,7 +9,6 @@ from contextlib import contextmanager
 
 from fastapi import APIRouter, HTTPException
 
-from ..deployments.types import DeploymentInference
 from ..foi import pipeline, response_analysis
 from ..foi.email_finder.schemas import FOIResult, PublicAuthority
 from ..foi.email_finder.service import FinderInputError
@@ -22,16 +21,9 @@ from ..foi.schemas import (
 )
 from ..inference.errors import ClassifierBusy
 from ..inference.external import ExternalFailure, ExternalUnavailable
-from .dependencies import DependencyFOIFinder, DependencyFOIResources, DependencyService
+from . import DependencyApplication
 
 router = APIRouter(tags=["FOI endpoints"])
-
-
-def foi_deployments(service: DependencyService) -> DeploymentInference:
-    """
-    Bind the shared deployment lifecycle to the HTTP-independent FOI pipeline.
-    """
-    return service.access
 
 
 @contextmanager
@@ -58,8 +50,7 @@ def foi_http_errors() -> Generator[None, None, None]:
     summary="Extract question structure (debugging)",
 )
 async def question_slice_endpoint(
-    service: DependencyService,
-    resources: DependencyFOIResources,
+    application: DependencyApplication,
     body: QuestionSliceRequest,
     backend: ExtractionBackend = "cpu",
 ) -> QuestionSliceResult:
@@ -75,15 +66,14 @@ async def question_slice_endpoint(
         return await pipeline.extract_questions(
             body.body,
             backend=backend,
-            deployments=foi_deployments(service),
-            resources=resources,
+            deployments=application.deployments.access,
+            resources=application.foi,
         )
 
 
 @router.post("/endpoint/foi/extract_questions", summary="Extract questions")
 async def information_request_endpoint(
-    service: DependencyService,
-    resources: DependencyFOIResources,
+    application: DependencyApplication,
     body: QuestionSliceRequest,
     backend: ExtractionBackend = "cpu",
 ) -> ExtractQuestionsResponse:
@@ -98,8 +88,8 @@ async def information_request_endpoint(
         result = await pipeline.process_information_request(
             body.body,
             backend=backend,
-            deployments=foi_deployments(service),
-            resources=resources,
+            deployments=application.deployments.access,
+            resources=application.foi,
         )
 
         return ExtractQuestionsResponse.from_result(result)
@@ -111,8 +101,7 @@ async def information_request_endpoint(
     summary="Response status",
 )
 async def foi_response_status_endpoint(
-    service: DependencyService,
-    resources: DependencyFOIResources,
+    application: DependencyApplication,
     body: ResponseAnalysisInput,
 ) -> ExtractionOutput:
     """
@@ -123,14 +112,14 @@ async def foi_response_status_endpoint(
     """
     with foi_http_errors():
         return await response_analysis.analyze_response(
-            body, deployments=foi_deployments(service), resources=resources
+            body, deployments=application.deployments.access, resources=application.foi
         )
 
 
 @router.post("/endpoint/foi/find_email", summary="Find a public authority's FOI email")
 async def find_foi_email_endpoint(
     body: PublicAuthority,
-    finder: DependencyFOIFinder,
+    application: DependencyApplication,
 ) -> FOIResult:
     """Research published FOI contact details using external model/search APIs.
 
@@ -139,7 +128,7 @@ async def find_foi_email_endpoint(
     No managed deployment or model warm-up is needed.
     """
     try:
-        return await finder.find(body)
+        return await application.foi_finder.find(body)
     except ExternalUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ExternalFailure as exc:

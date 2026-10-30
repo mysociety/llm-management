@@ -57,12 +57,15 @@ drains SAR and automatic classifier work, then releases deployment resources.
 Concurrent closes share one cleanup task, and cancellation waits for cleanup before
 propagating. Each application has its own lifecycle; a closed instance cannot restart.
 
-HTTP routers are module-level objects. FastAPI dependencies in
-`api/dependencies.py` retrieve the shared service and feature owners from
-`request.app.state.application`; they do not construct resources per request.
+HTTP routers are module-level objects. The single FastAPI dependency in
+`api/__init__.py` retrieves the typed application from
+`request.app.state.application`. Routes accept `DependencyApplication` and select
+its service or feature owner directly, without constructing resources per request.
+Feature functions still receive their specific dependencies explicitly. Tests can
+override `get_application` to substitute the complete runtime.
 `create_app()` binds an application to the routes and delegates lifespan to its
 context manager. Separate app instances can use the same routes with independent
-assemblies. Tests can override the dependency providers using FastAPI's `dependency_overrides`.
+assemblies.
 
 An application owns its deployment status cache, activity tracker, backend controllers,
 local-resource registry and automatic-classifier admission capacity. Warm-up and
