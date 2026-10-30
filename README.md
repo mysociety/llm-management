@@ -47,7 +47,8 @@ inference_engine_params = [
 | `model` | Model identifier (uploaded to the zone if not already present) |
 | `gpu_type` | GPU type (e.g. `gpua5000`) |
 | `gpu_count` | Number of GPUs |
-| `replicas` | Number of replicas |
+| `replicas` | Startup replica count, from 1 to `max_replicas` |
+| `max_replicas` | Maximum managed replica count for creation and resizing; defaults to 1 |
 | `zone` | Exoscale zone (e.g. `at-vie-2`) |
 | `inference_engine_params` | Optional vLLM engine parameters |
 

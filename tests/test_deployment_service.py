@@ -17,7 +17,11 @@ def test_activity_lease_prevents_scaling_and_releases_after_failure():
     cache = DeploymentStatusCache()
     state = DeploymentSnapshot(slug="model", exists=True, replicas=1)
     cache.set(state)
-    config = SimpleNamespace(scale_to_zero=Mock())
+    config = SimpleNamespace(
+        scale_to_zero=Mock(),
+        backend="exoscale_managed",
+        replica_target=Mock(return_value=1),
+    )
     service = DeploymentService(
         SimpleNamespace(get=lambda slug: config),
         status=cache,

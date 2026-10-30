@@ -23,7 +23,15 @@ its challenges in 5m 33s. The [template guide](../EXOSCALE_TEMPLATES.md#live-lif
 records the template ID and lifecycle results.
 
 To request a replica count, call `POST /deployments/{slug}/warm-up?replicas=3`.
-The count must be a positive integer. Omitting it uses the configured count for
+The count must be a positive integer no greater than the managed deployment's
+`max_replicas` in `conf/deployments.toml`. The cap defaults to **1**; explicitly set
+`max_replicas = 3` in that deployment's block to allow the example above. Configured
+`replicas` must also fit within the cap. HTTP overrides above the cap return 422;
+direct CLI/backend creation and resizing enforce the same ceiling before writes
+to the cloud provider. Lowering the cap does not automatically shrink an already
+running deployment; explicitly resize it if needed.
+
+Omitting the count uses the configured count for
 creation/resume and leaves running deployments at their current count. The
 configuration is not changed. Resizing a running deployment returns action
 `scaled`. Compute deployments support only `replicas=1`; local CPU resources
