@@ -8,7 +8,6 @@ import asyncio
 import re
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from ..deployments import get_catalog
 from ..deployments.catalog import DeploymentCatalog
 from ..deployments.local_config import PresidioDeployment
 from ..inference.errors import ClassifierUnavailable
@@ -136,28 +135,16 @@ class PresidioSanitizer:
 
     def __init__(
         self,
-        registry: ResourceRegistry | None = None,
-        config: PresidioDeployment | None = None,
+        registry: ResourceRegistry,
+        config: PresidioDeployment,
     ) -> None:
         """
-        Bind optional configuration and ownership without loading the NLP model.
-
-        Use an independent registry when one is not supplied. Resolve default sanitizer
-        configuration lazily when its resource or config is first requested.
+        Bind explicit configuration and registry ownership without loading the NLP model.
         """
-        self._config = config
-        self._registry = registry if registry is not None else ResourceRegistry()
+        self.config = config
+        self._registry = registry
         self._resource = None
         self._analyzer = None
-
-    @property
-    def config(self) -> PresidioDeployment:
-        """
-        Resolve and retain explicit or default sanitizer configuration on first use.
-        """
-        if self._config is None:
-            self._config = get_catalog().require_sanitizer()
-        return self._config
 
     @property
     def resource(self) -> LocalResource[Any]:

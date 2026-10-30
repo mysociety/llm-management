@@ -111,7 +111,8 @@ Model-specific labels, artifact integrity, safe deserialization and output shape
 checks belong with the loader/owner. The factory must return the concrete owner
 class declared in the registration. A class with the required constructor signature
 can itself be the factory, as with both logistic detectors. Registered factories
-receive explicit configuration, catalog and registry. Obtain retained owners from
+receive explicit configuration, catalog and registry. Presidio construction also
+requires its sanitizer configuration and owning registry. Obtain retained owners from
 the application's providers; use a constructor or `create_*` factory when an entry
 point deliberately creates an isolated resource. Feature code never resolves a
 process-wide application or owns a second implicit registry.
