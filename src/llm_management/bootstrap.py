@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, NamedTuple, Self
 
 from .deployments import resource_types
 from .deployments.activity import DeploymentActivityTracker
-from .deployments.catalog import DeploymentCatalog, get_catalog
+from .deployments.catalog import DeploymentCatalog
 from .deployments.management import DeploymentManagement
 from .deployments.service import DeploymentService
 from .deployments.status import DeploymentStatusCache
@@ -57,7 +57,7 @@ def assemble_deployments(
     Register deferred local factories and create separate status and activity stores.
     No owner, model, backend controller or background task is created here.
     """
-    catalog = catalog if catalog is not None else get_catalog()
+    catalog = catalog if catalog is not None else DeploymentCatalog.load()
     registry = registry if registry is not None else ResourceRegistry()
     providers = ResourceProviders(catalog=catalog, registry=registry)
     status = DeploymentStatusCache()
