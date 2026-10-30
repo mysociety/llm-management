@@ -24,6 +24,7 @@ from llm_management.inference.logistic_v1 import (
     predict_binary,
 )
 from llm_management.inference.resources import ResourceRegistry
+from llm_management.settings import settings
 
 
 def policy(cutoff=automatic_resources.GATE_CUTOFF, name="gate"):
@@ -230,7 +231,7 @@ def test_endpoint_contract_and_auth(chain, monkeypatch):
     monkeypatch.setattr(
         server.app.state.runtime.automatic, "encoder_provider", lambda: encoder
     )
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(
         server.app.state.runtime.deployments, "active_deployments", lambda: []
     )
@@ -255,7 +256,7 @@ def test_endpoint_contract_and_auth(chain, monkeypatch):
             ).status_code
             == 422
         )
-        monkeypatch.setattr(server.settings, "auth_tokens", {"test": "secret"})
+        monkeypatch.setattr(settings, "auth_tokens", {"test": "secret"})
         assert (
             client.post(
                 "/endpoint/foi/automatic_response_detection", json={"body": "receipt"}
@@ -441,7 +442,7 @@ def test_app_warmup_inference_and_expiry_share_one_logistic_owner(monkeypatch):
         side_effect=AssertionError("Fast mode must not construct an encoder")
     )
     monkeypatch.setattr(runtime.automatic, "encoder_provider", encoder)
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
 
     with TestClient(server.app) as client:
         assert client.post(f"/deployments/{config.logistic}/warm-up").status_code == 200

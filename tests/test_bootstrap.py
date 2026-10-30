@@ -84,7 +84,7 @@ def test_http_dependencies_use_the_serving_runtime(monkeypatch):
 
     from llm_management.api import get_runtime
     from llm_management.deployments.contracts import WarmUpAction, WarmUpResponse
-    from llm_management.server import create_app
+    from llm_management.http_app import create_app
     from llm_management.settings import settings
 
     monkeypatch.setattr(settings, "auth_tokens", {})

@@ -14,7 +14,7 @@ from llm_management.inference.logistic_v1 import (
 )
 from llm_management.sar import pipeline as sar
 from llm_management.sar import resources as sar_resources
-from llm_management.settings import Settings
+from llm_management.settings import Settings, settings
 
 
 @pytest.fixture
@@ -131,7 +131,7 @@ def test_resource_registration_and_warmup_group():
 
 
 def test_endpoint_conservative_response(chain, monkeypatch):
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(
         server.app.state.runtime.deployments, "active_deployments", lambda: []
     )
@@ -223,7 +223,7 @@ def test_unexpected_logistic_cutoff_is_rejected(monkeypatch):
 
 
 def test_endpoint_requires_authentication(monkeypatch):
-    monkeypatch.setattr(server.settings, "auth_tokens", {"test": "secret"})
+    monkeypatch.setattr(settings, "auth_tokens", {"test": "secret"})
     monkeypatch.setattr(
         server.app.state.runtime.deployments, "active_deployments", lambda: []
     )
@@ -334,7 +334,7 @@ def test_fast_logistic_loading_failure_keeps_unclear_flag(chain):
 
 @pytest.mark.parametrize("fast", [None, False, True])
 def test_endpoint_fast_parameter_and_stage(chain, monkeypatch, fast):
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(
         server.app.state.runtime.deployments, "active_deployments", lambda: []
     )

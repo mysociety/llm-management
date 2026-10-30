@@ -19,6 +19,8 @@ from llm_management.deployments import compute as module
 from llm_management.deployments.config import ComputeDeploymentConfig
 from llm_management.deployments.errors import DeploymentServiceError, LLMManagementError
 from llm_management.deployments.status import DeploymentStatusCache
+from llm_management.http_app import lifespan
+from llm_management.settings import settings
 from llm_management.templates import TemplateConfig
 from llm_management.templates.state import ComputeState
 
@@ -287,7 +289,7 @@ def test_http_request_lease_prevents_teardown_and_releases_after_failure(
     monkeypatch.setattr(
         server.app.state.runtime.deployments, "get_config", lambda slug: config
     )
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
 
     async def send(*args, **kwargs):
         assert (
@@ -441,7 +443,7 @@ def test_shutdown_tears_down_compute(deployed, monkeypatch):
     )
 
     async def run():
-        async with server.lifespan(server.app):
+        async with lifespan(server.app):
             pass
 
     asyncio.run(run())
@@ -506,7 +508,7 @@ def test_compute_proxies_strip_client_credentials_and_use_v1_tunnel(
     monkeypatch.setattr(
         server.app.state.runtime.deployments, "get_config", lambda slug: config
     )
-    monkeypatch.setattr(server.settings, "auth_tokens", {"caller": "client-token"})
+    monkeypatch.setattr(settings, "auth_tokens", {"caller": "client-token"})
     requests = []
 
     def handle(request):

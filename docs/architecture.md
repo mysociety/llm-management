@@ -206,7 +206,7 @@ A closed task owner cannot be reused; create a new application for a new lifetim
 
 Keep its decision policy and results in the feature package. Supply the model and
 deployment operations it needs explicitly. Expose HTTP contracts through a router
-under `api/`, connected in `server.py`. Extend the application assembly when the
+under `api/`, connected in `http_app.py`. Extend the application assembly when the
 feature needs shared resource ownership. Keep package `__init__.py` files limited
 to deliberate public exports.
 
@@ -323,3 +323,6 @@ revalidate the catalog, including feature and group references.
 
 Management response contracts and action enums live in `deployments/contracts.py`;
 HTTP routes import them directly without re-exporting them.
+
+The HTTP factory and lifespan live in `http_app.py`, which does not assemble a
+runtime on import. `server.py` is the ASGI entry point that creates the served app.

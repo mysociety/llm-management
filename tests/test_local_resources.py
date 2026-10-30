@@ -6,8 +6,10 @@ from unittest.mock import Mock
 from starlette.testclient import TestClient
 
 from llm_management import server
+from llm_management.http_app import lifespan
 from llm_management.inference.classifiers import LocalSequenceClassifier
 from llm_management.inference.resources import LocalResource, ResourceRegistry
+from llm_management.settings import settings
 
 
 def test_shutdown_continues_after_local_unload_failure(caplog):
@@ -32,7 +34,7 @@ def test_local_cleanup_failure_does_not_skip_remote_shutdown(monkeypatch):
     registry = Mock()
     registry.close.side_effect = RuntimeError("cleanup failed")
     monkeypatch.setattr(server.app.state.runtime.deployments, "resources", registry)
-    monkeypatch.setattr(server.settings, "auth_tokens", {"test": "token"})
+    monkeypatch.setattr(settings, "auth_tokens", {"test": "token"})
     monkeypatch.setattr(
         server.app.state.runtime.deployments,
         "active_deployments",
@@ -47,7 +49,7 @@ def test_local_cleanup_failure_does_not_skip_remote_shutdown(monkeypatch):
     )
 
     async def run():
-        async with server.lifespan(server.app):
+        async with lifespan(server.app):
             pass
 
     asyncio.run(run())
@@ -125,7 +127,7 @@ def test_classifier_unloads_model_and_tokenizer_under_lease():
 
 def test_cpu_ensure_status_and_failure(monkeypatch):
     sanitizer = server.app.state.runtime.sanitizer()
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(
         server.app.state.runtime.deployments, "active_deployments", lambda: []
     )

@@ -7,11 +7,12 @@ from starlette.testclient import TestClient
 from llm_management import server
 from llm_management.foi import response_analysis
 from llm_management.foi.response_schemas import ExtractionOutput
+from llm_management.settings import settings
 
 
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(
         server.app.state.runtime.deployments, "active_deployments", lambda: []
     )

@@ -18,6 +18,7 @@ from llm_management.foi.question_slice import build_extraction_result, segment_r
 from llm_management.inference.classifiers import (
     ClassifierBusy,
 )
+from llm_management.settings import settings
 
 
 @pytest.fixture(autouse=True)
@@ -35,7 +36,7 @@ def category_inference_offline(monkeypatch):
 
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(
         server.app.state.runtime.deployments, "active_deployments", lambda: []
     )
@@ -92,7 +93,7 @@ def test_orphan_keeps_indices_and_does_not_invent_start(client, classifier):
 
 
 def test_gpu_disabled_does_not_provision(client, classifier, monkeypatch):
-    monkeypatch.setattr(server.settings, "question_slice_gpu_enabled", False)
+    monkeypatch.setattr(settings, "question_slice_gpu_enabled", False)
     ensure = AsyncMock()
     monkeypatch.setattr(server.app.state.runtime.deployments, "_prepare_locked", ensure)
     response = client.post(
@@ -106,7 +107,7 @@ def test_gpu_disabled_does_not_provision(client, classifier, monkeypatch):
 def test_backend_switch_shares_reconstruction(client, classifier, monkeypatch):
     rows = [[0.0, 0.0, 1.0, 0.0]]
     classifier.classify = lambda texts: rows
-    monkeypatch.setattr(server.settings, "question_slice_gpu_enabled", True)
+    monkeypatch.setattr(settings, "question_slice_gpu_enabled", True)
     cfg = SimpleNamespace(model=classifier.model_name)
     state = SimpleNamespace(deployment_url="https://example.test/v1", api_key="secret")
     monkeypatch.setattr(
@@ -138,7 +139,7 @@ def test_backend_switch_shares_reconstruction(client, classifier, monkeypatch):
 
 
 def test_overlength_rejected_before_gpu_start(client, classifier, monkeypatch):
-    monkeypatch.setattr(server.settings, "question_slice_gpu_enabled", True)
+    monkeypatch.setattr(settings, "question_slice_gpu_enabled", True)
 
     def reject(texts):
         raise ValueError("window exceeds 768 tokens; not truncated")
@@ -201,7 +202,7 @@ def topic_data():
 
 @pytest.fixture
 def pipeline(sanitizer, monkeypatch):
-    monkeypatch.setattr(server.settings, "auth_tokens", {})
+    monkeypatch.setattr(settings, "auth_tokens", {})
     monkeypatch.setattr(
         server.app.state.runtime.deployments, "active_deployments", lambda: []
     )

@@ -11,7 +11,7 @@ from llm_management.bootstrap import assemble_runtime
 from llm_management.deployments import get_catalog
 from llm_management.foi.examples import ExtractionExpectation, validation_examples
 from llm_management.foi.schemas import ExtractQuestionsResponse, TopicOutput
-from llm_management.server import create_app
+from llm_management.http_app import create_app
 from tests.foi_validation import (
     assert_extraction_matches,
     assert_topics_match,
