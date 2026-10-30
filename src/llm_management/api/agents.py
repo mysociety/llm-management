@@ -78,7 +78,7 @@ async def capital_city_endpoint(
     specified deployment.
     """
     async with use_chat_model(
-        slug=deployment, service=application.deployments.access
+        slug=deployment, service=application.deployments
     ) as model:
         return await capital_city_agent(model=model, country=body.country)
 
@@ -95,7 +95,7 @@ async def immigration_detection_endpoint(
     running on the specified deployment.
     """
     async with use_chat_model(
-        slug=deployment, service=application.deployments.access
+        slug=deployment, service=application.deployments
     ) as model:
         return await immigration_detection_agent(model=model, request=body.body)
 

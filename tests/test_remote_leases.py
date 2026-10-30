@@ -62,7 +62,7 @@ def test_nested_leases_block_management_until_last_exit(remote):
         async with service.use(slug) as running:
             assert running.config.slug == slug
             assert service.activity.get(slug).requests_in_flight == 1
-            async with service.access.use(slug):
+            async with service.use(slug):
                 assert service.activity.get(slug).requests_in_flight == 2
                 for action in (service.cooldown, service.scale_to_zero):
                     with pytest.raises(DeploymentServiceError) as caught:
@@ -281,7 +281,7 @@ def test_explicit_use_never_reads_legacy_context_or_constructs_cache_adapter(
     assert service._cache is None
 
     async def run():
-        async with service.access.use(slug) as running:
+        async with service.use(slug) as running:
             assert type(running.state).__name__ == "DeploymentSnapshot"
             assert service.activity.get(slug).requests_in_flight == 1
         assert service.activity.get(slug).requests_in_flight == 0
@@ -325,8 +325,6 @@ def test_independent_status_replacement_preserves_activity(remote):
 
 
 def test_legacy_callback_adapter_satisfies_feature_protocol(remote: RemoteFixture):
-    from typing import assert_type
-
     from llm_management.deployments.types import DeploymentAccess, DeploymentInference
 
     service, _, slug = remote
@@ -334,7 +332,6 @@ def test_legacy_callback_adapter_satisfies_feature_protocol(remote: RemoteFixtur
         service.get_config, service.ensure_running, service.activity.touch
     )
     client: DeploymentInference = legacy
-    assert_type(service.access, DeploymentInference)
 
     async def run():
         with service.track_requests():

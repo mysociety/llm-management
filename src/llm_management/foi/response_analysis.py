@@ -39,7 +39,7 @@ async def predict(
         application = default_application()
         resources = resources if resources is not None else application.foi
         service = application.deployments
-        deployments = deployments if deployments is not None else service.access
+        deployments = deployments if deployments is not None else service
     config = resources.catalog.require_foi()
     slug = config.response_deployment
     if slug is None or resources.response_tokenizer is None:

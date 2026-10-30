@@ -66,7 +66,7 @@ async def question_slice_endpoint(
         return await pipeline.extract_questions(
             body.body,
             backend=backend,
-            deployments=application.deployments.access,
+            deployments=application.deployments,
             resources=application.foi,
         )
 
@@ -88,7 +88,7 @@ async def information_request_endpoint(
         result = await pipeline.process_information_request(
             body.body,
             backend=backend,
-            deployments=application.deployments.access,
+            deployments=application.deployments,
             resources=application.foi,
         )
 
@@ -112,7 +112,7 @@ async def foi_response_status_endpoint(
     """
     with foi_http_errors():
         return await response_analysis.analyze_response(
-            body, deployments=application.deployments.access, resources=application.foi
+            body, deployments=application.deployments, resources=application.foi
         )
 
 
